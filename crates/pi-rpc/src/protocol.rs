@@ -25,6 +25,7 @@ pub(crate) enum Command {
     SetModel { provider: String, model_id: String },
     SetThinkingLevel { level: ThinkingLevel },
     GetAvailableModels,
+    GetMessages,
 }
 
 impl Command {
@@ -110,6 +111,11 @@ pub(crate) struct PromptData {
 #[derive(Deserialize)]
 pub(crate) struct ModelsData {
     pub models: Vec<Model>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MessagesData {
+    pub messages: Vec<Value>,
 }
 
 /// One record pi wrote on stdout.
@@ -416,6 +422,7 @@ mod tests {
                 Command::GetAvailableModels,
                 r#"{"id":"7","type":"get_available_models"}"#,
             ),
+            (Command::GetMessages, r#"{"id":"7","type":"get_messages"}"#),
         ];
         for (command, expected) in cases {
             let line = command.to_line("7");
@@ -462,6 +469,46 @@ mod tests {
             parse_line(widget).unwrap(),
             Incoming::Event(Event::Other(method)) if method == "setWidget"
         ));
+    }
+
+    /// The events pi printed in a recorded fake-pi script.
+    fn recorded_events(script: &str) -> Vec<Event> {
+        script
+            .lines()
+            .filter(|line| line.starts_with('{'))
+            .filter_map(|line| match parse_line(line).unwrap() {
+                Incoming::Event(event) => Some(event),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn draft_writes(events: &[Event]) -> Vec<&str> {
+        events
+            .iter()
+            .filter(|event| event.is_draft_write())
+            .map(|event| match event {
+                Event::ToolExecutionEnd { tool_name, .. } => tool_name.as_str(),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn draft_writes_in_recorded_runs() {
+        // A read, then an edit of the draft.
+        let tool = recorded_events(include_str!("../tests/fixtures/tool.jsonl"));
+        assert_eq!(draft_writes(&tool), ["edit"]);
+        // A read, then a write of the draft, then an aborted reply.
+        let abort = recorded_events(include_str!("../tests/fixtures/abort.jsonl"));
+        assert_eq!(draft_writes(&abort), ["write"]);
+    }
+
+    #[test]
+    fn blocked_write_is_not_a_draft_write() {
+        // The bundled extension's guard text (pi-extension/README.md).
+        let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"write","result":{"content":[{"type":"text","text":"Draftmux: write is limited to the draft file /d/draft.md; \"notes.txt\" (/repo/notes.txt) is outside it. Use read or bash to inspect other files."}]},"isError":true,"durationMs":1}"#;
+        assert!(draft_writes(&recorded_events(line)).is_empty());
     }
 
     #[test]

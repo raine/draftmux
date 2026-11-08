@@ -7,4 +7,4 @@ mod element;
 mod highlight;
 mod movement;
 
-pub use editor::{Editor, EditorEvent, init};
+pub use editor::{Editor, EditorEvent, EditorStyle, init};

@@ -1,4 +1,5 @@
 mod assets;
+mod chat;
 #[expect(dead_code, reason = "placed in the chat composer by the chat pane")]
 mod chat_model;
 mod chrome;
@@ -84,6 +85,7 @@ fn main() {
             markup_view::init(cx);
             format::init(cx);
             copy::init(cx);
+            chat::init(cx);
             chrome::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

@@ -189,10 +189,10 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Rc<Layout> {
-        let style = EditorStyle::default();
+        let editor = self.editor.read(cx);
+        let style = editor.style.clone();
         let wrap_width = (bounds.size.width - style.padding_x * 2.).max(px(1.));
 
-        let editor = self.editor.read(cx);
         let text = SharedString::from(editor.buffer.text().to_string());
         let revision = editor.buffer.revision();
         let runs = text_runs(
@@ -285,8 +285,8 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let style = EditorStyle::default();
         let editor = self.editor.read(cx);
+        let style = editor.style.clone();
         let focus_handle = editor.focus_handle.clone();
         let selection = editor.buffer.selection();
         let focused = focus_handle.is_focused(window);

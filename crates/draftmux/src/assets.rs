@@ -10,6 +10,16 @@ pub const SLACK_ICON: &str = "icons/slack.png";
 pub const ARCHIVE_ICON: &str = "icons/archive.svg";
 pub const PREVIEW_ICON: &str = "icons/preview.svg";
 pub const COPY_ICON: &str = "icons/copy.svg";
+pub const TOOL_BASH_ICON: &str = "icons/tool-bash.svg";
+pub const TOOL_READ_ICON: &str = "icons/tool-read.svg";
+pub const TOOL_WRITE_ICON: &str = "icons/tool-write.svg";
+pub const TOOL_EDIT_ICON: &str = "icons/tool-edit.svg";
+pub const TOOL_OTHER_ICON: &str = "icons/tool-other.svg";
+pub const SPINNER_TRACK_ICON: &str = "icons/spinner-track.svg";
+pub const SPINNER_ARC_ICON: &str = "icons/spinner-arc.svg";
+pub const CHEVRON_ICON: &str = "icons/chevron.svg";
+pub const SEND_ICON: &str = "icons/send.svg";
+pub const STOP_ICON: &str = "icons/stop.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
@@ -17,6 +27,37 @@ const ASSETS: &[(&str, &[u8])] = &[
     (ARCHIVE_ICON, include_bytes!("../assets/icons/archive.svg")),
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
+    (
+        TOOL_BASH_ICON,
+        include_bytes!("../assets/icons/tool-bash.svg"),
+    ),
+    (
+        TOOL_READ_ICON,
+        include_bytes!("../assets/icons/tool-read.svg"),
+    ),
+    (
+        TOOL_WRITE_ICON,
+        include_bytes!("../assets/icons/tool-write.svg"),
+    ),
+    (
+        TOOL_EDIT_ICON,
+        include_bytes!("../assets/icons/tool-edit.svg"),
+    ),
+    (
+        TOOL_OTHER_ICON,
+        include_bytes!("../assets/icons/tool-other.svg"),
+    ),
+    (
+        SPINNER_TRACK_ICON,
+        include_bytes!("../assets/icons/spinner-track.svg"),
+    ),
+    (
+        SPINNER_ARC_ICON,
+        include_bytes!("../assets/icons/spinner-arc.svg"),
+    ),
+    (CHEVRON_ICON, include_bytes!("../assets/icons/chevron.svg")),
+    (SEND_ICON, include_bytes!("../assets/icons/send.svg")),
+    (STOP_ICON, include_bytes!("../assets/icons/stop.svg")),
 ];
 
 pub struct Assets;

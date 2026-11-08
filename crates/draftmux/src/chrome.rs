@@ -21,6 +21,7 @@ use gpui::{
 use markup::Document;
 
 use crate::assets::PREVIEW_ICON;
+use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
@@ -60,6 +61,7 @@ pub struct Chrome {
     /// Shows the selected draft; reused across drafts.
     editor: Entity<Editor>,
     formatter: Entity<Formatter>,
+    chat: Entity<Chat>,
     /// The selected draft's text parsed for its target.
     preview: Option<(Document, MarkupStyle)>,
     show_preview: bool,
@@ -134,7 +136,13 @@ impl Render for Chrome {
                     .flex()
                     .child(self.sidebar(sidebar_bar, cx))
                     .child(content)
-                    .child(chat_column()),
+                    .child(
+                        pane(rgb(CHAT_BG))
+                            .w(CHAT_WIDTH)
+                            .flex_none()
+                            .border_l_1()
+                            .child(self.chat.clone()),
+                    ),
             )
             .children(self.toast(cx))
     }
@@ -144,7 +152,9 @@ impl Chrome {
     pub fn new(store: Store, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| Editor::new("", cx));
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
+        let chat = cx.new(Chat::new);
         let subscriptions = vec![
+            cx.subscribe(&chat, |this, _, event, cx| this.chat_event(event, cx)),
             cx.subscribe(&editor, |this, editor, event, cx| {
                 if *event == EditorEvent::Edited {
                     this.edited(editor.read(cx).text().to_owned(), cx);
@@ -184,6 +194,7 @@ impl Chrome {
             drafts: Drafts::new(store),
             editor,
             formatter,
+            chat,
             preview: None,
             show_preview: true,
             save_error: None,
@@ -238,6 +249,9 @@ impl Chrome {
         self.editor
             .update(cx, |editor, cx| editor.set_text(&text, cx));
         self.drafts.loaded(self.editor.read(cx).text());
+        let draft = self.drafts.current().cloned();
+        self.chat
+            .update(cx, |chat, cx| chat.set_draft(draft.as_ref(), cx));
         self.preview_scroll.set_offset(Point::default());
         window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
@@ -254,6 +268,44 @@ impl Chrome {
         self.autosave = Task::ready(());
         self.preview = None;
         self.editor.update(cx, |editor, cx| editor.set_text("", cx));
+        self.chat.update(cx, |chat, cx| chat.set_draft(None, cx));
+    }
+
+    fn chat_event(&mut self, event: &ChatEvent, cx: &mut Context<Self>) {
+        match event {
+            ChatEvent::Send(text) => {
+                // pi reads the draft from disk.
+                let saved = match self.flush() {
+                    Ok(()) => {
+                        self.save_error = None;
+                        Ok(self.editor.read(cx).text().to_owned())
+                    }
+                    Err(err) => {
+                        self.save_error = Some(format!("Couldn't save: {err:#}").into());
+                        Err(format!("{err:#}"))
+                    }
+                };
+                let text = text.clone();
+                self.chat
+                    .update(cx, |chat, cx| chat.prompt(text, saved, cx));
+            }
+            ChatEvent::DraftWritten(text) => {
+                self.editor
+                    .update(cx, |editor, cx| editor.replace_all(text, cx));
+                // The file already holds the text, so loading isn't an edit
+                // to save.
+                self.drafts.loaded(self.editor.read(cx).text());
+                self.drafts.refresh();
+            }
+            ChatEvent::Running(running) => {
+                let running = *running;
+                self.editor
+                    .update(cx, |editor, cx| editor.set_read_only(running, cx));
+                self.formatter
+                    .update(cx, |formatter, cx| formatter.set_agent_running(running, cx));
+            }
+        }
+        cx.notify();
     }
 
     fn edited(&mut self, text: String, cx: &mut Context<Self>) {
@@ -318,6 +370,10 @@ impl Chrome {
             return;
         }
         self.preview = Some(markup_view::preview(target, self.editor.read(cx).text()));
+        if let Some(id) = self.drafts.current_id().map(str::to_owned) {
+            self.chat
+                .update(cx, |chat, cx| chat.set_target(&id, target, cx));
+        }
         cx.notify();
     }
 
@@ -519,11 +575,6 @@ pub(crate) fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
         spread_radius: px(spread),
         inset: false,
     }
-}
-
-/// Where the pi conversation goes: messages, tool rows and the composer.
-fn chat_column() -> impl IntoElement {
-    pane(rgb(CHAT_BG)).w(CHAT_WIDTH).flex_none().border_l_1()
 }
 
 fn empty_state() -> impl IntoElement {

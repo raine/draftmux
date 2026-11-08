@@ -69,7 +69,6 @@ impl Formatter {
 
     /// Format is unavailable while the agent runs, and a format that
     /// finishes after the agent started is discarded.
-    #[expect(dead_code, reason = "for the chat pane, which runs the agent")]
     pub fn set_agent_running(&mut self, running: bool, cx: &mut Context<Self>) {
         self.agent_running = running;
         cx.notify();

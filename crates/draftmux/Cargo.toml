@@ -14,6 +14,7 @@ draftmux-pi-profiles = { path = "../pi-profiles" }
 draftmux-pi-rpc = { path = "../pi-rpc" }
 draftmux-storage = { path = "../storage" }
 editor = { path = "../editor" }
+futures = "0.3"
 gpui.workspace = true
 gpui_platform.workspace = true
 libc = "0.2"

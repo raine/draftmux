@@ -15,8 +15,8 @@ use serde_json::Value;
 
 use crate::connection::{Connection, Message};
 use crate::protocol::{
-    self, Disposition, Event, Incoming, Model, ModelsData, PromptData, Response, State,
-    ThinkingLevel,
+    self, Disposition, Event, Incoming, MessagesData, Model, ModelsData, PromptData, Response,
+    State, ThinkingLevel,
 };
 
 /// Builds the base command for the pi executable. The app passes
@@ -422,6 +422,13 @@ impl Agent {
     ) -> impl Future<Output = Result<Vec<Model>, Error>> + Send + use<> {
         let rx = self.shared.request(protocol::Command::GetAvailableModels);
         async move { decode::<ModelsData>(rx).await.map(|data| data.models) }
+    }
+
+    /// The session's messages as pi's `AgentMessage` JSON, oldest first:
+    /// what the model sees, so compacted history is a summary.
+    pub fn get_messages(&self) -> impl Future<Output = Result<Vec<Value>, Error>> + Send + use<> {
+        let rx = self.shared.request(protocol::Command::GetMessages);
+        async move { decode::<MessagesData>(rx).await.map(|data| data.messages) }
     }
 }
 

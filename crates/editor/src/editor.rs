@@ -124,8 +124,10 @@ pub enum EditorEvent {
     SelectionChanged(Range<usize>),
 }
 
-/// Fonts, colours and metrics of the light "Native" prototype.
-pub(crate) struct EditorStyle {
+/// Fonts, colours and metrics. The default is the draft editor of the light
+/// "Native" prototype.
+#[derive(Clone)]
+pub struct EditorStyle {
     pub font: Font,
     pub font_size: Pixels,
     pub line_height: Pixels,
@@ -168,6 +170,7 @@ impl Default for EditorStyle {
 
 pub struct Editor {
     pub(crate) focus_handle: FocusHandle,
+    pub(crate) style: EditorStyle,
     pub(crate) buffer: Buffer,
     pub(crate) read_only: bool,
     pub(crate) scroll_y: Pixels,
@@ -197,6 +200,7 @@ impl Editor {
         let buffer = Buffer::new(text);
         Self {
             focus_handle: cx.focus_handle(),
+            style: EditorStyle::default(),
             reported_revision: buffer.revision(),
             highlights: highlight(buffer.text()),
             buffer,
@@ -211,6 +215,11 @@ impl Editor {
 
     pub fn text(&self) -> &str {
         self.buffer.text()
+    }
+
+    pub fn set_style(&mut self, style: EditorStyle, cx: &mut Context<Self>) {
+        self.style = style;
+        cx.notify();
     }
 
     /// Loads `text` with an empty undo history and the caret at the start.
@@ -473,7 +482,7 @@ impl Editor {
     }
 
     fn on_scroll(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let line_height = EditorStyle::default().line_height;
+        let line_height = self.style.line_height;
         self.scroll_y -= event.delta.pixel_delta(line_height).y;
         cx.notify();
     }
