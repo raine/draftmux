@@ -34,14 +34,32 @@ not notarized for distribution.
 ### Draft skill
 
 Agents hand messages off to Draftmux with the `draft` skill in
-[skills/draft/](skills/draft/). Claude Code and pi both load skills from
-`~/.claude/skills`, so link it there:
+[skills/draft/](skills/draft/SKILL.md): it opens the conversation in a new
+draft with `draftmux open`, and reads the polished draft back with
+`draftmux show`. Link it into `~/.claude/skills`, after checking that
+`~/.claude/skills/draft` doesn't already exist:
 
 ```sh
+ls -la ~/.claude/skills/draft   # should report "No such file or directory"
+mkdir -p ~/.claude/skills
 ln -s "$PWD/skills/draft" ~/.claude/skills/draft
 ```
 
-pi needs nothing else: the pi extension Draftmux runs is bundled with the app.
+Claude Code loads it from there. pi doesn't read `~/.claude/skills` by default:
+add it to `"skills"` in each pi profile's `settings.json`
+(`~/.pi/agent/settings.json`), or link the skill into `~/.agents/skills/draft`
+instead, which every profile loads. Don't do both, or pi sees two `draft`
+skills.
+
+```json
+{ "skills": ["~/.claude/skills"] }
+```
+
+In pi, the skill finds the session file through `$PI_SESSION_FILE`, which pi's
+bash tool sets. pi extensions that replace the bash tool must pass the tool's
+context argument through to the built-in tool's `execute`, or the variable is
+missing and the handoff fails. The pi extension Draftmux runs itself is
+bundled with the app.
 
 ## Development
 
@@ -64,6 +82,7 @@ crates/storage/      draft directories, meta.json, atomic writes, autosave
 pi-extension/        pi extension the app passes to pi; bundled as a resource
 assets/              app icon master (1024 px)
 scripts/             bundle and install scripts
+skills/draft/        the `draft` agent skill for Claude Code and pi
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has
