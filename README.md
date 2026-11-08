@@ -24,6 +24,7 @@ cargo run
 Cargo.toml           workspace manifest; shared dependencies and the gpui pin
 rust-toolchain.toml  toolchain matching Zed at the pinned gpui rev
 crates/draftmux/     the app binary: startup, window and UI
+crates/storage/      draft directories, meta.json, atomic writes, autosave
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has
