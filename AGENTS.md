@@ -13,3 +13,8 @@ explicitly asked:
 - Don't rerun after commit, rebase or merge unless relevant code changed; read
   the saved log after a failure instead of rerunning.
 - Report what ran and what was deferred.
+
+# Workflow
+
+- Don't run `cargo fmt` manually; the pre-commit hook formats staged Rust.
+- Install the hooks once per clone with `just install-hooks`.

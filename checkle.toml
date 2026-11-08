@@ -1,0 +1,13 @@
+[[check]]
+name = "format-check"
+mode = "rustfmt"
+command = ["cargo", "fmt", "--all", "--", "--check"]
+
+[[check]]
+name = "clippy"
+mode = "cargo"
+command = ["cargo", "clippy", "--message-format=json", "--target-dir", "target/clippy", "--workspace", "--all-targets", "--", "-D", "warnings", "-D", "clippy::all"]
+
+[[group]]
+name = "fast-readonly"
+checks = ["format-check", "cargo-machete"]

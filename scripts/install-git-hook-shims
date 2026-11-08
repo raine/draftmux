@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+git_common_dir="$(git rev-parse --git-common-dir)"
+hooks_dir="$git_common_dir/hooks"
+
+if (($# == 0)); then
+  set -- pre-commit commit-msg pre-push
+fi
+
+mkdir -p "$hooks_dir"
+
+for hook_name in "$@"; do
+  tracked_hook="$repo_root/hooks/$hook_name"
+  hook_path="$hooks_dir/$hook_name"
+
+  if [[ ! -x "$tracked_hook" ]]; then
+    echo "error: tracked hook is missing or not executable: $tracked_hook" >&2
+    exit 1
+  fi
+
+  cat > "$hook_path" <<HOOK
+#!/usr/bin/env bash
+set -euo pipefail
+
+worktree_root="\$(git rev-parse --show-toplevel)"
+tracked_hook="\$worktree_root/hooks/$hook_name"
+
+# Branches created before the hooks were added have no tracked hook.
+[[ -x "\$tracked_hook" ]] || exit 0
+
+exec "\$tracked_hook" "\$@"
+HOOK
+  chmod +x "$hook_path"
+done
