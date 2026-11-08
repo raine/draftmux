@@ -1129,6 +1129,8 @@ dependencies = [
  "gpui_platform",
  "libc",
  "markup",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "serde",
  "serde_json",
  "shell-env",

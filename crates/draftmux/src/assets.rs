@@ -9,12 +9,14 @@ pub const GITHUB_ICON: &str = "icons/github.svg";
 pub const SLACK_ICON: &str = "icons/slack.png";
 pub const ARCHIVE_ICON: &str = "icons/archive.svg";
 pub const PREVIEW_ICON: &str = "icons/preview.svg";
+pub const COPY_ICON: &str = "icons/copy.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
     (SLACK_ICON, include_bytes!("../assets/icons/slack.png")),
     (ARCHIVE_ICON, include_bytes!("../assets/icons/archive.svg")),
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
+    (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
 ];
 
 pub struct Assets;

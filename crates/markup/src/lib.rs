@@ -6,6 +6,7 @@
 //! colors, sizes or fonts.
 
 pub mod github;
+pub mod rich;
 pub mod slack;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

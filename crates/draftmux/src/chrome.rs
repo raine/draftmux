@@ -21,6 +21,7 @@ use gpui::{
 use markup::Document;
 
 use crate::assets::PREVIEW_ICON;
+use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
 use crate::markup_view::{self, MarkupStyle};
@@ -119,6 +120,7 @@ impl Render for Chrome {
                         .update(cx, |formatter, cx| formatter.format(cx));
                 }
             }))
+            .on_action(cx.listener(|this, _: &Copy, _, cx| this.copy(cx)))
             .on_action(cx.listener(|this, _: &crate::Quit, _, cx| {
                 if this.flush_before_exit(cx) {
                     cx.quit();
@@ -319,6 +321,15 @@ impl Chrome {
         cx.notify();
     }
 
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.drafts.current().map(|draft| draft.meta.target) else {
+            return;
+        };
+        let text = self.editor.read(cx).text().to_owned();
+        let confirmation = copy::copy(target, &text, cx);
+        self.show_toast(confirmation.to_owned(), None, cx);
+    }
+
     fn preview_body(&self) -> impl IntoElement {
         let body = match &self.preview {
             Some((doc, style)) if !doc.blocks.is_empty() => {
@@ -456,7 +467,12 @@ impl Chrome {
                     ),
             )
             .child(target_switch(target, cx))
-        // Copy for GitHub / Copy for Slack goes here, after the target switch.
+            .child(copy::button({
+                let this = cx.weak_entity();
+                move |cx| {
+                    this.update(cx, |this, cx| this.copy(cx)).ok();
+                }
+            }))
     }
 }
 
@@ -495,7 +511,7 @@ fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement
 
 /// A box shadow of `color` moved down by `y`. A zero blur with a spread draws
 /// a hairline ring.
-fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
+pub(crate) fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
     BoxShadow {
         color: rgba(color).into(),
         offset: point(px(0.), px(y)),

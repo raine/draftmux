@@ -1,0 +1,34 @@
+//! Snapshots of the rich text copied for Slack.
+
+use markup::{rich, slack};
+
+const MESSAGE: &str = "Hi *team*, _quick_ ~old~ `code` *bold <https://a.example?x=1&y=2|link>*\n\
+    second  line\n\
+    \n\
+    - one\n\
+    - two\n  \
+      1. nested\n\
+    3. three\n\
+    > quoted\n\
+    > more\n\
+    ```\nlet a = b < c;\n  indented {}\n```\n\
+    # Heading\n\
+    | a | b |\n|---|--:|\n| 1 | 22 |\n\
+    Ünïcode — 🎉 \\path\n";
+
+#[test]
+fn html() {
+    insta::assert_snapshot!(rich::html(&slack::parse(MESSAGE)).replace("</p>", "</p>\n"));
+}
+
+#[test]
+fn rtf() {
+    insta::assert_snapshot!(rich::rtf(&slack::parse(MESSAGE)));
+}
+
+#[test]
+fn empty_message() {
+    let doc = slack::parse("");
+    assert_eq!(rich::html(&doc), "<meta charset=\"utf-8\">");
+    assert!(rich::rtf(&doc).ends_with("}\n}"));
+}

@@ -1,0 +1,22 @@
+---
+source: crates/markup/tests/rich.rs
+expression: "rich::rtf(&slack::parse(MESSAGE))"
+---
+{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Helvetica;}{\f1\fmodern Menlo;}}
+\pard\li0 {Hi }{\b team}{, }{\i quick}{ }{\strike old}{ }{\f1 code}{ }{\b bold }{\field{\*\fldinst{HYPERLINK "https://a.example?x=1&y=2"}}{\fldrslt {\b link}}}\par
+\pard\li0 {second  line}\par
+\pard\li0 \par
+\pard\li360\fi-360\tx360 \u8226?\tab {one}\par
+\pard\li360\fi-360\tx360 \u8226?\tab {two}\par
+\pard\li720\fi-360\tx720 1.\tab {nested}\par
+\pard\li360\fi-360\tx360 3.\tab {three}\par
+\pard\li360 {quoted}\par
+\pard\li360 {more}\par
+\pard\li0 {\f1 let a = b < c;}\par
+\pard\li0 {\f1   indented \{\}}\par
+\pard\li0 {\b Heading}\par
+\pard\li0 {\f1 a |  b}\par
+\pard\li0 {\f1 --+---}\par
+\pard\li0 {\f1 1 | 22}\par
+\pard\li0 {\u220?n\u239?code \u8212? \u-10180?\u-8311? \\path}\par
+}

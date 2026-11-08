@@ -1,5 +1,6 @@
 mod assets;
 mod chrome;
+mod copy;
 mod drafts;
 mod format;
 mod ipc;
@@ -72,6 +73,7 @@ fn main() {
             editor::init(cx);
             markup_view::init(cx);
             format::init(cx);
+            copy::init(cx);
             chrome::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
