@@ -747,6 +747,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "draftmux-pi-profiles",
  "serde",
  "serde_json",
  "tempfile",
@@ -1121,6 +1122,7 @@ dependencies = [
  "chrono",
  "clap",
  "claude-convert",
+ "draftmux-pi-profiles",
  "draftmux-pi-rpc",
  "draftmux-storage",
  "editor",
@@ -1134,6 +1136,18 @@ dependencies = [
  "serde",
  "serde_json",
  "shell-env",
+ "tempfile",
+]
+
+[[package]]
+name = "draftmux-pi-profiles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "draftmux-storage",
+ "libc",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

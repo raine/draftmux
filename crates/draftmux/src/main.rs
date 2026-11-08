@@ -1,11 +1,20 @@
 mod assets;
+#[expect(dead_code, reason = "placed in the chat composer by the chat pane")]
+mod chat_model;
 mod chrome;
 mod copy;
 mod drafts;
 mod format;
 mod ipc;
 mod markup_view;
+#[expect(
+    dead_code,
+    reason = "used through chat_model until the Settings window"
+)]
+mod model_picker;
 mod open;
+#[expect(dead_code, reason = "read by the Settings window")]
+mod profiles;
 mod resources;
 mod scrollbar;
 mod show;
@@ -70,6 +79,7 @@ fn main() {
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             shell_env::init(cx);
+            profiles::init(cx);
             editor::init(cx);
             markup_view::init(cx);
             format::init(cx);

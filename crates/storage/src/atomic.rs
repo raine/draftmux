@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 /// Readers see the old or the new file, never a partial one. There is no
 /// fsync: on macOS that is a full device flush, and drafts don't need
 /// power-loss durability.
-pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
     let dir = path
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;

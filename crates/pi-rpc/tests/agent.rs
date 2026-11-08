@@ -337,6 +337,56 @@ fn get_state() {
     assert!(state.model.is_none());
 }
 
+/// The switch reports the `get_state` that follows it, not `set_model`'s
+/// answer: pi resolves thinking for the new model.
+#[test]
+fn switch_model_reads_state_back() {
+    let model =
+        r#"{"id":"m1","name":"M1","provider":"p","api":"x","contextWindow":1,"maxTokens":1}"#;
+    let h = Harness::new(&[&script(&format!(
+        ">>> {{\"id\":\"2\",\"type\":\"set_model\",\"provider\":\"p\",\"modelId\":\"m1\"}}\n\
+         {{\"id\":\"2\",\"type\":\"response\",\"command\":\"set_model\",\"success\":true,\"data\":{model}}}\n\
+         >>> {{\"id\":\"3\",\"type\":\"get_state\"}}\n{}\n### eof",
+        STATE.replace(r#""id":"1""#, r#""id":"3""#).replace(
+            r#""thinkingLevel":"medium""#,
+            &format!(r#""model":{model},"thinkingLevel":"high""#)
+        )
+    ))]);
+    let state = block_on(h.agent.switch_model("p".into(), "m1".into())).unwrap();
+    assert_eq!(state.model.unwrap().id, "m1");
+    assert_eq!(state.thinking_level, ThinkingLevel::High);
+}
+
+/// Switching drafts while the switch is in flight stops pi once it
+/// answers; the read-back doesn't start another process.
+#[test]
+fn switch_model_doesnt_restart_a_blurred_agent() {
+    let h = Harness::new(&[&script(
+        r#">>> {"id":"2","type":"set_model","provider":"p","modelId":"m1"}
+### sleep 200
+{"id":"2","type":"response","command":"set_model","success":true,"data":{"id":"m1","name":"M1","provider":"p","api":"x","contextWindow":1,"maxTokens":1}}
+### eof"#,
+    )]);
+    let switch = h.agent.switch_model("p".into(), "m1".into());
+    h.agent.blur();
+    assert_eq!(block_on(switch), Err(Error::Stopped));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(h.spawns.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn rejected_switch_sends_no_get_state() {
+    let h = Harness::new(&[&script(
+        r#">>> {"id":"2","type":"set_model","provider":"p","modelId":"gone"}
+{"id":"2","type":"response","command":"set_model","success":false,"error":"Model not found: p/gone"}
+### eof"#,
+    )]);
+    assert_eq!(
+        block_on(h.agent.switch_model("p".into(), "gone".into())),
+        Err(Error::Rejected("Model not found: p/gone".into()))
+    );
+}
+
 #[test]
 fn rejected_and_handled_prompts_end_the_turn() {
     let h = Harness::new(&[&script(

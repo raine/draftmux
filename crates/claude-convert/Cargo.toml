@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 chrono = { version = "0.4.45", default-features = false, features = ["now"] }
+draftmux-pi-profiles = { path = "../pi-profiles" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 uuid = { version = "1.29.1", features = ["v7"] }

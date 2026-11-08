@@ -359,7 +359,7 @@ impl Agent {
 
     /// The model, thinking level and session pi resolved.
     pub fn get_state(&self) -> impl Future<Output = Result<State, Error>> + Send + use<> {
-        let rx = self.request(protocol::Command::GetState);
+        let rx = self.shared.request(protocol::Command::GetState);
         decode(rx)
     }
 
@@ -370,8 +370,38 @@ impl Agent {
         provider: String,
         model_id: String,
     ) -> impl Future<Output = Result<Model, Error>> + Send + use<> {
-        let rx = self.request(protocol::Command::SetModel { provider, model_id });
+        let rx = self
+            .shared
+            .request(protocol::Command::SetModel { provider, model_id });
         decode(rx)
+    }
+
+    /// Switches the session's model, then reads back what pi resolved. pi
+    /// records the switch in the session, so it survives respawns, and may
+    /// change the thinking level with it; show the returned state rather
+    /// than the requested model. pi handles requests concurrently, so the
+    /// state is only asked for once the switch is done.
+    ///
+    /// The state is read from the process that made the switch. If that
+    /// process stopped in between (a blur, a crash, the agent dropped), this
+    /// is [`Error::Stopped`], though the switch was recorded; the next
+    /// process reports the model in [`AgentEvent::Ready`].
+    pub fn switch_model(
+        &self,
+        provider: String,
+        model_id: String,
+    ) -> impl Future<Output = Result<State, Error>> + Send + use<> {
+        let set = self.set_model(provider, model_id);
+        let generation = self.shared.lock().generation;
+        let shared = Arc::downgrade(&self.shared);
+        async move {
+            set.await?;
+            let rx = match shared.upgrade() {
+                Some(shared) => shared.request_from(generation, protocol::Command::GetState),
+                None => Err(Error::Stopped),
+            };
+            decode(rx).await
+        }
     }
 
     /// Sets the session's thinking level. pi clamps it to what the model
@@ -380,7 +410,9 @@ impl Agent {
         &self,
         level: ThinkingLevel,
     ) -> impl Future<Output = Result<(), Error>> + Send + use<> {
-        let rx = self.request(protocol::Command::SetThinkingLevel { level });
+        let rx = self
+            .shared
+            .request(protocol::Command::SetThinkingLevel { level });
         async move { reply(rx?).await.map(drop) }
     }
 
@@ -388,16 +420,8 @@ impl Agent {
     pub fn get_available_models(
         &self,
     ) -> impl Future<Output = Result<Vec<Model>, Error>> + Send + use<> {
-        let rx = self.request(protocol::Command::GetAvailableModels);
+        let rx = self.shared.request(protocol::Command::GetAvailableModels);
         async move { decode::<ModelsData>(rx).await.map(|data| data.models) }
-    }
-
-    fn request(&self, command: protocol::Command) -> Result<oneshot::Receiver<Reply>, Error> {
-        let mut inner = self.shared.lock();
-        let live = self.shared.ensure_live(&mut inner)?;
-        let (tx, rx) = oneshot::channel();
-        live.send(&command, Some(Pending::Caller(tx)))?;
-        Ok(rx)
     }
 }
 
@@ -434,6 +458,33 @@ impl Shared {
         let live = inner.live.as_ref()?;
         live.quiescent()
             .then(|| live.last_activity + self.idle_timeout)
+    }
+
+    fn request(
+        self: &Arc<Self>,
+        command: protocol::Command,
+    ) -> Result<oneshot::Receiver<Reply>, Error> {
+        let mut inner = self.lock();
+        let live = self.ensure_live(&mut inner)?;
+        let (tx, rx) = oneshot::channel();
+        live.send(&command, Some(Pending::Caller(tx)))?;
+        Ok(rx)
+    }
+
+    /// Sends `command` to process `generation` only, without starting one.
+    fn request_from(
+        &self,
+        generation: u64,
+        command: protocol::Command,
+    ) -> Result<oneshot::Receiver<Reply>, Error> {
+        let mut inner = self.lock();
+        if inner.generation != generation {
+            return Err(Error::Stopped);
+        }
+        let live = inner.live.as_mut().ok_or(Error::Stopped)?;
+        let (tx, rx) = oneshot::channel();
+        live.send(&command, Some(Pending::Caller(tx)))?;
+        Ok(rx)
     }
 
     fn ensure_live<'a>(self: &Arc<Self>, inner: &'a mut Inner) -> Result<&'a mut Live, Error> {

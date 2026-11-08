@@ -36,32 +36,17 @@ pub struct ModelSelection {
     pub thinking_level: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Model {
-    pub provider: String,
-    pub id: String,
-}
+pub use draftmux_pi_profiles::ModelRef as Model;
 
 impl ModelSelection {
     /// The profile's defaults from `<agent_dir>/settings.json`
     /// (`defaultProvider`, `defaultModel`, `defaultThinkingLevel`). A missing
     /// file or key is unknown; a file that doesn't parse is an error.
     pub fn profile_default(agent_dir: &Path) -> Result<Self> {
-        let path = agent_dir.join("settings.json");
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
-        };
-        let bytes = bytes.strip_prefix("\u{feff}".as_bytes()).unwrap_or(&bytes);
-        let settings: Value =
-            serde_json::from_slice(bytes).with_context(|| format!("parsing {}", path.display()))?;
-        let string = |key: &str| settings[key].as_str().map(str::to_owned);
+        let defaults = draftmux_pi_profiles::Defaults::read(agent_dir)?;
         Ok(Self {
-            model: string("defaultProvider")
-                .zip(string("defaultModel"))
-                .map(|(provider, id)| Model { provider, id }),
-            thinking_level: string("defaultThinkingLevel"),
+            model: defaults.model,
+            thinking_level: defaults.thinking_level,
         })
     }
 

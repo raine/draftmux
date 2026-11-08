@@ -131,15 +131,9 @@ fn no_known_model_leaves_the_choice_to_pi() {
 #[test]
 fn profile_default_reads_settings_and_fills_gaps() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(
-        ModelSelection::profile_default(dir.path()).unwrap(),
-        ModelSelection::default()
-    );
-
-    let settings = dir.path().join("settings.json");
     std::fs::write(
-        &settings,
-        "\u{feff}{\"defaultProvider\":\"openai\",\"defaultModel\":\"gpt-6\",\"defaultThinkingLevel\":\"low\"}",
+        dir.path().join("settings.json"),
+        r#"{"defaultProvider":"openai","defaultModel":"gpt-6","defaultThinkingLevel":"low"}"#,
     )
     .unwrap();
     let profile = ModelSelection::profile_default(dir.path()).unwrap();
@@ -166,9 +160,6 @@ fn profile_default_reads_settings_and_fills_gaps() {
         }
     );
     assert_eq!(ModelSelection::default().or(profile.clone()), profile);
-
-    std::fs::write(&settings, "{\"defaultModel\":\"gpt-6\",}").unwrap();
-    assert!(ModelSelection::profile_default(dir.path()).is_err());
 }
 
 #[test]
