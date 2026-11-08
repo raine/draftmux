@@ -13,10 +13,13 @@ mod markup_view;
 )]
 mod model_picker;
 mod open;
+mod process;
 #[expect(dead_code, reason = "read by the Settings window")]
 mod profiles;
 mod resources;
 mod scrollbar;
+mod selection;
+mod selection_popover;
 mod show;
 mod source;
 
@@ -86,6 +89,7 @@ fn main() {
             copy::init(cx);
             chat::init(cx);
             chrome::init(cx);
+            selection_popover::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
             cx.set_menus([Menu::new("Draftmux").items([MenuItem::action("Quit Draftmux", Quit)])]);

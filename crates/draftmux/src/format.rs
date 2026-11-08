@@ -6,12 +6,10 @@
 //! the message wraps. An `.editorconfig` above the drafts directory still
 //! applies; it has no prose-wrap setting.
 
-use std::io::{Read, Write};
-use std::os::unix::process::CommandExt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
@@ -19,6 +17,8 @@ use gpui::{
     actions, div, prelude::*, px, rgb, rgba,
 };
 use shell_env::ShellEnv;
+
+use crate::process;
 
 actions!(format, [Format]);
 
@@ -102,10 +102,12 @@ impl Formatter {
             let dir = dir.clone();
             async move {
                 let config = empty_config()?;
-                run(
+                process::run(
+                    "oxfmt",
                     oxfmt_command(env.command(&oxfmt), &dir, config.path()),
-                    &input,
+                    Some(&input),
                     TIMEOUT,
+                    None,
                 )
             }
         });
@@ -207,111 +209,6 @@ fn oxfmt_command(mut command: Command, dir: &Path, config: &Path) -> Command {
     command
 }
 
-/// Runs `command` with `input` on stdin and returns its stdout. The error is
-/// a message for the user: the first line of stderr when there is one. The
-/// process and anything it started are killed when `timeout` passes.
-fn run(mut command: Command, input: &str, timeout: Duration) -> Result<String, String> {
-    let deadline = Instant::now() + timeout;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Its own group, so a timeout kills its children too.
-        .process_group(0);
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("Couldn't run oxfmt: {err}"))?;
-
-    // Each pipe on its own thread, so a full pipe never blocks the others.
-    let mut stdin = child.stdin.take().expect("stdin is piped");
-    let input = input.as_bytes().to_vec();
-    std::thread::spawn(move || {
-        // oxfmt may exit without reading it all; its exit status says why.
-        let _ = stdin.write_all(&input);
-    });
-    // Readers send chunks as they arrive, so what was written before a
-    // timeout is kept even if the pipe stays open. The channel disconnects
-    // once both reach end of file.
-    let (sender, receiver) = mpsc::channel();
-    let read = |mut pipe: Box<dyn Read + Send>, is_stdout: bool| {
-        let sender = sender.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0; 8192];
-            while let Ok(n @ 1..) = pipe.read(&mut buf) {
-                if sender.send((is_stdout, buf[..n].to_vec())).is_err() {
-                    break;
-                }
-            }
-        });
-    };
-    read(
-        Box::new(child.stdout.take().expect("stdout is piped")),
-        true,
-    );
-    read(
-        Box::new(child.stderr.take().expect("stderr is piped")),
-        false,
-    );
-    drop(sender);
-
-    // Pipes close when every process holding them exits, so reading both to
-    // the end before waiting also bounds stragglers that inherited them.
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let mut pipes_open = true;
-    let status = loop {
-        if !pipes_open {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                Ok(None) => break None,
-                Err(err) => return Err(format!("Couldn't run oxfmt: {err}")),
-            }
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match receiver.recv_timeout(remaining) {
-            Ok((true, chunk)) => stdout.extend(chunk),
-            Ok((false, chunk)) => stderr.extend(chunk),
-            Err(RecvTimeoutError::Timeout) => break None,
-            Err(RecvTimeoutError::Disconnected) => pipes_open = false,
-        }
-    };
-    if status.is_none() {
-        // The child is unreaped, so its group id can't have been reused.
-        // SAFETY: a plain syscall on our own child's process group.
-        unsafe {
-            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
-        }
-        let _ = child.wait();
-        while let Ok((is_stdout, chunk)) = receiver.try_recv() {
-            if !is_stdout {
-                stderr.extend(chunk);
-            }
-        }
-    }
-
-    let stderr_line = first_line(&stderr);
-    let Some(status) = status else {
-        return Err(stderr_line
-            .unwrap_or_else(|| format!("oxfmt didn't finish within {} s", timeout.as_secs_f32())));
-    };
-    if !status.success() {
-        return Err(stderr_line.unwrap_or_else(|| format!("oxfmt failed ({status})")));
-    }
-    String::from_utf8(stdout).map_err(|_| "oxfmt printed text that isn't UTF-8".to_string())
-}
-
-/// The first non-blank line, trimmed.
-fn first_line(output: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(output)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -330,16 +227,6 @@ mod tests {
         (dir, command)
     }
 
-    fn run_fake(script: &str, input: &str, timeout: Duration) -> Result<String, String> {
-        let (dir, command) = fake(script);
-        let config = empty_config().unwrap();
-        run(
-            oxfmt_command(command, dir.path(), config.path()),
-            input,
-            timeout,
-        )
-    }
-
     #[test]
     fn success_returns_stdout() {
         let (bin, command) = fake(
@@ -347,10 +234,12 @@ mod tests {
         );
         let draft = tempfile::tempdir().unwrap();
         let config = empty_config().unwrap();
-        let output = run(
+        let output = process::run(
+            "oxfmt",
             oxfmt_command(command, draft.path(), config.path()),
-            "* a\n",
+            Some("* a\n"),
             TIMEOUT,
+            None,
         );
         assert_eq!(output.unwrap(), "* A\n");
 
@@ -370,44 +259,6 @@ mod tests {
         assert_eq!(fs::read_to_string(config.path()).unwrap(), "{}");
     }
 
-    #[test]
-    fn large_input_does_not_deadlock() {
-        let input = "word ".repeat(100_000);
-        assert_eq!(run_fake("cat", &input, TIMEOUT).unwrap(), input);
-    }
-
-    #[test]
-    fn failure_shows_first_stderr_line() {
-        let script =
-            "cat >/dev/null; echo partial; printf '\\n  x boom\\nmore detail\\n' >&2; exit 2";
-        assert_eq!(run_fake(script, "text", TIMEOUT).unwrap_err(), "x boom");
-    }
-
-    #[test]
-    fn failure_without_stderr_shows_status() {
-        let err = run_fake("exit 3", "text", TIMEOUT).unwrap_err();
-        assert_eq!(err, "oxfmt failed (exit status: 3)");
-    }
-
-    #[test]
-    fn timeout_kills_the_process_group() {
-        let started = Instant::now();
-        let err = run_fake(
-            "echo stalled >&2; sleep 30 & wait",
-            "text",
-            Duration::from_millis(300),
-        )
-        .unwrap_err();
-        assert_eq!(err, "stalled");
-        assert!(started.elapsed() < Duration::from_secs(3));
-    }
-
-    #[test]
-    fn timeout_without_stderr_says_so() {
-        let err = run_fake("sleep 30", "text", Duration::from_millis(200)).unwrap_err();
-        assert_eq!(err, "oxfmt didn't finish within 0.2 s");
-    }
-
     /// Needs oxfmt on `PATH`: `cargo test -p draftmux -- --ignored`.
     #[test]
     #[ignore]
@@ -420,10 +271,12 @@ mod tests {
 
         let config = empty_config().unwrap();
         let input = "* a\n* b\n\nA long line that stays\nbroken where it is.\n\n```js\nconst  x =  1\n```\n";
-        let output = run(
+        let output = process::run(
+            "oxfmt",
             oxfmt_command(Command::new("oxfmt"), &draft, config.path()),
-            input,
+            Some(input),
             TIMEOUT,
+            None,
         )
         .unwrap();
         assert_eq!(

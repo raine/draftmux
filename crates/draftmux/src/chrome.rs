@@ -27,6 +27,7 @@ use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
 use crate::markup_view::{self, MarkupStyle};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
+use crate::selection_popover::SelectionPopover;
 
 actions!(chrome, [TogglePreview]);
 
@@ -62,6 +63,7 @@ pub struct Chrome {
     editor: Entity<Editor>,
     formatter: Entity<Formatter>,
     chat: Entity<Chat>,
+    selection: Entity<SelectionPopover>,
     /// The selected draft's text parsed for its target.
     preview: Option<(Document, MarkupStyle)>,
     show_preview: bool,
@@ -89,7 +91,11 @@ impl Render for Chrome {
                     pane(rgb(PANE_BG))
                         .flex_1()
                         .relative()
-                        .child(self.editor.clone())
+                        .child(SelectionPopover::wrap(
+                            &self.selection,
+                            self.editor.clone(),
+                            cx,
+                        ))
                         .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),
                 )
                 .when(self.show_preview, |row| {
@@ -153,6 +159,7 @@ impl Chrome {
         let editor = cx.new(|cx| Editor::new("", cx));
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         let chat = cx.new(Chat::new);
+        let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
         let subscriptions = vec![
             cx.subscribe(&chat, |this, _, event, cx| this.chat_event(event, cx)),
             cx.subscribe(&editor, |this, editor, event, cx| {
@@ -195,6 +202,7 @@ impl Chrome {
             editor,
             formatter,
             chat,
+            selection,
             preview: None,
             show_preview: true,
             save_error: None,
@@ -246,6 +254,7 @@ impl Chrome {
             self.formatter
                 .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
         }
+        self.sync_selection_draft(cx);
         self.editor
             .update(cx, |editor, cx| editor.set_text(&text, cx));
         self.drafts.loaded(self.editor.read(cx).text());
@@ -256,6 +265,14 @@ impl Chrome {
         window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
         Ok(())
+    }
+
+    /// Selection actions fork the selected draft's session and write for its
+    /// target.
+    fn sync_selection_draft(&self, cx: &mut Context<Self>) {
+        let draft = self.drafts.current().cloned();
+        self.selection
+            .update(cx, |selection, cx| selection.set_draft(draft, cx));
     }
 
     fn toggle_preview(&mut self, cx: &mut Context<Self>) {
@@ -269,6 +286,7 @@ impl Chrome {
         self.preview = None;
         self.editor.update(cx, |editor, cx| editor.set_text("", cx));
         self.chat.update(cx, |chat, cx| chat.set_draft(None, cx));
+        self.sync_selection_draft(cx);
     }
 
     fn chat_event(&mut self, event: &ChatEvent, cx: &mut Context<Self>) {
@@ -303,6 +321,8 @@ impl Chrome {
                     .update(cx, |editor, cx| editor.set_read_only(running, cx));
                 self.formatter
                     .update(cx, |formatter, cx| formatter.set_agent_running(running, cx));
+                self.selection
+                    .update(cx, |selection, cx| selection.set_agent_running(running, cx));
             }
         }
         cx.notify();
@@ -374,6 +394,7 @@ impl Chrome {
             self.chat
                 .update(cx, |chat, cx| chat.set_target(&id, target, cx));
         }
+        self.sync_selection_draft(cx);
         cx.notify();
     }
 

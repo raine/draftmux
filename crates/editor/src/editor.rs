@@ -289,6 +289,11 @@ impl Editor {
         cx.notify();
     }
 
+    /// A mouse drag selection is in progress; the selection isn't final.
+    pub fn is_selecting(&self) -> bool {
+        self.selecting
+    }
+
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
@@ -477,8 +482,11 @@ impl Editor {
         self.after_change(Some(window), true, cx);
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.selecting = false;
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selecting {
+            self.selecting = false;
+            cx.notify();
+        }
     }
 
     fn on_scroll(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
