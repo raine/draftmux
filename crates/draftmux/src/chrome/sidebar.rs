@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use super::{Chrome, FAINT, MUTED, TEXT, shadow, sidebar_column};
-use crate::assets::{ARCHIVE_ICON, GITHUB_ICON, SLACK_ICON};
+use crate::assets::{ARCHIVE_ICON, EMAIL_ICON, GITHUB_ICON, SLACK_ICON};
 use crate::drafts::{relative_time, tilde};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 
@@ -263,14 +263,19 @@ impl Chrome {
     }
 }
 
-/// The target's mark: GitHub's takes the text colour, Slack's keeps its own.
+/// The target's mark: GitHub's and the email envelope take the text colour,
+/// Slack's keeps its own.
 fn platform_icon(target: Target) -> AnyElement {
-    match target {
-        Target::Github => svg()
-            .path(GITHUB_ICON)
+    let tinted = |path| {
+        svg()
+            .path(path)
             .size(px(15.))
             .text_color(rgb(TEXT))
-            .into_any_element(),
+            .into_any_element()
+    };
+    match target {
+        Target::Github => tinted(GITHUB_ICON),
         Target::Slack => img(SLACK_ICON).size(px(15.)).into_any_element(),
+        Target::Email => tinted(EMAIL_ICON),
     }
 }

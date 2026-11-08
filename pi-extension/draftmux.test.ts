@@ -119,6 +119,8 @@ describe("context message", () => {
 		assert.ok(start([{ ...sent, content: "old instructions" }]).message);
 		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "slack" });
 		assert.match(start([sent]).message.content, /Slack mrkdwn/);
+		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "email" });
+		assert.match(start([sent]).message.content, /plain-text email body; no Markdown/);
 	});
 });
 
@@ -138,7 +140,7 @@ describe("config", () => {
 	test("rejects missing or invalid values", () => {
 		assert.throws(() => readConfig({ DRAFTMUX_TARGET: "github" }), /DRAFTMUX_DRAFT_PATH/);
 		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "draft.md", DRAFTMUX_TARGET: "github" }), /absolute/);
-		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "/d.md", DRAFTMUX_TARGET: "email" }), /DRAFTMUX_TARGET/);
+		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "/d.md", DRAFTMUX_TARGET: "teams" }), /DRAFTMUX_TARGET/);
 		assert.throws(() => readConfig({ DRAFTMUX_MODE: "chat" }), /DRAFTMUX_MODE/);
 		assert.deepEqual(readConfig({ DRAFTMUX_MODE: "selection" }), { mode: "selection" });
 	});

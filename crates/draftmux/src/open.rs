@@ -42,6 +42,7 @@ pub struct Args {
 enum TargetArg {
     Github,
     Slack,
+    Email,
 }
 
 /// Runs the command and returns the process exit code.
@@ -94,6 +95,7 @@ fn create(
     let target = match args.target {
         TargetArg::Github => Target::Github,
         TargetArg::Slack => Target::Slack,
+        TargetArg::Email => Target::Email,
     };
     let new = |path, cwd, pi_agent_dir| NewDraft {
         target,

@@ -28,6 +28,10 @@ pub fn copy(target: Target, text: &str, cx: &mut App) -> &'static str {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
             "Copied markdown for GitHub"
         }
+        Target::Email => {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+            "Copied plain text for email"
+        }
         Target::Slack => {
             write_slack(text);
             "Copied as rich text for Slack"

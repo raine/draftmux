@@ -250,9 +250,10 @@ impl Chrome {
         self.save_error = None;
         self.autosave = Task::ready(());
         if let Some(draft) = self.drafts.current() {
-            let dir = draft.dir.clone();
+            let (dir, target) = (draft.dir.clone(), draft.meta.target);
             self.formatter
                 .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
+            self.set_plain_text(target, cx);
         }
         self.sync_selection_draft(cx);
         self.editor
@@ -389,6 +390,7 @@ impl Chrome {
             self.show_toast(format!("Couldn't change the target: {err:#}"), None, cx);
             return;
         }
+        self.set_plain_text(target, cx);
         self.preview = Some(markup_view::preview(target, self.editor.read(cx).text()));
         if let Some(id) = self.drafts.current_id().map(str::to_owned) {
             self.chat
@@ -396,6 +398,15 @@ impl Chrome {
         }
         self.sync_selection_draft(cx);
         cx.notify();
+    }
+
+    /// Email drafts are plain text: no markdown highlighting or Format.
+    fn set_plain_text(&mut self, target: Target, cx: &mut Context<Self>) {
+        let plain_text = target == Target::Email;
+        self.editor
+            .update(cx, |editor, cx| editor.set_markdown(!plain_text, cx));
+        self.formatter
+            .update(cx, |formatter, cx| formatter.set_plain_text(plain_text, cx));
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
@@ -553,7 +564,7 @@ impl Chrome {
     }
 }
 
-/// GitHub/Slack segmented control.
+/// GitHub/Slack/Email segmented control.
 fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement {
     let segment = |target: Target, label: &'static str| {
         let on = target == selected;
@@ -584,6 +595,7 @@ fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement
         .bg(rgba(0x7676801f))
         .child(segment(Target::Github, "GitHub"))
         .child(segment(Target::Slack, "Slack"))
+        .child(segment(Target::Email, "Email"))
 }
 
 /// A box shadow of `color` moved down by `y`. A zero blur with a spread draws

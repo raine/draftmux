@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Hand a GitHub or Slack message off to the Draftmux app for polishing, and read the polished draft back. Use when the user asks to draft, write or polish a message (PR description, issue or PR comment, commit message, Slack message) in Draftmux, or runs /draft. Also use when the user says a Draftmux draft is done, ready, or should be used or posted, including after the conversation was compacted.
+description: Hand a GitHub, Slack or email message off to the Draftmux app for polishing, and read the polished draft back. Use when the user asks to draft, write or polish a message (PR description, issue or PR comment, commit message, Slack message, email) in Draftmux, or runs /draft. Also use when the user says a Draftmux draft is done, ready, or should be used or posted, including after the conversation was compacted.
 ---
 
 # Draftmux draft
@@ -43,7 +43,7 @@ draftmux open "$f" --pi-agent-dir "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" \
 ```
 
 - `--target`: `github` (default) for GitHub markdown, `slack` for Slack
-  messages.
+  messages, `email` for plain-text emails.
 - `--note`: optional. One line saying what message to write, if the
   conversation doesn't make it obvious. Single-quote it; write `'` as `'\''`.
 

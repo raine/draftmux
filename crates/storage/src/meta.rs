@@ -33,6 +33,8 @@ pub struct Meta {
 pub enum Target {
     Github,
     Slack,
+    /// A plain-text email body.
+    Email,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,5 +100,13 @@ mod tests {
         assert_eq!(meta.title, "");
         assert_eq!(meta.pi_session_file, None);
         assert_eq!(meta.note, None);
+    }
+
+    #[test]
+    fn email_target_is_stored_as_email() {
+        let json = FIXTURE.replace(r#""target": "slack""#, r#""target": "email""#);
+        let meta: Meta = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta.target, Target::Email);
+        assert_eq!(serde_json::to_string_pretty(&meta).unwrap(), json);
     }
 }

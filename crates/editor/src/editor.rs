@@ -178,8 +178,10 @@ pub struct Editor {
     pub(crate) autoscroll: bool,
     /// The last painted layout; may be a revision behind the buffer.
     pub(crate) layout: Option<Rc<Layout>>,
-    /// Markdown style spans over the buffer text, in byte offsets.
+    /// Markdown style spans over the buffer text, in byte offsets; empty
+    /// when markdown highlighting is off.
     pub(crate) highlights: Vec<(Range<usize>, Styles)>,
+    markdown: bool,
     /// A mouse drag selection is in progress.
     selecting: bool,
     /// What the last events reported, to emit only real changes.
@@ -204,6 +206,7 @@ impl Editor {
             reported_revision: buffer.revision(),
             highlights: highlight(buffer.text()),
             buffer,
+            markdown: true,
             read_only: false,
             scroll_y: Pixels::ZERO,
             autoscroll: false,
@@ -308,6 +311,24 @@ impl Editor {
         self.after_change(None, false, cx);
     }
 
+    /// Turns markdown highlighting on or off, for text that isn't markdown.
+    pub fn set_markdown(&mut self, markdown: bool, cx: &mut Context<Self>) {
+        if self.markdown == markdown {
+            return;
+        }
+        self.markdown = markdown;
+        self.rehighlight();
+        cx.notify();
+    }
+
+    fn rehighlight(&mut self) {
+        self.highlights = if self.markdown {
+            highlight(self.buffer.text())
+        } else {
+            Vec::new()
+        };
+    }
+
     /// Reports what changed since the last call and schedules a repaint.
     fn after_change(
         &mut self,
@@ -318,7 +339,7 @@ impl Editor {
         let revision = self.buffer.revision();
         let edited = revision != self.reported_revision;
         if edited {
-            self.highlights = highlight(self.buffer.text());
+            self.rehighlight();
         }
         let selection = self.selected_range();
         let selection_changed = selection != self.reported_selection;

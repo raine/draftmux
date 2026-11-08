@@ -89,6 +89,7 @@ pub(crate) fn draft_process(command: &mut Command, draft: &DraftProcess) {
             match draft.target {
                 Target::Github => "github",
                 Target::Slack => "slack",
+                Target::Email => "email",
             },
         );
     // The captured environment can carry values from a pi session the

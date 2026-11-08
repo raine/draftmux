@@ -221,6 +221,8 @@ pub fn preview(target: Target, text: &str) -> (Document, MarkupStyle) {
     match target {
         Target::Github => (markup::github::parse(text), MarkupStyle::github_light()),
         Target::Slack => (markup::slack::parse(text), MarkupStyle::slack_light()),
+        // An email body in the system font; nothing in it is styled.
+        Target::Email => (markup::plain::parse(text), MarkupStyle::github_light()),
     }
 }
 

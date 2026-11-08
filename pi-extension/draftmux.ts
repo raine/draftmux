@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const CONTEXT_MESSAGE_TYPE = "draftmux-context";
 export const TRUST_STATUS_KEY = "draftmux.trust";
 
-type Target = "github" | "slack";
+type Target = "github" | "slack" | "email";
 
 type Config =
 	| { mode: "selection" }
@@ -23,6 +23,8 @@ type Config =
 const TARGET_SYNTAX: Record<Target, string> = {
 	github: "GitHub (GitHub-flavored Markdown)",
 	slack: "Slack (Slack mrkdwn: *bold*, _italic_, ~strike~, <url|text>; no headings or tables)",
+	email:
+		"Email (plain-text email body; no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",
 };
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
@@ -36,10 +38,11 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
 		throw new Error("DRAFTMUX_DRAFT_PATH must be set to the absolute path of draft.md");
 	}
 	const target = env.DRAFTMUX_TARGET;
-	if (target !== "github" && target !== "slack") {
-		throw new Error(`DRAFTMUX_TARGET must be "github" or "slack", got "${target ?? ""}"`);
+	if (!target || !Object.hasOwn(TARGET_SYNTAX, target)) {
+		const names = Object.keys(TARGET_SYNTAX).map((name) => `"${name}"`).join(", ");
+		throw new Error(`DRAFTMUX_TARGET must be one of ${names}, got "${target ?? ""}"`);
 	}
-	return { mode, draftPath, target, instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "" };
+	return { mode, draftPath, target: target as Target, instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "" };
 }
 
 /** Resolves a tool's `path` argument the way pi's edit/write tools do (`resolveToCwd`). */

@@ -23,7 +23,7 @@ respawning the process. bash commands the agent runs inherit them.
 | ----------------------- | -------------------------------------------------------- |
 | `DRAFTMUX_MODE`         | `draft` (default when unset) or `selection`              |
 | `DRAFTMUX_DRAFT_PATH`   | Absolute path of the draft's `draft.md`; draft mode only |
-| `DRAFTMUX_TARGET`       | `github` or `slack`; draft mode only                     |
+| `DRAFTMUX_TARGET`       | `github`, `slack` or `email`; draft mode only            |
 | `DRAFTMUX_INSTRUCTIONS` | The user's drafting instructions, any text; optional     |
 
 A missing or invalid value makes pi exit with status 1 and an error on stderr

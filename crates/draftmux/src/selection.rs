@@ -198,6 +198,7 @@ fn prompt(request: &Request, count: usize) -> Result<String, String> {
         Target::Slack => {
             "Slack mrkdwn (*bold*, _italic_, ~strike~, <url|text>; no headings or tables)"
         }
+        Target::Email => "plain-text email (no Markdown syntax)",
     };
     let prompt = format!(
         "[Draftmux selection request]\n\
@@ -309,6 +310,8 @@ mod tests {
         let mut slack = request("Ship it today", "today", Action::Shorter);
         slack.target = Target::Slack;
         assert!(prompt(&slack, 3).unwrap().contains("Slack mrkdwn"));
+        slack.target = Target::Email;
+        assert!(prompt(&slack, 3).unwrap().contains("plain-text email"));
 
         let blank = request("a \n b", " \n ", Action::Alternatives);
         assert!(prompt(&blank, 3).is_err());
