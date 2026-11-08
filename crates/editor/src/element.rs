@@ -24,6 +24,8 @@ pub(crate) struct Layout {
     pub origin: Point<Pixels>,
     pub line_height: Pixels,
     pub wrap_width: Pixels,
+    /// Height of the text plus padding, before scrolling.
+    pub content_height: Pixels,
     lines: Vec<Line>,
     rows: Vec<Row>,
 }
@@ -246,6 +248,7 @@ impl Element for EditorElement {
             origin: Point::default(),
             line_height: style.line_height,
             wrap_width,
+            content_height,
             lines,
             rows,
         };

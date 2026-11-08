@@ -1,57 +1,128 @@
-//! Window chrome: the unified toolbar, translucent sidebar and opaque content
-//! panes of the "Native" prototype variant (docs/prototype/index.html).
+//! The main window: unified toolbar, translucent drafts sidebar, editor,
+//! preview and chat columns of the "Native" prototype variant
+//! (docs/prototype/index.html).
 //!
 //! The window uses `WindowBackgroundAppearance::Blurred`, so anything painted
 //! with alpha below 1 shows the blurred desktop. The root paints nothing; the
 //! sidebar column paints a translucent tint and the content panes are opaque.
 
-use crate::format::{Format, Formatter};
-use draftmux_storage::Draft;
-use editor::Editor;
+mod sidebar;
+
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use draftmux_storage::{Store, Target};
+use editor::{Editor, EditorEvent};
 use gpui::{
-    Context, Entity, Focusable, FontWeight, MouseButton, Pixels, Point, Rgba, SharedString, Window,
-    WindowControlArea, div, point, prelude::*, px, rgb, rgba,
+    App, BoxShadow, Context, Entity, Focusable, FontWeight, KeyBinding, MouseButton, Pixels, Point,
+    Rgba, ScrollHandle, SharedString, Subscription, Task, Window, WindowControlArea, actions, div,
+    point, prelude::*, px, rgb, rgba, svg,
 };
+use markup::Document;
+
+use crate::assets::PREVIEW_ICON;
+use crate::drafts::{Drafts, tilde};
+use crate::format::{Format, Formatter};
+use crate::markup_view::{self, MarkupStyle};
+use crate::scrollbar::{ScrollbarState, Source, scrollbar};
+
+actions!(chrome, [TogglePreview]);
 
 const TOOLBAR_HEIGHT: Pixels = px(52.);
 const SIDEBAR_WIDTH: Pixels = px(228.);
 const CHAT_WIDTH: Pixels = px(340.);
 /// Origin of the close button; vertically centres the buttons in the toolbar.
 pub const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(20.), px(19.));
+/// How often relative times in the sidebar are redrawn.
+const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 // Light palette of the Native variant.
 const SIDEBAR_BG: u32 = 0xe8e8edbd;
 const SIDEBAR_EDGE: u32 = 0x00000012;
 const HAIRLINE: u32 = 0x00000016;
 const TEXT: u32 = 0x1d1d1f;
+const MUTED: u32 = 0x3c3c43a8;
 const FAINT: u32 = 0x3c3c4373;
 const PANE_BG: u32 = 0xffffff;
 const CHAT_BG: u32 = 0xfbfbfc;
+const ERROR: u32 = 0xc9372c;
 
-/// Placeholder draft until drafts are loaded from storage.
-const SAMPLE_DRAFT: &str = "# Draft\n\nWrite the message here. Markdown such as **bold**, *emphasis*, \
-`code` and [links](https://github.com) is highlighted.\n";
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new("alt-cmd-p", TogglePreview, None)]);
+}
 
 pub struct Chrome {
     /// Set on toolbar mouse-down; the first mouse-move then hands the drag to
     /// the window server, so a plain click never starts a move.
     should_move: bool,
-    /// The draft shown in the window, set by `draftmux open`.
-    draft: Option<Draft>,
+    drafts: Drafts,
+    /// Shows the selected draft; reused across drafts.
     editor: Entity<Editor>,
     formatter: Entity<Formatter>,
+    /// The selected draft's text parsed for its target.
+    preview: Option<(Document, MarkupStyle)>,
+    show_preview: bool,
+    /// Why the selected draft's last save failed; cleared by the next save.
+    save_error: Option<SharedString>,
+    toast: Option<sidebar::Toast>,
+    sidebar_scroll: ScrollHandle,
+    preview_scroll: ScrollHandle,
+    scrollbars: [ScrollbarState; 3],
+    /// Wakes up when the pending edit is due to be saved.
+    autosave: Task<()>,
+    _clock: Task<()>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Render for Chrome {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let [sidebar_bar, editor_bar, preview_bar] = &self.scrollbars;
+        let content = if self.drafts.current().is_some() {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .child(
+                    pane(rgb(PANE_BG))
+                        .flex_1()
+                        .relative()
+                        .child(self.editor.clone())
+                        .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),
+                )
+                .when(self.show_preview, |row| {
+                    row.child(
+                        pane(rgb(PANE_BG))
+                            .flex_1()
+                            .relative()
+                            .border_l_1()
+                            .child(self.preview_body())
+                            .child(scrollbar(
+                                Source::Handle(self.preview_scroll.clone()),
+                                preview_bar,
+                            )),
+                    )
+                })
+        } else {
+            div().flex_1().min_w_0().child(empty_state())
+        };
+
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .text_color(rgb(TEXT))
+            .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &Format, _, cx| {
-                this.formatter
-                    .update(cx, |formatter, cx| formatter.format(cx));
+                if this.drafts.current().is_some() {
+                    this.formatter
+                        .update(cx, |formatter, cx| formatter.format(cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &crate::Quit, _, cx| {
+                if this.flush_before_exit(cx) {
+                    cx.quit();
+                }
             }))
             .child(self.toolbar(cx))
             .child(
@@ -59,56 +130,237 @@ impl Render for Chrome {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(
-                        sidebar_column().pt_2().px_4().child(
-                            div()
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgba(FAINT))
-                                .child("Drafts"),
-                        ),
-                    )
-                    .child(pane(rgb(PANE_BG)).flex_1().child(self.editor.clone()))
-                    .child(
-                        pane(rgb(PANE_BG)).flex_1().border_l_1().child(
-                            div()
-                                .id("preview")
-                                .size_full()
-                                .overflow_y_scroll()
-                                .px_6()
-                                .pt_5()
-                                .pb_10()
-                                .child(crate::markup_view::sample()),
-                        ),
-                    )
-                    .child(pane(rgb(CHAT_BG)).w(CHAT_WIDTH).border_l_1()),
+                    .child(self.sidebar(sidebar_bar, cx))
+                    .child(content)
+                    .child(chat_column()),
             )
+            .children(self.toast(cx))
     }
 }
 
 impl Chrome {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let editor = cx.new(|cx| Editor::new(SAMPLE_DRAFT, cx));
-        window.focus(&editor.focus_handle(cx), cx);
+    pub fn new(store: Store, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let editor = cx.new(|cx| Editor::new("", cx));
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
-        Self {
+        let subscriptions = vec![
+            cx.subscribe(&editor, |this, editor, event, cx| {
+                if *event == EditorEvent::Edited {
+                    this.edited(editor.read(cx).text().to_owned(), cx);
+                }
+            }),
+            // Drafts created or archived by the CLI while the app was in the
+            // background.
+            cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.drafts.refresh();
+                    cx.notify();
+                }
+            }),
+            cx.on_app_quit(|this, _| {
+                this.flush().ok();
+                async {}
+            }),
+        ];
+        // Closing the window releases this view before the app-quit hook
+        // runs, so save while it still exists.
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |this, cx| this.flush_before_exit(cx))
+                .unwrap_or(true)
+        });
+        let clock = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CLOCK_TICK).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let mut chrome = Self {
             should_move: false,
-            draft: None,
+            drafts: Drafts::new(store),
             editor,
             formatter,
+            preview: None,
+            show_preview: true,
+            save_error: None,
+            toast: None,
+            sidebar_scroll: ScrollHandle::new(),
+            preview_scroll: ScrollHandle::new(),
+            scrollbars: Default::default(),
+            autosave: Task::ready(()),
+            _clock: clock,
+            _subscriptions: subscriptions,
+        };
+        if let Some(id) = chrome.drafts.rows().first().map(|row| row.draft.id.clone()) {
+            chrome.select(&id, window, cx).ok();
         }
+        chrome
     }
 
-    pub fn focus_draft(&mut self, draft: Draft, cx: &mut Context<Self>) {
-        eprintln!("draftmux: focused draft {}", draft.id);
-        let dir = draft.dir.clone();
-        self.formatter
-            .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
-        self.draft = Some(draft);
+    /// Selects `id`, as `draftmux open` asks once it has created the draft.
+    pub fn focus_draft(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.drafts.refresh();
+        self.select(id, window, cx)?;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Loads `id` into the editor and preview, unless it's already selected.
+    /// On failure, including failing to save the draft being left, shows the
+    /// error and stays put.
+    fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
+        if self.drafts.current_id() == Some(id) {
+            return Ok(());
+        }
+        let text = match self.drafts.select(id) {
+            Ok(text) => text,
+            Err(err) => {
+                self.show_toast(format!("Couldn't open the draft: {err:#}"), None, cx);
+                return Err(err);
+            }
+        };
+        self.save_error = None;
+        self.autosave = Task::ready(());
+        if let Some(draft) = self.drafts.current() {
+            let dir = draft.dir.clone();
+            self.formatter
+                .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
+        }
+        self.editor
+            .update(cx, |editor, cx| editor.set_text(&text, cx));
+        self.drafts.loaded(self.editor.read(cx).text());
+        self.preview_scroll.set_offset(Point::default());
+        window.focus(&self.editor.focus_handle(cx), cx);
+        cx.notify();
+        Ok(())
+    }
+
+    fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+        self.show_preview = !self.show_preview;
         cx.notify();
     }
 
+    /// Empties the editor after the selected draft left the list.
+    fn deselect(&mut self, cx: &mut Context<Self>) {
+        self.autosave = Task::ready(());
+        self.preview = None;
+        self.editor.update(cx, |editor, cx| editor.set_text("", cx));
+    }
+
+    fn edited(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some(target) = self.drafts.current().map(|draft| draft.meta.target) else {
+            return;
+        };
+        self.preview = Some(markup_view::preview(target, &text));
+        self.drafts.edited(&text, Instant::now());
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
+    fn schedule_save(&mut self, cx: &mut Context<Self>) {
+        let Some(deadline) = self.drafts.deadline() else {
+            return;
+        };
+        self.autosave = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(deadline.saturating_duration_since(Instant::now()))
+                .await;
+            this.update(cx, |this, cx| this.poll_save(cx)).ok();
+        });
+    }
+
+    fn poll_save(&mut self, cx: &mut Context<Self>) {
+        match self.drafts.poll(Instant::now()) {
+            Ok(()) => self.save_error = None,
+            Err(err) => {
+                eprintln!("draftmux: saving draft: {err:#}");
+                self.save_error = Some(format!("Couldn't save: {err:#}").into());
+                // The text stays pending; try again after another delay.
+                let text = self.editor.read(cx).text().to_owned();
+                self.drafts.edited(&text, Instant::now());
+                self.schedule_save(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.drafts
+            .flush()
+            .inspect_err(|err| eprintln!("draftmux: saving draft: {err:#}"))
+    }
+
+    /// Saves before the window closes or the app quits. On failure, shows the
+    /// error and returns false so the unsaved text stays in the editor.
+    fn flush_before_exit(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.flush() {
+            Ok(()) => true,
+            Err(err) => {
+                self.save_error = Some(format!("Couldn't save: {err:#}").into());
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    fn set_target(&mut self, target: Target, cx: &mut Context<Self>) {
+        if let Err(err) = self.drafts.set_target(target) {
+            self.show_toast(format!("Couldn't change the target: {err:#}"), None, cx);
+            return;
+        }
+        self.preview = Some(markup_view::preview(target, self.editor.read(cx).text()));
+        cx.notify();
+    }
+
+    fn preview_body(&self) -> impl IntoElement {
+        let body = match &self.preview {
+            Some((doc, style)) if !doc.blocks.is_empty() => {
+                markup_view::render(doc, style, "preview-body")
+            }
+            _ => div()
+                .text_size(px(14.))
+                .text_color(rgba(FAINT))
+                .child("Nothing to preview")
+                .into_any_element(),
+        };
+        div()
+            .id("preview")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.preview_scroll)
+            .px_6()
+            .pt_5()
+            .pb_10()
+            .child(body)
+    }
+
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.drafts.current();
+        let title: SharedString = match current {
+            Some(draft) => self
+                .drafts
+                .rows()
+                .iter()
+                .find(|row| row.draft.id == draft.id)
+                .map_or_else(|| "Untitled draft".into(), |row| row.title.clone().into()),
+            None => "Draftmux".into(),
+        };
+        let subtitle = match (&self.save_error, current) {
+            (Some(error), _) => Some((error.clone(), rgb(ERROR))),
+            (None, Some(draft)) => Some((
+                tilde(&draft.meta.cwd, std::env::home_dir().as_deref()).into(),
+                rgba(FAINT),
+            )),
+            (None, None) => None,
+        };
+
         div()
             .id("toolbar")
             .h(TOOLBAR_HEIGHT)
@@ -142,23 +394,143 @@ impl Chrome {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
+                    .gap_2()
                     .pl(px(18.))
-                    .pr_3()
+                    .pr(px(12.))
                     .bg(rgb(CHAT_BG))
                     .border_b_1()
                     .border_color(rgba(HAIRLINE))
-                    .text_size(px(13.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(match &self.draft {
-                        Some(draft) => SharedString::from(format!("Draft {}", draft.id)),
-                        None => SharedString::new_static("Draftmux"),
-                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .children(subtitle.map(|(text, color)| {
+                        div()
+                            .min_w(px(40.))
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(color)
+                            .child(text)
+                    }))
                     .child(div().flex_1())
-                    .child(self.formatter.clone()),
+                    .when_some(current.map(|draft| draft.meta.target), |bar, target| {
+                        bar.child(self.toolbar_actions(target, cx))
+                    }),
             )
     }
+
+    /// Draft actions at the toolbar's right end. Their mouse-downs don't reach
+    /// the toolbar, so clicking them never moves or zooms the window.
+    fn toolbar_actions(&self, target: Target, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_2()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(self.formatter.clone())
+            .child(
+                div()
+                    .id("toggle-preview")
+                    .h(px(24.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.))
+                    .group("toggle-preview")
+                    .hover(|style| style.bg(rgba(0x0000000e)))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx)))
+                    .child(
+                        svg()
+                            .path(PREVIEW_ICON)
+                            .size(px(16.))
+                            .text_color(rgba(if self.show_preview { MUTED } else { FAINT }))
+                            .group_hover("toggle-preview", |style| style.text_color(rgb(TEXT))),
+                    ),
+            )
+            .child(target_switch(target, cx))
+        // Copy for GitHub / Copy for Slack goes here, after the target switch.
+    }
+}
+
+/// GitHub/Slack segmented control.
+fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement {
+    let segment = |target: Target, label: &'static str| {
+        let on = target == selected;
+        div()
+            .id(label)
+            .h(px(20.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .rounded(px(5.5))
+            .text_size(px(12.))
+            .when(on, |segment| {
+                segment.bg(rgb(0xffffff)).shadow(vec![
+                    shadow(0x0000000f, 0., 0., 0.5),
+                    shadow(0x00000029, 1., 2.5, 0.),
+                ])
+            })
+            .when(!on, |segment| {
+                segment.on_click(cx.listener(move |this, _, _, cx| this.set_target(target, cx)))
+            })
+            .child(label)
+    };
+    div()
+        .flex()
+        .p(px(2.))
+        .gap(px(2.))
+        .rounded(px(7.))
+        .bg(rgba(0x7676801f))
+        .child(segment(Target::Github, "GitHub"))
+        .child(segment(Target::Slack, "Slack"))
+}
+
+/// A box shadow of `color` moved down by `y`. A zero blur with a spread draws
+/// a hairline ring.
+fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
+    BoxShadow {
+        color: rgba(color).into(),
+        offset: point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(spread),
+        inset: false,
+    }
+}
+
+/// Where the pi conversation goes: messages, tool rows and the composer.
+fn chat_column() -> impl IntoElement {
+    pane(rgb(CHAT_BG)).w(CHAT_WIDTH).flex_none().border_l_1()
+}
+
+fn empty_state() -> impl IntoElement {
+    pane(rgb(PANE_BG))
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgba(MUTED))
+                .child("No drafts"),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgba(FAINT))
+                .child("Hand a message off with the draft skill or draftmux open."),
+        )
 }
 
 /// The translucent sidebar strip, shared by the toolbar and the body so the

@@ -6,8 +6,8 @@
 //! backgrounds around the body.
 
 use std::borrow::Cow;
-use std::sync::OnceLock;
 
+use draftmux_storage::Target;
 use gpui::{
     AnyElement, App, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
     Pixels, SharedString, StrikethroughStyle, StyledText, Window, div, prelude::*, px, relative,
@@ -130,7 +130,6 @@ impl MarkupStyle {
         }
     }
 
-    #[expect(dead_code, reason = "no preview selects the Slack target yet")]
     /// Slack's light message text. Spacing between lines comes from the
     /// newlines kept in the text, so blocks sit only a small margin apart.
     pub fn slack_light() -> Self {
@@ -216,11 +215,13 @@ pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> 
         .into_any_element()
 }
 
-/// A document exercising every construct, for checking the renderer by eye.
-pub fn sample() -> AnyElement {
-    static SAMPLE: OnceLock<Document> = OnceLock::new();
-    let doc = SAMPLE.get_or_init(|| markup::github::parse(include_str!("sample.md")));
-    render(doc, &MarkupStyle::github_light(), "markup-sample")
+/// Parses `text` and picks the style for previewing it on `target`. The one
+/// place a target chooses its parser and style.
+pub fn preview(target: Target, text: &str) -> (Document, MarkupStyle) {
+    match target {
+        Target::Github => (markup::github::parse(text), MarkupStyle::github_light()),
+        Target::Slack => (markup::slack::parse(text), MarkupStyle::slack_light()),
+    }
 }
 
 struct Renderer<'a> {

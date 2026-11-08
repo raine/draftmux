@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use draftmux_storage::{Store, data_dir};
+use draftmux_storage::data_dir;
 use gpui::{App, AsyncApp, WindowHandle};
 use serde::{Deserialize, Serialize};
 
@@ -142,16 +142,13 @@ fn answer(
 }
 
 fn handle(request: Request, window: WindowHandle<Chrome>, cx: &mut AsyncApp) -> Result<()> {
-    let draft = match request {
-        Request::Activate => None,
-        Request::Focus { id } => Some(Store::new(Store::default_root()?).load(&id)?),
-    };
     window.update(cx, |chrome, window, cx| {
-        if let Some(draft) = draft {
-            chrome.focus_draft(draft, cx);
+        if let Request::Focus { id } = &request {
+            chrome.focus_draft(id, window, cx)?;
         }
         window.activate_window();
-    })?;
+        anyhow::Ok(())
+    })??;
     cx.update(|cx| cx.activate(true));
     Ok(())
 }

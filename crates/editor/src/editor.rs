@@ -263,6 +263,23 @@ impl Editor {
         self.after_change(None, false, cx);
     }
 
+    /// The viewport height, content height and scroll offset as last laid
+    /// out, for drawing a scrollbar. `None` before the first frame.
+    pub fn scroll_metrics(&self) -> Option<(Pixels, Pixels, Pixels)> {
+        let layout = self.layout.as_ref()?;
+        Some((
+            layout.bounds.size.height,
+            layout.content_height,
+            self.scroll_y,
+        ))
+    }
+
+    /// Scrolls to `y` from the top; clamped at the next layout.
+    pub fn set_scroll_y(&mut self, y: Pixels, cx: &mut Context<Self>) {
+        self.scroll_y = y;
+        cx.notify();
+    }
+
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
