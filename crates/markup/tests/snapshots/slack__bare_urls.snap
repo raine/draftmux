@@ -1,0 +1,12 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"see https://example.com/a_b_c. and (https://example.com/x) or \\\n         https://en.wikipedia.org/wiki/Foo_(bar), nothttps://x.y\\n\")"
+---
+paragraph
+  "see "
+  "https://example.com/a_b_c" -> https://example.com/a_b_c
+  ". and ("
+  "https://example.com/x" -> https://example.com/x
+  ") or "
+  "https://en.wikipedia.org/wiki/Foo_(bar)" -> https://en.wikipedia.org/wiki/Foo_(bar)
+  ", nothttps://x.y"

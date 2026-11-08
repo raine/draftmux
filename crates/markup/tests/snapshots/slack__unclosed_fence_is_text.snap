@@ -1,0 +1,7 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"```\\nnever closed *bold*\\n\")"
+---
+paragraph
+  "```\nnever closed "
+  "bold" strong

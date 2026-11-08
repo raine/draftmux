@@ -1,0 +1,11 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"# One\\n### Three *bold* ###\\n####### seven\\n#channel\\n#\\n\")"
+---
+heading 1
+  "One"
+heading 3
+  "Three "
+  "bold" strong
+paragraph
+  "####### seven\n#channel\n#"

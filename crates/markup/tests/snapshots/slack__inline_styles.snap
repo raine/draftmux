@@ -1,0 +1,21 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"plain *bold* _italic_ ~gone~ `code` *_both_* ~*struck bold*~ *bold `code` inside*\\n\")"
+---
+paragraph
+  "plain "
+  "bold" strong
+  " "
+  "italic" emph
+  " "
+  "gone" strike
+  " "
+  "code" code
+  " "
+  "both" strong+emph
+  " "
+  "struck bold" strong+strike
+  " "
+  "bold " strong
+  "code" strong+code
+  " inside" strong

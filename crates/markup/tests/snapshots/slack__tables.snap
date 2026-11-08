@@ -1,0 +1,30 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"| Left | Center | Right | None |\\n|:-----|:------:|------:|------|\\n\\\n         | `a|b` | *c* | <https://x.y|l|k> | |\\n| ragged |\\nafter\\n\\nnot | a table\\n\")"
+---
+table [Left, Center, Right, None]
+  header
+    cell
+      "Left"
+    cell
+      "Center"
+    cell
+      "Right"
+    cell
+      "None"
+  row
+    cell
+      "a|b" code
+    cell
+      "c" strong
+    cell
+      "l|k" -> https://x.y
+    cell
+  row
+    cell
+      "ragged"
+    cell
+    cell
+    cell
+paragraph
+  "after\n\nnot | a table"

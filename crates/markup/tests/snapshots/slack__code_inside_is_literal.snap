@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"`*not bold* <https://a.b|x>` and *a `*` b*\\n\")"
+---
+paragraph
+  "*not bold* <https://a.b|x>" code
+  " and "
+  "a " strong
+  "*" strong+code
+  " b" strong

@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"snake_case_name 2*3*4 foo*bar* * spaced * _trailing _ (*paren*) *end*. \\\n         **double** __dunder__ ~~tilde~~\\n\")"
+---
+paragraph
+  "snake_case_name 2*3*4 foo*bar* * spaced * _trailing _ ("
+  "paren" strong
+  ") "
+  "end" strong
+  ". **double** __dunder__ ~~tilde~~"

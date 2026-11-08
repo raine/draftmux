@@ -1,0 +1,8 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"a &amp; b &lt;tag&gt; &amp;lt; `&lt;code&gt;` &gt; not a quote\\n\")"
+---
+paragraph
+  "a & b <tag> &lt; "
+  "<code>" code
+  " > not a quote"

@@ -1,0 +1,5 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"\\n\\n\")"
+---
+

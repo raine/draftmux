@@ -1,0 +1,21 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"- a\\n\\n- b\\n\\n\\n```\\ncode\\n```\\n> quote\\n\\ntext\\n\")"
+---
+list bullet tight
+  item
+    paragraph
+      "a"
+paragraph
+list bullet tight
+  item
+    paragraph
+      "b"
+paragraph
+  "\n"
+code lang=None "code"
+quote
+  paragraph
+    "quote"
+paragraph
+  "\ntext"

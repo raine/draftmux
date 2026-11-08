@@ -1,0 +1,6 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"\\n\\nfirst\\nsecond\\n\\nthird\\n\\n\\nfourth\\n\\n\\n\")"
+---
+paragraph
+  "first\nsecond\n\nthird\n\n\nfourth"

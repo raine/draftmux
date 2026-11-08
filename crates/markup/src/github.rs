@@ -6,7 +6,9 @@
 use comrak::nodes::{AstNode, ListType, NodeValue, TableAlignment};
 use comrak::{Arena, Options, parse_document};
 
-use crate::{AlertKind, Alignment, Block, Document, List, ListItem, Span, SpanStyle, Table};
+use crate::{
+    AlertKind, Alignment, Block, Document, List, ListItem, Span, SpanStyle, Table, push_span,
+};
 
 pub fn parse(markdown: &str) -> Document {
     let arena = Arena::new();
@@ -140,9 +142,9 @@ fn collect_spans<'a>(
 ) {
     for node in parent.children() {
         match &node.data().value {
-            NodeValue::Text(text) => push(out, text, style, link),
-            NodeValue::SoftBreak | NodeValue::LineBreak => push(out, "\n", style, link),
-            NodeValue::Code(code) => push(
+            NodeValue::Text(text) => push_span(out, text, style, link),
+            NodeValue::SoftBreak | NodeValue::LineBreak => push_span(out, "\n", style, link),
+            NodeValue::Code(code) => push_span(
                 out,
                 &code.literal,
                 SpanStyle {
@@ -152,7 +154,7 @@ fn collect_spans<'a>(
                 link,
             ),
             NodeValue::HtmlInline(html) if is_html_comment(html) => {}
-            NodeValue::HtmlInline(html) => push(out, html, style, link),
+            NodeValue::HtmlInline(html) => push_span(out, html, style, link),
             NodeValue::Emph => collect_spans(
                 node,
                 SpanStyle {
@@ -188,19 +190,4 @@ fn collect_spans<'a>(
             _ => collect_spans(node, style, link, out),
         }
     }
-}
-
-fn push(out: &mut Vec<Span>, text: &str, style: SpanStyle, link: Option<&str>) {
-    if let Some(last) = out.last_mut()
-        && last.style == style
-        && last.link.as_deref() == link
-    {
-        last.text.push_str(text);
-        return;
-    }
-    out.push(Span {
-        text: text.to_owned(),
-        style,
-        link: link.map(str::to_owned),
-    });
 }

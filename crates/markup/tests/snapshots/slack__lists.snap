@@ -1,0 +1,51 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"Changes:\\n- one\\n* two\\n• three\\n  - nested *bold*\\n    - deeper\\n  continued line\\n- back\\n\\n\\\n         3. third\\n4. fourth\\n   1. sub\\n- bullet after ordered\\n\\n- [ ] not a task\\n-no space\\n\")"
+---
+paragraph
+  "Changes:"
+list bullet tight
+  item
+    paragraph
+      "one"
+  item
+    paragraph
+      "two"
+  item
+    paragraph
+      "three"
+    list bullet tight
+      item
+        paragraph
+          "nested "
+          "bold" strong
+        list bullet tight
+          item
+            paragraph
+              "deeper\ncontinued line"
+  item
+    paragraph
+      "back"
+paragraph
+list ordered start=3 tight
+  item
+    paragraph
+      "third"
+  item
+    paragraph
+      "fourth"
+    list ordered start=1 tight
+      item
+        paragraph
+          "sub"
+list bullet tight
+  item
+    paragraph
+      "bullet after ordered"
+paragraph
+list bullet tight
+  item
+    paragraph
+      "[ ] not a task"
+paragraph
+  "-no space"

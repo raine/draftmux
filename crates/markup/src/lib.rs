@@ -6,6 +6,7 @@
 //! colors, sizes or fonts.
 
 pub mod github;
+pub mod slack;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Document {
@@ -109,4 +110,24 @@ pub struct SpanStyle {
     pub emph: bool,
     pub strike: bool,
     pub code: bool,
+}
+
+/// Appends `text` to `out`, extending the last span when its style and link
+/// match.
+fn push_span(out: &mut Vec<Span>, text: &str, style: SpanStyle, link: Option<&str>) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(last) = out.last_mut()
+        && last.style == style
+        && last.link.as_deref() == link
+    {
+        last.text.push_str(text);
+        return;
+    }
+    out.push(Span {
+        text: text.to_owned(),
+        style,
+        link: link.map(str::to_owned),
+    });
 }

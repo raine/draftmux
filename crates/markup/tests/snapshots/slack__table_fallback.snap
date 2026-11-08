@@ -1,0 +1,6 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "fallbacks(\"| Backend | Latency | Notes |\\n|:--|--:|:-:|\\n| LM Studio | 0.8s | local |\\n| ollama | 12.1s | `fast` |\\n| é | 1 | |\\n\")"
+---
+note "Slack has no tables, so this pastes as a code block."
+code lang=None "Backend   | Latency | Notes\n----------+---------+------\nLM Studio |    0.8s | local\nollama    |   12.1s | fast\né         |       1 |"

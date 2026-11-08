@@ -1,0 +1,14 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"> first *line*\\n>second\\n>\\n> > nested stays literal\\nafter\\n\\n>>> rest\\nof the\\n\\nmessage\\n\")"
+---
+quote
+  paragraph
+    "first "
+    "line" strong
+    "\nsecond\n\n> nested stays literal"
+paragraph
+  "after\n"
+quote
+  paragraph
+    "rest\nof the\n\nmessage"

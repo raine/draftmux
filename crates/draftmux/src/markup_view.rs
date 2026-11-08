@@ -5,6 +5,7 @@
 //! the text changes and keep the document; they own scrolling, padding and
 //! backgrounds around the body.
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use gpui::{
@@ -27,6 +28,7 @@ pub struct MarkupStyle {
     pub heading_rule_max_level: u8,
     pub block_gap: Pixels,
     pub heading_gap: Pixels,
+    pub strong_weight: FontWeight,
     /// Gap between items of a tight list.
     pub tight_item_gap: Pixels,
     pub list_indent: Pixels,
@@ -36,15 +38,30 @@ pub struct MarkupStyle {
     pub border_color: Hsla,
     pub heading_rule_color: Hsla,
     pub inline_code_background: Hsla,
+    /// Inline code text color; `None` keeps the surrounding color.
+    /// gpui can't size, pad or border part of a line, so inline code keeps
+    /// the body size where Slack draws a smaller bordered chip.
+    pub inline_code_color: Option<Hsla>,
     pub code_background: Hsla,
     pub code_text_size: Pixels,
     pub code_line_height: f32,
     pub code_padding: Pixels,
+    pub code_border: Option<Hsla>,
+    /// Wrap long code lines instead of scrolling them sideways.
+    pub code_wraps: bool,
     pub radius: Pixels,
     pub quote_bar_width: Pixels,
+    pub quote_padding: Pixels,
+    pub quote_text_color: Hsla,
+    /// Number nested ordered lists 1., a., i. by depth instead of 1. at
+    /// every depth.
+    pub ordered_markers_by_depth: bool,
     pub table_stripe: Hsla,
     pub checkbox_checked: Hsla,
     pub alert_colors: AlertColors,
+    /// Replace blocks Slack can't show with what it receives instead
+    /// ([`markup::slack::fallback`]), each with a short note.
+    pub slack_fallbacks: bool,
 }
 
 pub struct AlertColors {
@@ -79,6 +96,7 @@ impl MarkupStyle {
             heading_rule_max_level: 2,
             block_gap: px(16.),
             heading_gap: px(24.),
+            strong_weight: FontWeight::SEMIBOLD,
             tight_item_gap: px(3.5),
             list_indent: px(28.),
             text_color: rgb(0x1f2328).into(),
@@ -87,12 +105,18 @@ impl MarkupStyle {
             border_color: rgb(0xd1d9e0).into(),
             heading_rule_color: rgba(0xd1d9e0b3).into(),
             inline_code_background: rgba(0x818b981f).into(),
+            inline_code_color: None,
             code_background: rgb(0xf6f8fa).into(),
             code_text_size: px(11.9),
             code_line_height: 1.45,
             code_padding: px(16.),
+            code_border: None,
+            code_wraps: false,
             radius: px(6.),
             quote_bar_width: px(3.5),
+            quote_padding: px(14.),
+            quote_text_color: rgb(0x59636e).into(),
+            ordered_markers_by_depth: false,
             table_stripe: rgb(0xf6f8fa).into(),
             checkbox_checked: rgb(0x0969da).into(),
             alert_colors: AlertColors {
@@ -102,8 +126,72 @@ impl MarkupStyle {
                 warning: rgb(0x9a6700).into(),
                 caution: rgb(0xd1242f).into(),
             },
+            slack_fallbacks: false,
         }
     }
+
+    #[expect(dead_code, reason = "no preview selects the Slack target yet")]
+    /// Slack's light message text. Spacing between lines comes from the
+    /// newlines kept in the text, so blocks sit only a small margin apart.
+    pub fn slack_light() -> Self {
+        let text_color = rgb(0x1d1c1d).into();
+        let border_color = rgba(0x1d1c1d21).into();
+        Self {
+            font_family: "Lato".into(),
+            mono_family: "Monaco".into(),
+            text_size: px(15.),
+            line_height: 1.46668,
+            // Headings are replaced by bold lines.
+            heading_scale: [1.; 6],
+            heading_rule_max_level: 0,
+            block_gap: px(4.),
+            heading_gap: px(4.),
+            strong_weight: FontWeight::BOLD,
+            tight_item_gap: px(0.),
+            list_indent: px(26.),
+            text_color,
+            muted_color: rgb(0x616061).into(),
+            link_color: rgb(0x1264a3).into(),
+            border_color,
+            heading_rule_color: border_color,
+            inline_code_background: rgba(0x1d1c1d0a).into(),
+            inline_code_color: Some(rgb(0xe01e5a).into()),
+            code_background: rgba(0x1d1c1d0a).into(),
+            code_text_size: px(12.),
+            code_line_height: 1.50001,
+            code_padding: px(8.),
+            code_border: Some(border_color),
+            code_wraps: true,
+            radius: px(4.),
+            quote_bar_width: px(4.),
+            quote_padding: px(12.),
+            quote_text_color: text_color,
+            ordered_markers_by_depth: true,
+            table_stripe: rgba(0x1d1c1d0a).into(),
+            checkbox_checked: rgb(0x1264a3).into(),
+            alert_colors: AlertColors {
+                note: border_color,
+                tip: border_color,
+                important: border_color,
+                warning: border_color,
+                caution: border_color,
+            },
+            slack_fallbacks: true,
+        }
+    }
+}
+
+/// Registers the bundled fonts the styles use. Call once at startup.
+pub fn init(cx: &mut App) {
+    let fonts = [
+        include_bytes!("../assets/fonts/lato/Lato-Regular.ttf").as_slice(),
+        include_bytes!("../assets/fonts/lato/Lato-Italic.ttf"),
+        include_bytes!("../assets/fonts/lato/Lato-Bold.ttf"),
+        include_bytes!("../assets/fonts/lato/Lato-BoldItalic.ttf"),
+    ];
+    cx.text_system()
+        .add_fonts(fonts.into_iter().map(Cow::Borrowed).collect())
+        .expect("bundled fonts are valid");
 }
 
 /// Renders `doc` at the width its parent gives it. `id` must be unique among
@@ -154,12 +242,25 @@ impl Renderer<'_> {
             .iter()
             .enumerate()
             .map(|(ix, block)| {
+                let fallback = self
+                    .style
+                    .slack_fallbacks
+                    .then(|| markup::slack::fallback(block))
+                    .flatten();
+                let (block, note) = match &fallback {
+                    Some((replacement, note)) => (replacement, Some(*note)),
+                    None => (block, None),
+                };
                 let gap = match block {
                     _ if ix == 0 => px(0.),
                     Block::Heading { .. } => self.style.heading_gap,
                     _ => gap,
                 };
-                div().pt(gap).child(self.block(block)).into_any_element()
+                div()
+                    .pt(gap)
+                    .when_some(note, |this, note| this.child(conversion_note(note)))
+                    .child(self.block(block))
+                    .into_any_element()
             })
             .collect()
     }
@@ -186,8 +287,8 @@ impl Renderer<'_> {
             Block::Quote(blocks) => div()
                 .border_l(style.quote_bar_width)
                 .border_color(style.border_color)
-                .px(style.text_size)
-                .text_color(style.muted_color)
+                .px(style.quote_padding)
+                .text_color(style.quote_text_color)
                 .children(self.blocks(blocks, style.block_gap))
                 .into_any_element(),
             Block::Alert { kind, blocks } => {
@@ -207,13 +308,18 @@ impl Renderer<'_> {
                     .children(self.blocks(blocks, style.block_gap))
                     .into_any_element()
             }
-            Block::Code { text, .. } => div()
+            Block::Code { text, .. } if style.code_wraps => self
+                .code_box()
+                .font_family(style.mono_family.clone())
+                .text_size(style.code_text_size)
+                .line_height(relative(style.code_line_height))
+                .child(SharedString::from(text.clone()))
+                .into_any_element(),
+            Block::Code { text, .. } => self
+                .code_box()
                 .id(self.id())
                 .overflow_x_scroll()
                 .flex()
-                .p(style.code_padding)
-                .rounded(style.radius)
-                .bg(style.code_background)
                 .child(
                     // Unshrunk so long lines widen the content and scroll.
                     div()
@@ -239,6 +345,17 @@ impl Renderer<'_> {
         }
     }
 
+    fn code_box(&self) -> gpui::Div {
+        let style = self.style;
+        div()
+            .p(style.code_padding)
+            .rounded(style.radius)
+            .bg(style.code_background)
+            .when_some(style.code_border, |this, color| {
+                this.border_1().border_color(color)
+            })
+    }
+
     fn list(&mut self, list: &List) -> AnyElement {
         let style = self.style;
         let (item_gap, inner_gap) = if list.tight {
@@ -247,6 +364,11 @@ impl Renderer<'_> {
             (style.block_gap, style.block_gap)
         };
         let bullet = ["•", "◦", "▪"][self.list_depth % 3];
+        let marker_depth = if style.ordered_markers_by_depth {
+            self.list_depth
+        } else {
+            0
+        };
         self.list_depth += 1;
         let items = list
             .items
@@ -255,7 +377,10 @@ impl Renderer<'_> {
             .map(|(ix, item)| {
                 let marker = match (item.task, list.start) {
                     (Some(checked), _) => self.checkbox(checked),
-                    (None, Some(start)) => format!("{}.", start + ix as u64).into_any_element(),
+                    (None, Some(start)) => {
+                        format!("{}.", ordered_marker(start + ix as u64, marker_depth))
+                            .into_any_element()
+                    }
                     (None, None) => bullet.into_any_element(),
                 };
                 div()
@@ -375,7 +500,7 @@ impl Renderer<'_> {
             let range = start..text.len();
             let mut highlight = HighlightStyle::default();
             if span.style.strong {
-                highlight.font_weight = Some(FontWeight::SEMIBOLD);
+                highlight.font_weight = Some(style.strong_weight);
             }
             if span.style.emph {
                 highlight.font_style = Some(FontStyle::Italic);
@@ -388,6 +513,7 @@ impl Renderer<'_> {
             }
             if span.style.code {
                 highlight.background_color = Some(style.inline_code_background);
+                highlight.color = style.inline_code_color;
                 mono_ranges.push((range.clone(), style.mono_family.clone()));
             }
             if let Some(url) = &span.link {
@@ -413,6 +539,68 @@ impl Renderer<'_> {
     }
 }
 
+/// Says how a block changes on its way to the platform, above the
+/// replacement block.
+fn conversion_note(note: &'static str) -> impl IntoElement {
+    div().flex().mb(px(4.)).child(
+        div()
+            .px(px(8.))
+            .py(px(3.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(rgb(0xf4e2b0))
+            .bg(rgb(0xfff8e6))
+            .text_color(rgb(0x7a5a00))
+            .font_family(".SystemUIFont")
+            .text_size(px(12.))
+            .line_height(relative(1.4))
+            .child(note),
+    )
+}
+
+/// The marker for item `number` of an ordered list nested `depth` deep:
+/// decimal, then lowercase letters, then lowercase roman numerals.
+fn ordered_marker(number: u64, depth: usize) -> String {
+    match depth % 3 {
+        1 if number > 0 => {
+            let mut n = number;
+            let mut letters = Vec::new();
+            while n > 0 {
+                n -= 1;
+                letters.push(b'a' + (n % 26) as u8);
+                n /= 26;
+            }
+            letters.iter().rev().map(|&b| b as char).collect()
+        }
+        2 if (1..4000).contains(&number) => {
+            let mut n = number;
+            let mut out = String::new();
+            for (value, numeral) in [
+                (1000, "m"),
+                (900, "cm"),
+                (500, "d"),
+                (400, "cd"),
+                (100, "c"),
+                (90, "xc"),
+                (50, "l"),
+                (40, "xl"),
+                (10, "x"),
+                (9, "ix"),
+                (5, "v"),
+                (4, "iv"),
+                (1, "i"),
+            ] {
+                while n >= value {
+                    out.push_str(numeral);
+                    n -= value;
+                }
+            }
+            out
+        }
+        _ => number.to_string(),
+    }
+}
+
 /// Only web and mail links open. Drafts are agent-written, so other schemes
 /// (`file:`, custom app URLs) and relative links stay inert.
 fn is_openable(url: &str) -> bool {
@@ -424,7 +612,18 @@ fn is_openable(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_openable;
+    use super::{is_openable, ordered_marker};
+
+    #[test]
+    fn numbers_nested_ordered_lists_by_depth() {
+        assert_eq!(ordered_marker(3, 0), "3");
+        assert_eq!(ordered_marker(1, 1), "a");
+        assert_eq!(ordered_marker(27, 1), "aa");
+        assert_eq!(ordered_marker(4, 2), "iv");
+        assert_eq!(ordered_marker(14, 2), "xiv");
+        assert_eq!(ordered_marker(2, 3), "2");
+        assert_eq!(ordered_marker(0, 1), "0");
+    }
 
     #[test]
     fn opens_only_web_and_mail_links() {

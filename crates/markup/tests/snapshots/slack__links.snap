@@ -1,0 +1,13 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"<https://example.com|the site> <https://example.com> <mailto:a@b.co|mail> \\\n         *<https://bold.link|bold link>* <@U123> <#C1|general> <!here> <not a link> a < b\\n\")"
+---
+paragraph
+  "the site" -> https://example.com
+  " "
+  "https://example.com" -> https://example.com
+  " "
+  "mail" -> mailto:a@b.co
+  " "
+  "bold link" strong -> https://bold.link
+  " <@U123> <#C1|general> <!here> <not a link> a < b"

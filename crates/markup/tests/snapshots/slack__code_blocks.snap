@@ -1,0 +1,12 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"```\\nfn main() {\\n    *not bold*\\n}\\n```\\n\\\n         ```rust\\nlet x = 1;\\n```\\n\\\n         before ```inline block``` after\\n\\\n         ```\\n\\nkeeps blank lines\\n\\n```\\n\")"
+---
+code lang=None "fn main() {\n    *not bold*\n}"
+code lang=None "rust\nlet x = 1;"
+paragraph
+  "before"
+code lang=None "inline block"
+paragraph
+  " after"
+code lang=None "\nkeeps blank lines\n"
