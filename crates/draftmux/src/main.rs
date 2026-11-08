@@ -2,6 +2,7 @@ mod chrome;
 mod ipc;
 mod markup_view;
 mod open;
+mod resources;
 mod show;
 mod source;
 

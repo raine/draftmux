@@ -9,6 +9,40 @@ Status: early development. See [docs/design.md](docs/design.md) for the design a
 [docs/prototype/](docs/prototype/) for HTML prototypes of the main window and
 settings.
 
+## Install
+
+Requires macOS with full Xcode installed and the Rust toolchain (see
+Development).
+
+```sh
+scripts/install
+```
+
+This builds `Draftmux.app`, installs it in `~/Applications`, and links
+`~/.local/bin/draftmux` to the binary inside the app, which is both the app
+and the `draftmux` CLI. Make sure `~/.local/bin` is on your `PATH`. Use
+`--app-dir` and `--bin-dir` to install elsewhere. The script only replaces a
+previous Draftmux install, never other files. Run it again to update, and
+after moving the app, since the link points into it. To uninstall, delete
+`Draftmux.app` and the `draftmux` link. Drafts stay in
+`~/Library/Application Support/Draftmux/`.
+
+`scripts/bundle` builds the app without installing it and prints its path
+(`target/release/Draftmux.app`). The app is ad-hoc signed for running locally,
+not notarized for distribution.
+
+### Draft skill
+
+Agents hand messages off to Draftmux with the `draft` skill in
+[skills/draft/](skills/draft/). Claude Code and pi both load skills from
+`~/.claude/skills`, so link it there:
+
+```sh
+ln -s "$PWD/skills/draft" ~/.claude/skills/draft
+```
+
+pi needs nothing else: the pi extension Draftmux runs is bundled with the app.
+
 ## Development
 
 Requires macOS with full Xcode installed (gpui compiles its Metal shaders at
@@ -27,6 +61,9 @@ crates/draftmux/     the app binary: startup, window and UI
 crates/markup/       message block tree and its parsers (no gpui)
 crates/shell-env/    login-shell environment capture; resolves pi and oxfmt
 crates/storage/      draft directories, meta.json, atomic writes, autosave
+pi-extension/        pi extension the app passes to pi; bundled as a resource
+assets/              app icon master (1024 px)
+scripts/             bundle and install scripts
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has

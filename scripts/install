@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Builds Draftmux.app and installs it for the current user: the app into
+# ~/Applications and a `draftmux` symlink into ~/.local/bin pointing at the
+# binary inside the installed app. Never writes outside those two directories
+# (or the ones given with --app-dir and --bin-dir).
+set -euo pipefail
+
+usage() {
+  cat <<USAGE
+Usage: scripts/install [--app-dir DIR] [--bin-dir DIR]
+
+  --app-dir DIR  where Draftmux.app goes (default: ~/Applications)
+  --bin-dir DIR  where the draftmux symlink goes (default: ~/.local/bin)
+USAGE
+}
+
+app_dir="$HOME/Applications"
+bin_dir="$HOME/.local/bin"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --app-dir) app_dir="${2:?--app-dir needs a directory}"; shift 2 ;;
+    --bin-dir) bin_dir="${2:?--bin-dir needs a directory}"; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+app="$app_dir/Draftmux.app"
+link="$bin_dir/draftmux"
+
+# Only ever replace a previous Draftmux install.
+check_targets() {
+  if [[ -e "$app" ]]; then
+    local id
+    id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null || true)"
+    if [[ "$id" != "draftmux" ]]; then
+      echo "install: $app exists and isn't Draftmux; not replacing it" >&2
+      exit 1
+    fi
+  fi
+  if [[ -e "$link" && ! -L "$link" ]]; then
+    echo "install: $link exists and isn't a symlink; not replacing it" >&2
+    exit 1
+  fi
+}
+
+check_targets
+built="$("$(dirname "${BASH_SOURCE[0]}")/bundle")"
+
+mkdir -p "$app_dir" "$bin_dir"
+staging="$(mktemp -d "$app_dir/.Draftmux.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+ditto "$built" "$staging/Draftmux.app"
+rm -rf "$app"
+mv "$staging/Draftmux.app" "$app"
+ln -sf "$app/Contents/MacOS/draftmux" "$link"
+
+echo "Installed $app"
+echo "Linked $link"
+case ":$PATH:" in
+  *":$bin_dir:"*) ;;
+  *) echo "Note: $bin_dir isn't on PATH; add it to use the draftmux command." ;;
+esac

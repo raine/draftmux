@@ -22,6 +22,7 @@ use gpui::{App, AsyncApp, WindowHandle};
 use serde::{Deserialize, Serialize};
 
 use crate::chrome::Chrome;
+use crate::resources;
 
 const SOCKET: &str = "draftmux.sock";
 const LOCK: &str = "draftmux.lock";
@@ -174,11 +175,15 @@ pub fn activate_running() -> Result<()> {
     exchange(wait_for_app(&socket, None)?, &Request::Activate)
 }
 
-/// Starts this binary with no command, detached from the caller: its own
-/// process group, so the agent's tool timeout or Ctrl-C doesn't kill it, and
-/// no stdin or stdout, so a caller reading the CLI's output doesn't wait for
-/// the app to exit. stderr goes to `draftmux.log`. A bundled app would be
-/// launched through LaunchServices instead; the socket protocol is the same.
+/// Starts the app detached from the caller, with no stdin or stdout, so a
+/// caller reading the CLI's output doesn't wait for the app to exit; stderr
+/// goes to `draftmux.log`. From inside `Draftmux.app` the bundle is launched
+/// through LaunchServices (`open -n`, leaving the lock to decide which
+/// instance runs), which doesn't pass on the caller's environment, so `HOME`
+/// is forwarded to keep the app on the CLI's data directory. The returned
+/// child is then `open`, which exits once the launch is submitted. Otherwise
+/// this binary is spawned with no command in its own process group, so the
+/// agent's tool timeout or Ctrl-C doesn't kill it.
 fn launch(dir: &Path) -> Result<Child> {
     let log_path = dir.join(LOG);
     let log = OpenOptions::new()
@@ -186,16 +191,36 @@ fn launch(dir: &Path) -> Result<Child> {
         .append(true)
         .open(&log_path)
         .with_context(|| format!("opening {}", log_path.display()))?;
-    let exe = std::env::current_exe().context("locating the draftmux binary")?;
-    let mut command = Command::new(&exe);
-    if let Some(home) = std::env::home_dir() {
-        command.current_dir(home);
-    }
+    let exe = resources::exe()?;
+    let mut command = match resources::bundle(&exe) {
+        Some(app) => {
+            let mut command = Command::new("/usr/bin/open");
+            command
+                .arg("-n")
+                .arg("-a")
+                .arg(app)
+                .arg("--stderr")
+                .arg(&log_path);
+            if let Some(home) = std::env::var_os("HOME") {
+                let mut env = std::ffi::OsString::from("HOME=");
+                env.push(home);
+                command.arg("--env").arg(env);
+            }
+            command
+        }
+        None => {
+            let mut command = Command::new(&exe);
+            if let Some(home) = std::env::home_dir() {
+                command.current_dir(home);
+            }
+            command.process_group(0);
+            command
+        }
+    };
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log)
-        .process_group(0)
         .spawn()
         .with_context(|| format!("launching {}", exe.display()))
 }
@@ -224,8 +249,9 @@ fn wait_for_app(socket: &Path, mut child: Option<Child>) -> Result<UnixStream> {
         }
         if Instant::now() > deadline {
             bail!(
-                "the app didn't start listening within {}s",
-                TIMEOUT.as_secs()
+                "the app didn't start listening within {}s; see {}",
+                TIMEOUT.as_secs(),
+                socket.with_file_name(LOG).display()
             );
         }
         thread::sleep(POLL);
