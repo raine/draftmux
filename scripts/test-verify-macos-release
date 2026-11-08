@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Checks verify-macos-release. Without arguments, checks that it rejects
+# ad-hoc signed, unsigned and misconfigured input built from a stub bundle.
+# Given a Developer ID signed Draftmux.app or disk image (with APPLE_TEAM_ID
+# set), also checks that it accepts the input and rejects tampered copies.
+set -euo pipefail
+
+if [[ $# -gt 1 ]]; then
+  echo "usage: test-verify-macos-release [SIGNED_APP_OR_DMG]" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+verify="$script_dir/verify-macos-release"
+identifier=$(/usr/bin/plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+reject() {
+  if "$verify" "$@" >"$tmp/rejection.log" 2>&1; then
+    fail "accepted invalid release: $*"
+  fi
+}
+
+# Rejections that need no Developer ID: a stub bundle signed ad hoc, with and
+# without the hardened runtime, and unsigned. The stub is Mach-O so its
+# signature is embedded and the bundle keeps the release layout.
+/bin/cp /usr/bin/true "$tmp/draftmux"
+mkdir "$tmp/stub"
+stub=$("$script_dir/assemble-macos-app" "$tmp/draftmux" 1.2.3 "$tmp/stub")
+APPLE_TEAM_ID='' reject "$stub"
+APPLE_TEAM_ID=team reject "$stub"
+export APPLE_TEAM_ID=${APPLE_TEAM_ID:-ABCDE12345}
+reject "$stub"
+/usr/bin/codesign --force --sign - --identifier "$identifier" "$stub" 2>/dev/null
+reject "$stub"
+/usr/bin/codesign --force --options runtime --sign - --identifier "$identifier" "$stub" 2>/dev/null
+reject "$stub"
+/usr/bin/hdiutil create -quiet -volname Draftmux -srcfolder "$tmp/stub" -fs HFS+ -format UDZO "$tmp/stub.dmg"
+reject "$tmp/stub.dmg"
+/usr/bin/codesign --force --sign - "$tmp/stub.dmg"
+reject "$tmp/stub.dmg"
+reject "$tmp/missing.app"
+reject "$stub" extra
+
+if [[ $# -eq 0 ]]; then
+  echo "ok: missing or invalid team, unsigned, ad-hoc and ad-hoc runtime bundles and images rejected (pass a Developer ID signed app or image to check acceptance and tampering)"
+  exit 0
+fi
+
+"$verify" "$1" >/dev/null || fail "signed input was rejected: $1"
+
+if [[ -f $1 && $1 == *.dmg ]]; then
+  /bin/cp "$1" "$tmp/adhoc.dmg"
+  /usr/bin/codesign --force --sign - "$tmp/adhoc.dmg"
+  reject "$tmp/adhoc.dmg"
+  # Converting rewrites the image without its signature.
+  /usr/bin/hdiutil convert -quiet "$1" -format UDZO -o "$tmp/unsigned.dmg"
+  reject "$tmp/unsigned.dmg"
+  echo "ok: signed disk image accepted; ad-hoc and unsigned copies rejected"
+  exit 0
+fi
+
+# Each case starts from a fresh copy that verifies, so a rejection comes from
+# its change alone.
+app="$tmp/Draftmux.app"
+fixture() {
+  rm -rf "$app"
+  /bin/cp -R "$1" "$app"
+  "$verify" "$app" >/dev/null || fail "copied bundle was rejected"
+}
+# Alter a signed code page without changing the Mach-O header or embedded signature.
+tamper_code_page() {
+  printf '\377\377\377\377' | /bin/dd of="$1" bs=1 seek=16384 conv=notrunc 2>/dev/null
+}
+
+fixture "$1"
+/usr/bin/codesign --force --options runtime --sign - --identifier "$identifier" "$app"
+reject "$app"
+
+fixture "$1"
+/usr/bin/codesign --remove-signature "$app"
+reject "$app"
+
+fixture "$1"
+tamper_code_page "$app/Contents/MacOS/draftmux"
+reject "$app"
+
+fixture "$1"
+/usr/bin/plutil -replace CFBundleName -string Other "$app/Contents/Info.plist"
+reject "$app"
+
+fixture "$1"
+printf x >>"$app/Contents/Resources/pi-extension/draftmux.ts"
+reject "$app"
+
+fixture "$1"
+: >"$app/Contents/Resources/extra"
+reject "$app"
+
+fixture "$1"
+/bin/mv "$app/Contents/MacOS/draftmux" "$app/Contents/MacOS/draftmux-real"
+/bin/ln -s draftmux-real "$app/Contents/MacOS/draftmux"
+reject "$app"
+
+# A stapled notarization ticket is the one file allowed outside the seal.
+ticket="$app/Contents/CodeResources"
+fixture "$1"
+if [[ -e $ticket ]]; then
+  /bin/rm "$ticket"
+else
+  printf 'ticket' >"$ticket"
+fi
+"$verify" "$app" >/dev/null || fail "ticket presence changed the result"
+
+fixture "$1"
+/bin/rm -f "$ticket"
+/bin/mkdir "$ticket"
+reject "$app"
+
+echo "ok: signed app accepted with and without a stapled ticket; ad-hoc, unsigned, tampered executable, Info.plist and pi extension, extra file, symlinked executable and non-file ticket rejected"

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Checks the generated Homebrew cask: Ruby syntax, the disk image URL and
+# checksum, the linked command, and that zap leaves the user's drafts.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+generate="$script_dir/homebrew-cask"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+expect() {
+  grep -qF -- "$1" "$tmp/draftmux.rb" || fail "cask lacks: $1"
+}
+
+sha=$(printf '%064d' 1)
+printf '%s  Draftmux-1.2.3-arm64.dmg\n' "$sha" >"$tmp/dmg.sha256"
+url='https://example.com/releases/v#{version}/Draftmux-#{version}-arm64.dmg'
+homepage=https://example.com/draftmux
+
+"$generate" 1.2.3 "$tmp/dmg.sha256" "$url" "$homepage" >"$tmp/draftmux.rb"
+ruby -c "$tmp/draftmux.rb" >/dev/null || fail "cask is not valid Ruby"
+
+expect 'cask "draftmux" do'
+expect 'version "1.2.3"'
+expect "sha256 \"$sha\""
+expect "url \"$url\""
+expect "homepage \"$homepage\""
+expect 'depends_on arch: :arm64'
+expect 'app "Draftmux.app"'
+expect 'binary "#{appdir}/Draftmux.app/Contents/MacOS/draftmux"'
+
+# Evaluates the cask with a stand-in DSL. zap may remove only preferences,
+# caches and saved state, never drafts or settings.
+identifier=$(/usr/bin/plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+ruby -e '
+  class Cask
+    def zap(**directives); @zap = directives; end
+    def method_missing(*); end
+    def respond_to_missing?(*); true; end
+  end
+  def cask(_name, &block)
+    cask = Cask.new
+    cask.instance_eval(&block)
+    zap = cask.instance_variable_get(:@zap) or abort "cask has no zap stanza"
+    abort "zap does more than trash" unless zap.keys == [:trash]
+    identifier = ARGV.fetch(1)
+    allowed = [
+      "~/Library/Caches/#{identifier}",
+      "~/Library/Preferences/#{identifier}.plist",
+      "~/Library/Saved Application State/#{identifier}.savedState",
+    ]
+    zap.fetch(:trash).each do |path|
+      abort "zap removes #{path}" unless allowed.include?(path)
+    end
+  end
+  load ARGV[0]
+' "$tmp/draftmux.rb" "$identifier" || fail "zap stanza is not limited to preferences, caches and saved state"
+if grep -q 'Application Support' "$tmp/draftmux.rb"; then
+  fail "cask removes user data"
+fi
+
+reject() {
+  if "$generate" "$@" >/dev/null 2>&1; then
+    fail "accepted invalid input: $*"
+  fi
+}
+reject v1.2.3 "$tmp/dmg.sha256" "$url" "$homepage"
+reject 1.2.3-rc.1 "$tmp/dmg.sha256" "$url" "$homepage"
+reject 1.2.3 "$tmp/dmg.sha256" "$url"
+reject 1.2.3 "$tmp/missing.sha256" "$url" "$homepage"
+reject 1.2.3 "$tmp/dmg.sha256" "http://example.com/x.dmg" "$homepage"
+reject 1.2.3 "$tmp/dmg.sha256" 'https://example.com/"x.dmg' "$homepage"
+reject 1.2.3 "$tmp/dmg.sha256" "$url" ''
+printf 'not-a-checksum  Draftmux.dmg\n' >"$tmp/bad.sha256"
+reject 1.2.3 "$tmp/bad.sha256" "$url" "$homepage"
+
+echo "ok: cask installs the arm64 disk image, links draftmux and zaps only preferences, caches and saved state; invalid versions, checksums and URLs rejected"

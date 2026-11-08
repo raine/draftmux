@@ -12,25 +12,26 @@ settings.
 
 ## Install
 
-Requires macOS with full Xcode installed and the Rust toolchain (see
-Development).
+Requires macOS with full Xcode installed, the Rust toolchain (see
+Development) and [just](https://github.com/casey/just).
 
 ```sh
-scripts/install
+just install-app
 ```
 
 This builds `Draftmux.app`, installs it in `~/Applications`, and links
 `~/.local/bin/draftmux` to the binary inside the app, which is both the app
 and the `draftmux` CLI. Make sure `~/.local/bin` is on your `PATH`. Use
-`--app-dir` and `--bin-dir` to install elsewhere. The script only replaces a
-previous Draftmux install, never other files. Run it again to update, and
-after moving the app, since the link points into it. To uninstall, delete
-`Draftmux.app` and the `draftmux` link. Drafts stay in
-`~/Library/Application Support/Draftmux/`.
+`--app-dir` and `--bin-dir` to install elsewhere, and `--app PATH` to install
+an already built `Draftmux.app`. It only replaces a previous Draftmux
+install, never other files. Run it again to update, and after moving the app,
+since the link points into it. To uninstall, delete `Draftmux.app` and the
+`draftmux` link. Drafts stay in `~/Library/Application Support/Draftmux/`.
 
-`scripts/bundle` builds the app without installing it and prints its path
-(`target/release/Draftmux.app`). The app is ad-hoc signed for running locally,
-not notarized for distribution.
+`just app` builds the app without installing it and prints its path
+(`target/release/Draftmux.app`); `just app-debug` builds
+`target/debug/Draftmux.app`. Both are ad-hoc signed for running locally, not
+notarized for distribution.
 
 ### Draft skill
 
@@ -71,8 +72,51 @@ build time). The Rust toolchain is pinned in `rust-toolchain.toml`.
 cargo run
 ```
 
+`cargo run` uses your real drafts. To try a change without touching them, run
+`just dev-app`: it builds a debug `Draftmux Dev.app` and opens it with its own
+data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`),
+beside the installed app. Your pi profiles and shell environment stay the
+same. It prints the command to drive it from the CLI.
+
 Tests that need real external tools, such as oxfmt, are ignored by default.
 Run them with `cargo test -- --ignored`.
+
+`just test-scripts` tests the build, install and release scripts with stub
+binaries, without cargo or Apple credentials; `just shellcheck` lints them.
+
+### Release
+
+`just release-macos` builds a release on an Apple silicon Mac into
+`target/macos-release/<version>/`: `Draftmux.app` signed with a Developer ID
+certificate, notarized and stapled, inside a disk image that is itself
+signed, notarized and stapled, plus the image's `.sha256`. It checks
+credentials before building and uploads or publishes nothing. It needs:
+
+| Variable                           | Value                                              |
+| ---------------------------------- | -------------------------------------------------- |
+| `APPLE_DEVELOPER_ID_CERT_BASE64`   | the Developer ID Application `.p12`, base64        |
+| `APPLE_DEVELOPER_ID_CERT_PASSWORD` | the `.p12` password                                |
+| `APPLE_DEVELOPER_ID_IDENTITY`      | `Developer ID Application: NAME (TEAM)`            |
+| `APPLE_TEAM_ID`                    | the 10-character team ID the signature must carry  |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`      | App Store Connect API key ID and issuer ID         |
+| `ASC_KEY_P8`                       | the API key's `.p8` contents                       |
+
+The steps are separate scripts in `scripts/`: `sign-macos-release`,
+`notarize-macos-release` (which staples through `stapler`),
+`verify-macos-release`, `create-macos-dmg` and `check-macos-dmg`. To check a
+signed build's verification, run `scripts/test-verify-macos-release` with the
+signed app or disk image.
+
+Print the Homebrew cask for a release with
+`just homebrew-cask VERSION CHECKSUM_FILE URL HOMEPAGE`, where `URL` is where
+the disk image is published and may use `#{version}`.
+
+The bundle ID is `CFBundleIdentifier` in `macos/Info.plist`, which every
+script reads. It is part of the signature's designated requirement, so
+changing it after a release loses macOS permissions and preferences tied to
+the old one. The disk image window comes from `macos/dmg/`; after editing
+`background.svg`, regenerate it with `just dmg-layout` (needs `rsvg-convert`
+and `uv`) and commit the output.
 
 ### Layout
 
@@ -88,8 +132,8 @@ crates/settings/     settings.json, directory rules and their resolution (no gpu
 crates/shell-env/    login-shell environment capture; resolves pi and oxfmt
 crates/storage/      draft directories, meta.json, atomic writes, autosave
 pi-extension/        pi extension the app passes to pi; bundled as a resource
-assets/              app icon master (1024 px)
-scripts/             bundle and install scripts
+macos/               Info.plist, app icon master (1024 px) and disk image layout
+scripts/             build, install and release scripts and their tests
 skills/draft/        the `draft` agent skill for Claude Code and pi
 ```
 

@@ -233,10 +233,25 @@ impl Store {
     }
 }
 
-/// The app's data directory, `~/Library/Application Support/Draftmux`.
+/// Overrides [`data_dir`], so a development build can run beside the
+/// installed app without touching its drafts, settings or socket.
+pub const DATA_DIR_VAR: &str = "DRAFTMUX_DATA_DIR";
+
+/// The app's data directory: `$DRAFTMUX_DATA_DIR` when set, else
+/// `~/Library/Application Support/Draftmux`.
 pub fn data_dir() -> Result<PathBuf> {
-    let data = dirs::data_dir().context("no application data directory")?;
-    Ok(data.join("Draftmux"))
+    data_dir_from(std::env::var_os(DATA_DIR_VAR))
+}
+
+fn data_dir_from(var: Option<std::ffi::OsString>) -> Result<PathBuf> {
+    match var.filter(|dir| !dir.is_empty()).map(PathBuf::from) {
+        Some(dir) if dir.is_absolute() => Ok(dir),
+        Some(dir) => bail!("{DATA_DIR_VAR} must be an absolute path: {}", dir.display()),
+        None => {
+            let data = dirs::data_dir().context("no application data directory")?;
+            Ok(data.join("Draftmux"))
+        }
+    }
 }
 
 /// IDs come from the CLI, so only allow what [`Store::create`] generates and
@@ -293,6 +308,18 @@ mod tests {
 
     fn ids<'a>(drafts: impl Iterator<Item = &'a Draft>) -> Vec<&'a str> {
         drafts.map(|d| d.id.as_str()).collect()
+    }
+
+    #[test]
+    fn data_dir_override_must_be_absolute() {
+        assert_eq!(
+            data_dir_from(Some("/tmp/dmx/data".into())).unwrap(),
+            Path::new("/tmp/dmx/data")
+        );
+        assert!(data_dir_from(Some("data".into())).is_err());
+        let default = data_dir_from(None).unwrap();
+        assert!(default.ends_with("Application Support/Draftmux"));
+        assert_eq!(data_dir_from(Some("".into())).unwrap(), default);
     }
 
     #[test]

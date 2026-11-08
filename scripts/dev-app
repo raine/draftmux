@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Opens a debug build of this checkout apart from real data: its own data
+# directory (drafts, settings, lock and socket) under a fresh /tmp root, and
+# its own bundle identifier, so it runs beside the installed app. HOME stays
+# real, so pi finds its profiles, logins and the login shell's environment.
+#
+# The root lives in /tmp, not the per-user TMPDIR, so the socket path stays
+# well under the 104-byte Unix socket limit.
+set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+  echo "usage: dev-app" >&2
+  exit 2
+fi
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+built="$("$repo/scripts/bundle" --debug)"
+
+root=$(mktemp -d /tmp/dmx.XXXXXX)
+app="$root/Draftmux Dev.app"
+ditto "$built" "$app"
+plist="$app/Contents/Info.plist"
+identifier="$(plutil -extract CFBundleIdentifier raw "$plist").dev"
+plutil -replace CFBundleIdentifier -string "$identifier" "$plist"
+plutil -replace CFBundleName -string "Draftmux Dev" "$plist"
+plutil -replace CFBundleDisplayName -string "Draftmux Dev" "$plist"
+codesign --force --identifier "$identifier" --sign - "$app" 2>/dev/null
+
+data="$root/data"
+mkdir "$data"
+open -n --env "DRAFTMUX_DATA_DIR=$data" "$app"
+echo "Draftmux Dev opened with data in $data"
+echo "CLI: DRAFTMUX_DATA_DIR=$data '$app/Contents/MacOS/draftmux' open ..."

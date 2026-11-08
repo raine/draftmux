@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Assembles an unsigned Draftmux.app in OUTPUT_DIR from a built binary and
+# prints its path. The bundle is macos/Info.plist with the version added, the
+# binary, the pi extension and an icon set rendered from macos/app-icon.png.
+set -euo pipefail
+
+# Use only system tools so release assembly matches the signing environment.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 3 ]]; then
+  echo "usage: assemble-macos-app BINARY VERSION OUTPUT_DIR" >&2
+  exit 2
+fi
+binary=$1
+version=$2
+output_dir=$3
+if [[ ! -f $binary ]]; then
+  echo "binary not found: $binary" >&2
+  exit 2
+fi
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "version must be MAJOR.MINOR.PATCH: $version" >&2
+  exit 2
+fi
+if [[ ! -d $output_dir ]]; then
+  echo "output directory not found: $output_dir" >&2
+  exit 2
+fi
+app="$output_dir/Draftmux.app"
+if [[ -e $app || -L $app ]]; then
+  echo "refusing to replace existing bundle: $app" >&2
+  exit 2
+fi
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+contents="$app/Contents"
+mkdir -p "$contents/MacOS" "$contents/Resources/pi-extension"
+cp "$binary" "$contents/MacOS/draftmux"
+chmod 755 "$contents/MacOS/draftmux"
+cp "$root/macos/Info.plist" "$contents/Info.plist"
+plutil -insert CFBundleShortVersionString -string "$version" "$contents/Info.plist"
+plutil -insert CFBundleVersion -string "$version" "$contents/Info.plist"
+plutil -lint "$contents/Info.plist" >/dev/null
+cp "$root/pi-extension/draftmux.ts" "$contents/Resources/pi-extension/"
+
+# The icon set macOS expects, scaled down from the 1024px master.
+iconset=$(mktemp -d "${TMPDIR:-/tmp}/draftmux-icon.XXXXXX")/AppIcon.iconset
+trap 'rm -rf "$(dirname "$iconset")"' EXIT
+mkdir "$iconset"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$root/macos/app-icon.png" \
+    --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  double=$((size * 2))
+  sips -z "$double" "$double" "$root/macos/app-icon.png" \
+    --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$contents/Resources/AppIcon.icns"
+
+# Codesign rejects bundles carrying Finder metadata or resource forks.
+xattr -cr "$app"
+echo "$app"

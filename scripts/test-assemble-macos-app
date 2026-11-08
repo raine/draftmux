@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Assembles a bundle around a stub binary and checks its layout, Info.plist
+# and resources, that it signs ad hoc and runs through a PATH symlink, and
+# that invalid input leaves nothing behind.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+assemble="$script_dir/assemble-macos-app"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+reject() {
+  if "$assemble" "$@" >"$tmp/rejection.log" 2>&1; then
+    fail "accepted invalid assembly: $*"
+  fi
+}
+plist_value() {
+  /usr/bin/plutil -extract "$1" raw "$app/Contents/Info.plist"
+}
+
+printf '#!/bin/sh\necho "draftmux $*"\n' >"$tmp/draftmux"
+mkdir "$tmp/out"
+app="$tmp/out/Draftmux.app"
+[[ $("$assemble" "$tmp/draftmux" 1.2.3 "$tmp/out") == "$app" ]] || fail "unexpected bundle path"
+
+[[ -x $app/Contents/MacOS/draftmux ]] || fail "executable is not executable"
+cmp -s "$tmp/draftmux" "$app/Contents/MacOS/draftmux" || fail "executable differs from input"
+cmp -s "$script_dir/../pi-extension/draftmux.ts" "$app/Contents/Resources/pi-extension/draftmux.ts" ||
+  fail "pi extension differs from pi-extension/draftmux.ts"
+expected_layout='Contents
+Contents/Info.plist
+Contents/MacOS
+Contents/MacOS/draftmux
+Contents/Resources
+Contents/Resources/AppIcon.icns
+Contents/Resources/pi-extension
+Contents/Resources/pi-extension/draftmux.ts'
+[[ $(cd "$app" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort) == "$expected_layout" ]] ||
+  fail "unexpected bundle layout"
+# The system attaches com.apple.provenance, which cannot be cleared and codesign accepts.
+if /usr/bin/xattr -r "$app" | grep -qv ': com\.apple\.provenance$'; then
+  fail "bundle carries extended attributes"
+fi
+[[ $(/usr/bin/file -b "$app/Contents/Resources/AppIcon.icns") == *"Mac OS X icon"* ]] ||
+  fail "AppIcon.icns is not an icon file"
+
+identifier=$(/usr/bin/plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+[[ $(plist_value CFBundleIdentifier) == "$identifier" ]] || fail "CFBundleIdentifier"
+[[ $(plist_value CFBundleExecutable) == draftmux ]] || fail "CFBundleExecutable"
+[[ $(plist_value CFBundleName) == Draftmux ]] || fail "CFBundleName"
+[[ $(plist_value CFBundlePackageType) == APPL ]] || fail "CFBundlePackageType"
+[[ $(plist_value CFBundleIconFile) == AppIcon ]] || fail "CFBundleIconFile"
+[[ $(plist_value CFBundleShortVersionString) == 1.2.3 ]] || fail "CFBundleShortVersionString"
+[[ $(plist_value CFBundleVersion) == 1.2.3 ]] || fail "CFBundleVersion"
+
+# The assembled layout must be signable as a bundle and runnable through a PATH symlink.
+/usr/bin/codesign --force --sign - --identifier "$identifier" "$app" 2>/dev/null
+/usr/bin/codesign --verify --strict "$app" || fail "ad-hoc signed bundle does not verify"
+ln -s "$app/Contents/MacOS/draftmux" "$tmp/draftmux-link"
+[[ $("$tmp/draftmux-link" --help) == "draftmux --help" ]] || fail "symlinked executable did not run"
+
+reject "$tmp/draftmux" 1.2.3 "$tmp/out"
+reject "$tmp/missing" 1.2.3 "$tmp/out2"
+reject "$tmp/draftmux" 1.2.3 "$tmp/missing"
+mkdir "$tmp/out2"
+reject "$tmp/draftmux" v1.2.3 "$tmp/out2"
+reject "$tmp/draftmux" 1.2.3-rc.1 "$tmp/out2"
+reject "$tmp/draftmux" 1.2 "$tmp/out2"
+reject "$tmp/draftmux" 1.2.3
+[[ ! -e $tmp/out2/Draftmux.app ]] || fail "rejected assembly left a bundle"
+echo "ok: bundle assembled with macos/Info.plist, version, icon and pi extension; existing bundle, missing input, missing output and invalid versions rejected"

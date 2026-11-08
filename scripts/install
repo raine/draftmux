@@ -7,36 +7,41 @@ set -euo pipefail
 
 usage() {
   cat <<USAGE
-Usage: scripts/install [--app-dir DIR] [--bin-dir DIR]
+Usage: scripts/install [--app-dir DIR] [--bin-dir DIR] [--app APP]
 
   --app-dir DIR  where Draftmux.app goes (default: ~/Applications)
   --bin-dir DIR  where the draftmux symlink goes (default: ~/.local/bin)
+  --app APP      install this built Draftmux.app instead of building one
 USAGE
 }
 
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_dir="$HOME/Applications"
 bin_dir="$HOME/.local/bin"
+built=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app-dir) app_dir="${2:?--app-dir needs a directory}"; shift 2 ;;
     --bin-dir) bin_dir="${2:?--bin-dir needs a directory}"; shift 2 ;;
+    --app) built="${2:?--app needs a bundle}"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 
+identifier="$(plutil -extract CFBundleIdentifier raw "$root/macos/Info.plist")"
 app="$app_dir/Draftmux.app"
 link="$bin_dir/draftmux"
 
+bundle_id() {
+  plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
 # Only ever replace a previous Draftmux install.
 check_targets() {
-  if [[ -e "$app" ]]; then
-    local id
-    id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null || true)"
-    if [[ "$id" != "draftmux" ]]; then
-      echo "install: $app exists and isn't Draftmux; not replacing it" >&2
-      exit 1
-    fi
+  if [[ -L "$app" || (-e "$app" && "$(bundle_id "$app")" != "$identifier") ]]; then
+    echo "install: $app exists and isn't Draftmux; not replacing it" >&2
+    exit 1
   fi
   if [[ -e "$link" && ! -L "$link" ]]; then
     echo "install: $link exists and isn't a symlink; not replacing it" >&2
@@ -45,15 +50,25 @@ check_targets() {
 }
 
 check_targets
-built="$("$(dirname "${BASH_SOURCE[0]}")/bundle")"
+if [[ -z $built ]]; then
+  built="$("$root/scripts/bundle")"
+elif [[ "$(bundle_id "$built")" != "$identifier" ]]; then
+  echo "install: $built isn't a Draftmux.app" >&2
+  exit 1
+fi
 
 mkdir -p "$app_dir" "$bin_dir"
 staging="$(mktemp -d "$app_dir/.Draftmux.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 ditto "$built" "$staging/Draftmux.app"
-rm -rf "$app"
-mv "$staging/Draftmux.app" "$app"
-ln -sf "$app/Contents/MacOS/draftmux" "$link"
+# Swap the whole bundle, keeping the old one until the new one is in place,
+# so a running app keeps its executable.
+if [[ -e "$app" ]]; then mv "$app" "$staging/Draftmux.app.old"; fi
+if ! mv "$staging/Draftmux.app" "$app"; then
+  if [[ -e "$staging/Draftmux.app.old" ]]; then mv "$staging/Draftmux.app.old" "$app"; fi
+  exit 1
+fi
+ln -sfn "$app/Contents/MacOS/draftmux" "$link"
 
 echo "Installed $app"
 echo "Linked $link"

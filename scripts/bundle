@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
-# Builds Draftmux.app from this checkout and prints its path on stdout.
+# Builds Draftmux.app from this checkout and prints its path on stdout:
+# target/release/Draftmux.app, or target/debug/Draftmux.app with --debug.
 #
-# The bundle holds the release binary (app and CLI in one), the pi extension
-# and the app icon. It is ad-hoc signed, which is enough to run locally built
-# copies; it isn't notarized for distribution. Uses only tools that ship with
-# macOS and Xcode.
+# The bundle holds the binary (app and CLI in one), the pi extension and the
+# app icon. It is ad-hoc signed, which is enough to run locally built copies;
+# scripts/release-macos signs and notarizes for distribution.
 set -euo pipefail
+
+usage() {
+  echo "usage: bundle [--debug]" >&2
+  exit 2
+}
+profile=release
+case $# in
+  0) ;;
+  1) [[ $1 == --debug ]] || usage; profile=debug ;;
+  *) usage ;;
+esac
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
-out="$target_dir/release/Draftmux.app"
+out="$target_dir/$profile/Draftmux.app"
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/crates/draftmux/Cargo.toml" | head -n 1)"
 if [[ -z "$version" ]]; then
@@ -17,62 +28,15 @@ if [[ -z "$version" ]]; then
   exit 1
 fi
 
-cargo build --release --locked -p draftmux \
-  --manifest-path "$root/Cargo.toml" --target-dir "$target_dir" >&2
+cargo_args=(--locked -p draftmux --manifest-path "$root/Cargo.toml" --target-dir "$target_dir")
+if [[ $profile == release ]]; then cargo_args+=(--release); fi
+cargo build "${cargo_args[@]}" >&2
 
-staging="$(mktemp -d "$target_dir/release/.bundle.XXXXXX")"
+staging="$(mktemp -d "$target_dir/$profile/.bundle.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
-app="$staging/Draftmux.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/pi-extension"
-
-cp "$target_dir/release/draftmux" "$app/Contents/MacOS/draftmux"
-cp "$root/pi-extension/draftmux.ts" "$app/Contents/Resources/pi-extension/"
-
-# The icon set macOS expects, scaled down from the 1024px master.
-iconset="$staging/AppIcon.iconset"
-mkdir "$iconset"
-for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" "$root/assets/app-icon.png" \
-    --out "$iconset/icon_${size}x${size}.png" >/dev/null
-  double=$((size * 2))
-  sips -z "$double" "$double" "$root/assets/app-icon.png" \
-    --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
-done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
-
-cat >"$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleDisplayName</key>
-  <string>Draftmux</string>
-  <key>CFBundleExecutable</key>
-  <string>draftmux</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundleIdentifier</key>
-  <string>draftmux</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Draftmux</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$version</string>
-  <key>CFBundleVersion</key>
-  <string>$version</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-</dict>
-</plist>
-PLIST
-plutil -lint -s "$app/Contents/Info.plist"
-
-codesign --force --sign - "$app" >&2
+app="$("$root/scripts/assemble-macos-app" "$target_dir/$profile/draftmux" "$version" "$staging")"
+identifier="$(plutil -extract CFBundleIdentifier raw "$root/macos/Info.plist")"
+codesign --force --identifier "$identifier" --sign - "$app" >&2
 codesign --verify --strict "$app"
 
 rm -rf "$out"

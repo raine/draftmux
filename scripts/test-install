@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Installs a stub Draftmux.app into temporary directories and checks the app,
+# the command link, updating an install, and that anything other than a
+# previous Draftmux install is left alone.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+install="$script_dir/install"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+# Installs $1 into fresh app and bin directories under $tmp/$2.
+install_into() {
+  mkdir -p "$tmp/$2"
+  "$install" --app "$1" --app-dir "$tmp/$2/apps" --bin-dir "$tmp/$2/bin" >"$tmp/install.log" 2>&1
+}
+reject() {
+  if "$install" "$@" >"$tmp/rejection.log" 2>&1; then
+    fail "accepted invalid install: $*"
+  fi
+}
+stub() {
+  mkdir "$tmp/$1"
+  printf '#!/bin/sh\necho "%s $*"\n' "$1" >"$tmp/$1/draftmux"
+  "$script_dir/assemble-macos-app" "$tmp/$1/draftmux" 1.2.3 "$tmp/$1" >/dev/null
+}
+
+stub v1
+stub v2
+apps="$tmp/home/apps"
+bin="$tmp/home/bin"
+install_into "$tmp/v1/Draftmux.app" home || fail "install failed: $(<"$tmp/install.log")"
+[[ -L $bin/draftmux && $(readlink "$bin/draftmux") == "$apps/Draftmux.app/Contents/MacOS/draftmux" ]] ||
+  fail "draftmux does not link into the installed app"
+[[ $("$bin/draftmux" x) == "v1 x" ]] || fail "linked command did not run the installed app"
+
+install_into "$tmp/v2/Draftmux.app" home || fail "update failed: $(<"$tmp/install.log")"
+[[ $("$bin/draftmux" x) == "v2 x" ]] || fail "update did not replace the app"
+[[ $(find "$apps" -mindepth 1 -maxdepth 1) == "$apps/Draftmux.app" ]] || fail "update left files in $apps"
+
+# A different app at the destination stays.
+mkdir -p "$tmp/foreign/apps"
+cp -R "$tmp/v1/Draftmux.app" "$tmp/foreign/apps/"
+/usr/bin/plutil -replace CFBundleIdentifier -string com.example.Other "$tmp/foreign/apps/Draftmux.app/Contents/Info.plist"
+reject --app "$tmp/v2/Draftmux.app" --app-dir "$tmp/foreign/apps" --bin-dir "$tmp/foreign/bin"
+[[ $(/usr/bin/plutil -extract CFBundleIdentifier raw "$tmp/foreign/apps/Draftmux.app/Contents/Info.plist") == com.example.Other ]] ||
+  fail "replaced a foreign app"
+[[ ! -e $tmp/foreign/bin ]] || fail "linked after refusing the app"
+
+# So does a regular file where the link goes.
+mkdir -p "$tmp/file/bin"
+echo keep >"$tmp/file/bin/draftmux"
+reject --app "$tmp/v2/Draftmux.app" --app-dir "$tmp/file/apps" --bin-dir "$tmp/file/bin"
+[[ $(<"$tmp/file/bin/draftmux") == keep && ! -e $tmp/file/apps ]] || fail "replaced a regular file"
+
+# --app must be a Draftmux bundle.
+cp -R "$tmp/foreign/apps/Draftmux.app" "$tmp/Other.app"
+reject --app "$tmp/Other.app" --app-dir "$tmp/other/apps" --bin-dir "$tmp/other/bin"
+reject --app "$tmp/missing.app" --app-dir "$tmp/other/apps" --bin-dir "$tmp/other/bin"
+[[ ! -e $tmp/other ]] || fail "refused install wrote files"
+reject --bogus
+
+echo "ok: installs and updates the app and command link; foreign apps, regular files and non-Draftmux bundles left alone"

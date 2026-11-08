@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Signs a Draftmux.app bundle or disk image with a Developer ID Application
+# certificate, then verifies it with verify-macos-release. The certificate
+# is imported into a temporary keychain that is deleted on exit; the login
+# keychain and its search list are left alone.
+#
+#   APPLE_DEVELOPER_ID_CERT_BASE64    the .p12 certificate and key, base64
+#   APPLE_DEVELOPER_ID_CERT_PASSWORD  the .p12 password
+#   APPLE_DEVELOPER_ID_IDENTITY       "Developer ID Application: NAME (TEAM)"
+#   APPLE_TEAM_ID                     the team verify-macos-release expects
+set -euo pipefail
+
+# Only system tools may handle the signing key.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: sign-macos-release APP_OR_DMG" >&2
+  exit 2
+fi
+target=$1
+
+: "${APPLE_DEVELOPER_ID_CERT_BASE64:?missing signing certificate}"
+: "${APPLE_DEVELOPER_ID_CERT_PASSWORD:?missing signing certificate password}"
+: "${APPLE_DEVELOPER_ID_IDENTITY:?missing signing identity}"
+: "${APPLE_TEAM_ID:?missing Apple Developer team ID}"
+
+if [[ $APPLE_DEVELOPER_ID_IDENTITY != "Developer ID Application:"* ]]; then
+  echo "signing identity must be a Developer ID Application identity" >&2
+  exit 2
+fi
+if [[ ! ( -f $target && $target == *.dmg ) && ! ( -d $target && $target == *.app ) ]]; then
+  echo "app bundle or disk image not found: $target" >&2
+  exit 2
+fi
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Keychain ACLs and the designated requirement include this identifier.
+identifier=$(plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/draftmux-signing.XXXXXX")
+certificate="$work_dir/certificate.p12"
+keychain="$work_dir/signing.keychain-db"
+keychain_password=$(openssl rand -hex 32)
+keychain_created=0
+cleanup() {
+  local status=$?
+  if [[ $keychain_created == 1 ]] && ! security delete-keychain "$keychain" >/dev/null 2>&1; then
+    echo "failed to remove the signing keychain: $keychain" >&2
+    status=1
+  fi
+  rm -rf "$work_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+
+printf '%s' "$APPLE_DEVELOPER_ID_CERT_BASE64" | base64 --decode >"$certificate"
+chmod 600 "$certificate"
+security create-keychain -p "$keychain_password" "$keychain"
+keychain_created=1
+security set-keychain-settings -lut 21600 "$keychain"
+security unlock-keychain -p "$keychain_password" "$keychain"
+security import "$certificate" -k "$keychain" \
+  -P "$APPLE_DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign
+security set-key-partition-list -S apple-tool:,apple:,codesign: \
+  -s -k "$keychain_password" "$keychain" >/dev/null
+
+# Resolve the configured name inside this keychain, then give codesign the
+# unambiguous certificate fingerprint instead of a display-name search.
+valid_identities=$(security find-identity -v -p codesigning "$keychain")
+printf '%s\n' "$valid_identities"
+identity_hash=''
+while IFS= read -r line; do
+  if [[ $line == *"\"$APPLE_DEVELOPER_ID_IDENTITY\"" ]]; then
+    identity_hash+=$(sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) ".*"$/\1/p' <<<"$line")
+  fi
+done <<<"$valid_identities"
+if [[ ! $identity_hash =~ ^[0-9A-F]{40}$ ]]; then
+  echo "configured signing identity must match exactly one valid identity in the imported certificate" >&2
+  exit 1
+fi
+
+# A disk image is not code, so it keeps its default identifier and no runtime.
+if [[ $target == *.dmg ]]; then
+  codesign --force --timestamp --keychain "$keychain" --sign "$identity_hash" "$target"
+else
+  codesign --force --options runtime --timestamp --identifier "$identifier" \
+    --keychain "$keychain" --sign "$identity_hash" "$target"
+fi
+"$script_dir/verify-macos-release" "$target"

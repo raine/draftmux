@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Prints the Homebrew cask for a release's Draftmux disk image.
+#
+#   VERSION        the release version, MAJOR.MINOR.PATCH
+#   CHECKSUM_FILE  the image's .sha256 file, as written by release-macos
+#   URL            where the image is downloaded from; may use #{version}
+#   HOMEPAGE       the project's homepage
+#
+# Builds are arm64 only. Uninstalling and zap leave drafts and settings in
+# ~/Library/Application Support/Draftmux: they are the user's writing.
+set -euo pipefail
+
+if [[ $# -ne 4 ]]; then
+  echo "usage: homebrew-cask VERSION CHECKSUM_FILE URL HOMEPAGE" >&2
+  exit 2
+fi
+version=$1
+checksum_file=$2
+url=$3
+homepage=$4
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "version must be MAJOR.MINOR.PATCH: $version" >&2
+  exit 2
+fi
+for value in "$url" "$homepage"; do
+  if [[ ! $value =~ ^https://[^[:space:]\"\\]+$ ]]; then
+    echo "URL and homepage must be https URLs without quotes or spaces: $value" >&2
+    exit 2
+  fi
+done
+if [[ ! -f $checksum_file ]]; then
+  echo "checksum file not found: $checksum_file" >&2
+  exit 2
+fi
+sha=$(awk '{print $1; exit}' "$checksum_file")
+if [[ ! $sha =~ ^[0-9a-f]{64}$ ]]; then
+  echo "invalid checksum in $checksum_file" >&2
+  exit 1
+fi
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+identifier=$(plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+
+cat <<EOF
+cask "draftmux" do
+  version "${version}"
+  sha256 "${sha}"
+
+  url "${url}"
+  name "Draftmux"
+  desc "Draft GitHub, Slack and email messages with an agent"
+  homepage "${homepage}"
+
+  depends_on arch: :arm64
+
+  app "Draftmux.app"
+  binary "#{appdir}/Draftmux.app/Contents/MacOS/draftmux"
+
+  zap trash: [
+    "~/Library/Caches/${identifier}",
+    "~/Library/Preferences/${identifier}.plist",
+    "~/Library/Saved Application State/${identifier}.savedState",
+  ]
+end
+EOF

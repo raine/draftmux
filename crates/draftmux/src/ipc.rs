@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use draftmux_storage::data_dir;
+use draftmux_storage::{DATA_DIR_VAR, data_dir};
 use gpui::{App, AsyncApp, WindowHandle};
 use serde::{Deserialize, Serialize};
 
@@ -177,7 +177,8 @@ pub fn activate_running() -> Result<()> {
 /// goes to `draftmux.log`. From inside `Draftmux.app` the bundle is launched
 /// through LaunchServices (`open -n`, leaving the lock to decide which
 /// instance runs), which doesn't pass on the caller's environment, so `HOME`
-/// is forwarded to keep the app on the CLI's data directory. The returned
+/// and any `DRAFTMUX_DATA_DIR` are forwarded to keep the app on the CLI's
+/// data directory. The returned
 /// child is then `open`, which exits once the launch is submitted. Otherwise
 /// this binary is spawned with no command in its own process group, so the
 /// agent's tool timeout or Ctrl-C doesn't kill it.
@@ -198,10 +199,12 @@ fn launch(dir: &Path) -> Result<Child> {
                 .arg(app)
                 .arg("--stderr")
                 .arg(&log_path);
-            if let Some(home) = std::env::var_os("HOME") {
-                let mut env = std::ffi::OsString::from("HOME=");
-                env.push(home);
-                command.arg("--env").arg(env);
+            for name in ["HOME", DATA_DIR_VAR] {
+                if let Some(value) = std::env::var_os(name) {
+                    let mut env = std::ffi::OsString::from(format!("{name}="));
+                    env.push(value);
+                    command.arg("--env").arg(env);
+                }
             }
             command
         }

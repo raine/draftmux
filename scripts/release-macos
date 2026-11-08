@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Builds a distributable Draftmux release on this Mac into
+# target/macos-release/VERSION: the app signed with Developer ID, notarized
+# and stapled, inside a disk image that is itself signed, notarized and
+# stapled, plus the image's .sha256. Uploads and publishes nothing; generate
+# the Homebrew cask from the .sha256 with scripts/homebrew-cask.
+#
+# Needs the signing variables of scripts/sign-macos-release and the App Store
+# Connect variables of scripts/notarize-macos-release. Builds are arm64 only.
+set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+  echo "usage: release-macos" >&2
+  exit 2
+fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+scripts="$root/scripts"
+
+# Fail before the long build when anything later would.
+if [[ $(uname -m) != arm64 ]]; then
+  echo "releases are built on Apple silicon (arm64) only" >&2
+  exit 2
+fi
+secrets=(APPLE_DEVELOPER_ID_CERT_BASE64 APPLE_DEVELOPER_ID_CERT_PASSWORD ASC_KEY_P8)
+missing=()
+for name in "${secrets[@]}" APPLE_DEVELOPER_ID_IDENTITY APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID; do
+  if [[ -z ${!name:-} ]]; then missing+=("$name"); fi
+done
+if (( ${#missing[@]} > 0 )); then
+  echo "missing release credentials: ${missing[*]}" >&2
+  echo "see scripts/sign-macos-release and scripts/notarize-macos-release" >&2
+  exit 2
+fi
+if ! xcrun --find notarytool >/dev/null 2>&1; then
+  echo "notarytool not found; install Xcode" >&2
+  exit 2
+fi
+
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/crates/draftmux/Cargo.toml" | head -n 1)"
+out="${CARGO_TARGET_DIR:-$root/target}/macos-release/$version"
+if [[ -e $out ]]; then
+  echo "refusing to replace an existing release: $out" >&2
+  exit 2
+fi
+
+# Build scripts run arbitrary code, so the build never sees the secrets.
+unset_secrets=()
+for name in "${secrets[@]}"; do unset_secrets+=(-u "$name"); done
+built="$(env "${unset_secrets[@]}" "$scripts/bundle")"
+
+mkdir -p "$out"
+app="$out/Draftmux.app"
+ditto "$built" "$app"
+"$scripts/sign-macos-release" "$app"
+"$scripts/notarize-macos-release" "$app"
+
+# The image holds the stapled app, so it installs offline without prompts.
+dmg="$out/Draftmux-$version-arm64.dmg"
+"$scripts/create-macos-dmg" "$app" "$dmg"
+"$scripts/sign-macos-release" "$dmg"
+"$scripts/notarize-macos-release" "$dmg"
+"$scripts/check-macos-dmg" "$dmg" "$app"
+(cd "$out" && shasum -a 256 "$(basename "$dmg")" >"$(basename "$dmg" .dmg).sha256")
+echo "Released $dmg"

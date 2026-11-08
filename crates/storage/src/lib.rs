@@ -14,4 +14,4 @@ mod store;
 pub use atomic::write as write_atomic;
 pub use autosave::Autosave;
 pub use meta::{DraftSettings, Meta, ModelChoice, Source, SourceKind, Status, Target};
-pub use store::{Draft, NewDraft, Scan, Store, data_dir};
+pub use store::{DATA_DIR_VAR, Draft, NewDraft, Scan, Store, data_dir};

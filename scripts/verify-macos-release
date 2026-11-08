@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Checks that a Draftmux.app or disk image carries a valid Developer ID
+# signature from APPLE_TEAM_ID. An app must also have exactly the layout
+# assemble-macos-app produces, sealed, with the stable designated requirement
+# for the bundle identifier in macos/Info.plist.
+set -euo pipefail
+
+# Use only system tools to evaluate release signatures.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: verify-macos-release APP_OR_DMG" >&2
+  exit 2
+fi
+target=$1
+: "${APPLE_TEAM_ID:?missing Apple Developer team ID}"
+if [[ ! $APPLE_TEAM_ID =~ ^[A-Z0-9]{10}$ ]]; then
+  echo "Apple Developer team ID must be 10 letters or digits: $APPLE_TEAM_ID" >&2
+  exit 2
+fi
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The identity login Keychain ACLs and macOS privacy settings follow across
+# upgrades.
+identifier=$(plutil -extract CFBundleIdentifier raw "$script_dir/../macos/Info.plist")
+
+developer_id_requirement="anchor apple generic"
+developer_id_requirement+=" and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
+developer_id_requirement+=" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+developer_id_requirement+=" and certificate leaf[subject.OU] = \"$APPLE_TEAM_ID\""
+
+# A disk image carries a Developer ID signature but no code identity.
+if [[ -f $target && $target == *.dmg ]]; then
+  codesign --verify --strict --verbose=2 "$target"
+  if ! codesign --verify --verbose=2 -R="$developer_id_requirement" "$target"; then
+    echo "disk image signature does not satisfy the expected Developer ID requirement" >&2
+    exit 1
+  fi
+  codesign -d --verbose=4 "$target" 2>&1
+  exit 0
+fi
+if [[ ! -d $target || $target != *.app ]]; then
+  echo "app bundle or disk image not found: $target" >&2
+  exit 2
+fi
+
+# Exactly the files assembled by assemble-macos-app plus the bundle seal, and
+# the notarization ticket once stapled.
+expected_layout='Contents
+Contents/Info.plist
+Contents/MacOS
+Contents/MacOS/draftmux
+Contents/Resources
+Contents/Resources/AppIcon.icns
+Contents/Resources/pi-extension
+Contents/Resources/pi-extension/draftmux.ts
+Contents/_CodeSignature
+Contents/_CodeSignature/CodeResources'
+layout=$(cd "$target" && find . -mindepth 1 | sed 's|^\./||' | grep -vx 'Contents/CodeResources' | LC_ALL=C sort)
+if [[ -L $target/Contents/CodeResources ||
+      ( -e $target/Contents/CodeResources && ! -f $target/Contents/CodeResources ) ||
+      $layout != "$expected_layout" ]]; then
+  echo "app bundle does not have the expected layout: $target" >&2
+  exit 1
+fi
+executable="$target/Contents/MacOS/draftmux"
+if [[ -L $executable || ! -f $executable ]] ||
+   [[ $(plutil -extract CFBundleIdentifier raw "$target/Contents/Info.plist") != "$identifier" ]] ||
+   [[ $(plutil -extract CFBundleExecutable raw "$target/Contents/Info.plist") != draftmux ]]; then
+  echo "app bundle does not identify its draftmux executable as $identifier" >&2
+  exit 1
+fi
+
+codesign --verify --strict --verbose=2 "$target"
+signature=$(codesign -d -r- --verbose=4 "$target" 2>&1)
+actual_identifier=$(sed -n 's/^Identifier=//p' <<<"$signature")
+team_identifier=$(sed -n 's/^TeamIdentifier=//p' <<<"$signature")
+designated_requirement=$(sed -n 's/^designated => //p' <<<"$signature")
+if [[ $actual_identifier != "$identifier" ||
+      $team_identifier != "$APPLE_TEAM_ID" ||
+      $designated_requirement == *"cdhash"* ||
+      $designated_requirement != *"identifier \"$identifier\""* ]]; then
+  echo "release signature does not have the expected stable designated requirement" >&2
+  exit 1
+fi
+if ! grep -q '^CodeDirectory .*flags=.*(runtime)' <<<"$signature"; then
+  echo "release signature does not enable the hardened runtime" >&2
+  exit 1
+fi
+if ! grep -q '^Info.plist entries=' <<<"$signature" ||
+   ! grep -q '^Sealed Resources version=2 ' <<<"$signature"; then
+  echo "app bundle signature does not seal its Info.plist and resources" >&2
+  exit 1
+fi
+
+release_requirement="identifier \"$identifier\" and $developer_id_requirement"
+if ! codesign --verify --verbose=2 -R="$release_requirement" "$target"; then
+  echo "release signature does not satisfy the expected Developer ID requirement" >&2
+  exit 1
+fi
+printf '%s\n' "$signature"
