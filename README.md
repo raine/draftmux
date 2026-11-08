@@ -75,6 +75,7 @@ cargo run
 ```text
 Cargo.toml           workspace manifest; shared dependencies and the gpui pin
 rust-toolchain.toml  toolchain matching Zed at the pinned gpui rev
+crates/claude-convert/ Claude Code transcript → pi session conversion (no gpui)
 crates/draftmux/     the app binary: startup, window and UI
 crates/markup/       message block tree and its parsers (no gpui)
 crates/shell-env/    login-shell environment capture; resolves pi and oxfmt

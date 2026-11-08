@@ -56,6 +56,12 @@ impl fmt::Display for PiMissing {
 impl std::error::Error for PiMissing {}
 
 impl ShellEnv {
+    /// Captures the login shell's environment now, blocking for up to the
+    /// capture timeout. The app uses [`init`] instead.
+    pub fn capture() -> Self {
+        Self::capture_with(&CaptureOptions::from_process())
+    }
+
     fn capture_with(options: &CaptureOptions) -> Self {
         let (vars, capture_error) = match capture::capture(options) {
             Ok(vars) => (vars, None),
@@ -133,7 +139,7 @@ pub fn init(cx: &mut App) {
         .background_executor()
         .spawn(async {
             let started = Instant::now();
-            let env = ShellEnv::capture_with(&CaptureOptions::from_process());
+            let env = ShellEnv::capture();
             log_summary(&env, started);
             Arc::new(env)
         })
