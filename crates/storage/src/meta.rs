@@ -23,6 +23,10 @@ pub struct Meta {
     /// (`draftmux open --note`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Settings resolved for the draft's directory when it was created.
+    /// Later settings changes leave them alone.
+    #[serde(default)]
+    pub settings: DraftSettings,
     pub created_at: DateTime<Utc>,
     /// Last activity; the drafts list is sorted by this, newest first.
     pub updated_at: DateTime<Utc>,
@@ -35,6 +39,54 @@ pub enum Target {
     Slack,
     /// A plain-text email body.
     Email,
+}
+
+impl Target {
+    /// Every target, in the order the app offers them.
+    pub const ALL: &[Target] = &[Target::Github, Target::Slack, Target::Email];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Target::Github => "GitHub",
+            Target::Slack => "Slack",
+            Target::Email => "Email",
+        }
+    }
+}
+
+/// The settings a draft keeps from its creation (see [`Meta::settings`]).
+/// Drafts created before settings existed load with these defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DraftSettings {
+    /// Sent to the drafting agent by the bundled pi extension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// Whether pi loads `AGENTS.md`/`CLAUDE.md` context files; off runs pi
+    /// with `--no-context-files`.
+    pub context_files: bool,
+    /// The model selection actions run on; none keeps the draft session's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_model: Option<ModelChoice>,
+}
+
+impl Default for DraftSettings {
+    fn default() -> Self {
+        Self {
+            instructions: None,
+            context_files: true,
+            selection_model: None,
+        }
+    }
+}
+
+/// A model with the thinking level it runs at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelChoice {
+    pub provider: String,
+    pub model_id: String,
+    /// A pi thinking level such as `high`.
+    pub thinking: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +125,15 @@ mod tests {
   "cwd": "/Users/me/code/app",
   "pi_session_file": "/Users/me/Library/Application Support/Draftmux/drafts/x/session/s.jsonl",
   "pi_agent_dir": "/Users/me/.pi/agent",
+  "settings": {
+    "instructions": "Short paragraphs.",
+    "context_files": false,
+    "selection_model": {
+      "provider": "anthropic",
+      "model_id": "claude-haiku-5-5",
+      "thinking": "low"
+    }
+  },
   "created_at": "2026-11-08T10:00:00Z",
   "updated_at": "2026-11-08T11:30:00Z"
 }"#;
@@ -95,11 +156,22 @@ mod tests {
         let object = value.as_object_mut().unwrap();
         object.remove("title");
         object.remove("pi_session_file");
+        object.remove("settings");
 
         let meta: Meta = serde_json::from_value(value).unwrap();
         assert_eq!(meta.title, "");
         assert_eq!(meta.pi_session_file, None);
         assert_eq!(meta.note, None);
+        assert_eq!(meta.settings, DraftSettings::default());
+        assert!(meta.settings.context_files);
+    }
+
+    #[test]
+    fn every_target_round_trips() {
+        for &target in Target::ALL {
+            let json = serde_json::to_string(&target).unwrap();
+            assert_eq!(serde_json::from_str::<Target>(&json).unwrap(), target);
+        }
     }
 
     #[test]

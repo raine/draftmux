@@ -40,6 +40,7 @@ fn prompt_round_trip() {
         draft_path,
         target: Target::Github,
         instructions: None,
+        context_files: true,
     };
     let (agent, mut events) = Agent::new(spec, Duration::from_secs(60));
 

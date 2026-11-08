@@ -38,6 +38,8 @@ pub struct LaunchSpec {
     pub draft_path: PathBuf,
     pub target: Target,
     pub instructions: Option<String>,
+    /// Off runs pi with `--no-context-files`.
+    pub context_files: bool,
 }
 
 impl LaunchSpec {
@@ -50,6 +52,9 @@ impl LaunchSpec {
             .arg("rpc")
             .arg("--session")
             .arg(&self.session_file);
+        if !self.context_files {
+            command.arg("--no-context-files");
+        }
         draft_process(
             &mut command,
             &DraftProcess {

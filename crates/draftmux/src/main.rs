@@ -1,3 +1,4 @@
+mod app_settings;
 mod assets;
 mod chat;
 mod chat_model;
@@ -7,19 +8,15 @@ mod drafts;
 mod format;
 mod ipc;
 mod markup_view;
-#[expect(
-    dead_code,
-    reason = "used through chat_model until the Settings window"
-)]
 mod model_picker;
 mod open;
 mod process;
-#[expect(dead_code, reason = "read by the Settings window")]
 mod profiles;
 mod resources;
 mod scrollbar;
 mod selection;
 mod selection_popover;
+mod settings_window;
 mod show;
 mod source;
 mod theme;
@@ -85,6 +82,7 @@ fn main() {
             theme::init(cx);
             shell_env::init(cx);
             profiles::init(cx);
+            app_settings::init(cx);
             editor::init(cx);
             markup_view::init(cx);
             format::init(cx);
@@ -92,17 +90,14 @@ fn main() {
             chat::init(cx);
             chrome::init(cx);
             selection_popover::init(cx);
+            settings_window::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-            cx.set_menus([Menu::new("Draftmux").items([MenuItem::action("Quit Draftmux", Quit)])]);
-
-            // Draftmux has a single window, so closing it ends the app.
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
+            cx.set_menus([Menu::new("Draftmux").items([
+                MenuItem::action("Settings…", settings_window::OpenSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Draftmux", Quit),
+            ])]);
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
@@ -121,6 +116,14 @@ fn main() {
                     cx.new(|cx| chrome::Chrome::new(store, window, cx))
                 })
                 .expect("failed to open the main window");
+            // Closing the main window ends the app; Settings is secondary.
+            let main_id = window.window_id();
+            cx.on_window_closed(move |cx, closed| {
+                if closed == main_id {
+                    cx.quit();
+                }
+            })
+            .detach();
             server.serve(window, cx);
             cx.activate(true);
         });

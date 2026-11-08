@@ -19,5 +19,5 @@ mod fork;
 mod protocol;
 
 pub use agent::{Agent, AgentEvent, CommandFactory, Error, LaunchSpec};
-pub use fork::{ForkSpec, ModelOverride, fork};
+pub use fork::{ForkSpec, Forked, ModelOverride, fork};
 pub use protocol::{AssistantDelta, Disposition, Event, Model, State, ThinkingLevel};

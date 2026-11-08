@@ -38,12 +38,17 @@ other means.
 Run the locator, then:
 
 ```sh
-draftmux open "$f" --pi-agent-dir "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" \
-  --target github --note 'PR description for the retry change'
+set -- "$f"
+[ -n "${PI_CODING_AGENT_DIR:-}" ] && set -- "$@" --pi-agent-dir "$PI_CODING_AGENT_DIR"
+draftmux open "$@" --target github --note 'PR description for the retry change'
 ```
 
-- `--target`: `github` (default) for GitHub markdown, `slack` for Slack
-  messages, `email` for plain-text emails.
+- `--pi-agent-dir`: passed only when `PI_CODING_AGENT_DIR` is set, as above.
+  Otherwise Draftmux picks the profile from the session file's location or its
+  own settings.
+- `--target`: `github` for GitHub markdown, `slack` for Slack messages,
+  `email` for plain-text emails. Leave it out when the user hasn't said where
+  the message goes; Draftmux then uses its default for the directory.
 - `--note`: optional. One line saying what message to write, if the
   conversation doesn't make it obvious. Single-quote it; write `'` as `'\''`.
 

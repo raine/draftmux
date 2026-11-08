@@ -190,6 +190,7 @@ mod tests {
                 cwd: "/tmp/repo".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
                 note: None,
+                settings: Default::default(),
             })
             .unwrap();
         store.save_text(&draft.id, text).unwrap();

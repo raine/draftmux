@@ -60,6 +60,37 @@ pub enum ThinkingLevel {
     Max,
 }
 
+impl ThinkingLevel {
+    /// Every level, lowest first.
+    pub const ALL: [ThinkingLevel; 7] = [
+        ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::Xhigh,
+        ThinkingLevel::Max,
+    ];
+
+    /// The level as pi writes it, such as `xhigh`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThinkingLevel::Off => "off",
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::Xhigh => "xhigh",
+            ThinkingLevel::Max => "max",
+        }
+    }
+
+    /// The level pi writes as `name`.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|level| level.as_str() == name)
+    }
+}
+
 /// What pi did with a prompt. `Handled` means an extension or command
 /// consumed it and no run follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -537,5 +568,14 @@ mod tests {
             parse_line(delta).unwrap(),
             Incoming::Event(Event::MessageUpdate(AssistantDelta::Other))
         ));
+    }
+
+    #[test]
+    fn thinking_names_match_the_wire_format() {
+        for level in ThinkingLevel::ALL {
+            assert_eq!(serde_json::to_value(level).unwrap(), level.as_str());
+            assert_eq!(ThinkingLevel::parse(level.as_str()), Some(level));
+        }
+        assert_eq!(ThinkingLevel::parse("extreme"), None);
     }
 }

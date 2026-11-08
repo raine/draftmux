@@ -5,6 +5,14 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use draftmux_pi_rpc::{ForkSpec, ModelOverride, ThinkingLevel, fork};
+
+/// A fork with no warning.
+fn forked(file: PathBuf) -> Result<draftmux_pi_rpc::Forked, String> {
+    Ok(draftmux_pi_rpc::Forked {
+        session_file: file,
+        warning: None,
+    })
+}
 use draftmux_storage::Target;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -40,7 +48,7 @@ impl Harness {
         file
     }
 
-    fn fork(&self, script: &str) -> Result<PathBuf, String> {
+    fn fork(&self, script: &str) -> Result<draftmux_pi_rpc::Forked, String> {
         let path = self.dir.path().join("script");
         std::fs::write(&path, script).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_fake-pi"));
@@ -81,7 +89,7 @@ fn forks_into_the_session_dir_with_the_draft_environment() {
     let file = h.session_file();
     let script = format!("{GET_STATE}\n{}\n### eof", state(Some(&file)));
 
-    assert_eq!(h.fork(&script), Ok(file));
+    assert_eq!(h.fork(&script), forked(file));
 
     let record = h.record();
     let args: Vec<&str> = record["args"]
@@ -142,11 +150,11 @@ fn override_sets_model_then_thinking() {
     ]
     .join("\n");
 
-    assert_eq!(h.fork(&script), Ok(file));
+    assert_eq!(h.fork(&script), forked(file));
 }
 
 #[test]
-fn rejected_override_fails() {
+fn rejected_override_keeps_the_fork_with_a_warning() {
     let mut h = Harness::new();
     h.spec.model = Some(ModelOverride {
         provider: "openai".into(),
@@ -163,8 +171,13 @@ fn rejected_override_fails() {
     ]
     .join("\n");
 
-    let err = h.fork(&script).unwrap_err();
-    assert!(err.contains("Model not found: openai/missing"), "{err}");
+    let forked = h.fork(&script).unwrap();
+    assert_eq!(forked.session_file, file);
+    let warning = forked.warning.unwrap();
+    assert!(
+        warning.contains("Model not found: openai/missing"),
+        "{warning}"
+    );
 }
 
 #[test]

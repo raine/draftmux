@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use draftmux_pi_rpc::ThinkingLevel;
-use draftmux_storage::{Meta, Target};
+use draftmux_storage::{DraftSettings, Meta, Target};
 use serde::Deserialize;
 
 use crate::process;
@@ -37,6 +37,8 @@ pub struct SelectionConfig {
     pub thinking: Option<ThinkingLevel>,
     /// How many options each action asks for.
     pub alternatives: usize,
+    /// Off runs pi with `--no-context-files`, as the draft's own pi.
+    pub context_files: bool,
 }
 
 impl Default for SelectionConfig {
@@ -44,7 +46,22 @@ impl Default for SelectionConfig {
         Self {
             model: None,
             thinking: None,
-            alternatives: 3,
+            alternatives: draftmux_settings::DEFAULT_ALTERNATIVES,
+            context_files: true,
+        }
+    }
+}
+
+impl SelectionConfig {
+    /// For a draft, from the settings it kept at creation, asking for
+    /// `alternatives` options.
+    pub fn for_draft(settings: &DraftSettings, alternatives: usize) -> Self {
+        let model = settings.selection_model.as_ref();
+        Self {
+            model: model.map(|m| format!("{}/{}", m.provider, m.model_id)),
+            thinking: model.and_then(|m| ThinkingLevel::parse(&m.thinking)),
+            alternatives,
+            context_files: settings.context_files,
         }
     }
 }
@@ -152,10 +169,13 @@ fn command(
         .arg(session_dir)
         .arg("-e")
         .arg(extension);
+    if !config.context_files {
+        pi.arg("--no-context-files");
+    }
     if let Some(model) = &config.model {
         pi.arg("--model").arg(model);
         if let Some(thinking) = config.thinking {
-            pi.arg("--thinking").arg(thinking_arg(thinking));
+            pi.arg("--thinking").arg(thinking.as_str());
         }
     }
     pi.current_dir(&request.cwd)
@@ -167,13 +187,6 @@ fn command(
         .env_remove("DRAFTMUX_TARGET")
         .env_remove("DRAFTMUX_INSTRUCTIONS");
     pi
-}
-
-fn thinking_arg(level: ThinkingLevel) -> String {
-    serde_json::to_value(level)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
-        .expect("thinking levels serialize as strings")
 }
 
 const START: &str = "<<<SELECTION>>>";
@@ -404,6 +417,38 @@ mod tests {
                 "--thinking",
                 "high"
             ]
+        );
+
+        config.context_files = false;
+        assert_eq!(build(&config).1[8], "--no-context-files");
+    }
+
+    #[test]
+    fn config_for_a_draft_comes_from_its_settings() {
+        assert_eq!(
+            SelectionConfig::for_draft(&DraftSettings::default(), 4),
+            SelectionConfig {
+                alternatives: 4,
+                ..SelectionConfig::default()
+            }
+        );
+        let settings = DraftSettings {
+            instructions: None,
+            context_files: false,
+            selection_model: Some(draftmux_storage::ModelChoice {
+                provider: "anthropic".into(),
+                model_id: "claude-haiku-5-5".into(),
+                thinking: "xhigh".into(),
+            }),
+        };
+        assert_eq!(
+            SelectionConfig::for_draft(&settings, 2),
+            SelectionConfig {
+                model: Some("anthropic/claude-haiku-5-5".into()),
+                thinking: Some(ThinkingLevel::Xhigh),
+                alternatives: 2,
+                context_files: false,
+            }
         );
     }
 

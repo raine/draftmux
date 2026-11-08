@@ -228,8 +228,8 @@ impl Chat {
                 agent_dir: draft.meta.pi_agent_dir.clone(),
                 draft_path: draft.draft_path(),
                 target: draft.meta.target,
-                // Drafting instructions come from settings, which don't exist yet.
-                instructions: None,
+                instructions: draft.meta.settings.instructions.clone(),
+                context_files: draft.meta.settings.context_files,
             })
         })();
         let (agent, events) = match spec {

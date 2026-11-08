@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use draftmux_pi_profiles::ModelRef;
-use draftmux_pi_rpc::{Agent, Error, State, ThinkingLevel};
+use draftmux_pi_rpc::{Agent, Error, State};
 use gpui::{
     Anchor, Context, Entity, FocusHandle, Focusable, MouseButton, SharedString, Subscription,
     Window, anchored, deferred, div, point, prelude::*, px,
@@ -168,22 +168,10 @@ impl ChatModel {
                 "π {}/{} · thinking {}",
                 model.provider,
                 model.id,
-                thinking_label(*thinking_level)
+                thinking_level.as_str()
             )
             .into(),
         }
-    }
-}
-
-fn thinking_label(level: ThinkingLevel) -> &'static str {
-    match level {
-        ThinkingLevel::Off => "off",
-        ThinkingLevel::Minimal => "minimal",
-        ThinkingLevel::Low => "low",
-        ThinkingLevel::Medium => "medium",
-        ThinkingLevel::High => "high",
-        ThinkingLevel::Xhigh => "xhigh",
-        ThinkingLevel::Max => "max",
     }
 }
 

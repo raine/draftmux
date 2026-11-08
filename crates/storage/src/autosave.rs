@@ -108,6 +108,7 @@ mod tests {
                 cwd: "/tmp".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
                 note: None,
+                settings: Default::default(),
             })
             .unwrap();
         let autosave = Autosave::new(store.clone(), draft.id, String::new(), DELAY);

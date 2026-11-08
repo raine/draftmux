@@ -84,6 +84,7 @@ crates/draftmux/     the app binary: startup, window and UI
 crates/markup/       message block tree, its parsers and Slack rich text (no gpui)
 crates/pi-profiles/  pi profile detection, defaults and model lists (no gpui)
 crates/pi-rpc/       pi RPC client, per-draft pi process manager, handoff fork (no gpui)
+crates/settings/     settings.json, directory rules and their resolution (no gpui)
 crates/shell-env/    login-shell environment capture; resolves pi and oxfmt
 crates/storage/      draft directories, meta.json, atomic writes, autosave
 pi-extension/        pi extension the app passes to pi; bundled as a resource

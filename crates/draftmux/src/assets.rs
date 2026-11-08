@@ -21,6 +21,13 @@ pub const SPINNER_ARC_ICON: &str = "icons/spinner-arc.svg";
 pub const CHEVRON_ICON: &str = "icons/chevron.svg";
 pub const SEND_ICON: &str = "icons/send.svg";
 pub const STOP_ICON: &str = "icons/stop.svg";
+pub const GEAR_ICON: &str = "icons/gear.svg";
+pub const SPARK_ICON: &str = "icons/spark.svg";
+pub const GLOBE_ICON: &str = "icons/globe.svg";
+pub const FOLDER_ICON: &str = "icons/folder.svg";
+pub const PLUS_ICON: &str = "icons/plus.svg";
+pub const RESET_ICON: &str = "icons/reset.svg";
+pub const UPDOWN_ICON: &str = "icons/updown.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
@@ -60,6 +67,13 @@ const ASSETS: &[(&str, &[u8])] = &[
     (CHEVRON_ICON, include_bytes!("../assets/icons/chevron.svg")),
     (SEND_ICON, include_bytes!("../assets/icons/send.svg")),
     (STOP_ICON, include_bytes!("../assets/icons/stop.svg")),
+    (GEAR_ICON, include_bytes!("../assets/icons/gear.svg")),
+    (SPARK_ICON, include_bytes!("../assets/icons/spark.svg")),
+    (GLOBE_ICON, include_bytes!("../assets/icons/globe.svg")),
+    (FOLDER_ICON, include_bytes!("../assets/icons/folder.svg")),
+    (PLUS_ICON, include_bytes!("../assets/icons/plus.svg")),
+    (RESET_ICON, include_bytes!("../assets/icons/reset.svg")),
+    (UPDOWN_ICON, include_bytes!("../assets/icons/updown.svg")),
 ];
 
 pub struct Assets;

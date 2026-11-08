@@ -1125,6 +1125,7 @@ dependencies = [
  "claude-convert",
  "draftmux-pi-profiles",
  "draftmux-pi-rpc",
+ "draftmux-settings",
  "draftmux-storage",
  "editor",
  "futures",
@@ -1160,6 +1161,18 @@ dependencies = [
  "draftmux-storage",
  "futures",
  "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "draftmux-settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "draftmux-pi-rpc",
+ "draftmux-storage",
  "serde",
  "serde_json",
  "tempfile",

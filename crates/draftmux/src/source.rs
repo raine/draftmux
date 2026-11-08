@@ -77,21 +77,21 @@ fn pi_header(header: &Value, path: &Path) -> Result<SessionInfo> {
 }
 
 /// Profile pinning: the `--pi-agent-dir` flag, else the profile a pi session
-/// file lives in (`<profile>/sessions/<cwd slug>/<file>`), else the default
-/// profile. `source` is absolute; paths are made absolute without resolving
-/// symlinks, like the recorded source path.
+/// file lives in (`<profile>/sessions/<cwd slug>/<file>`), else the profile
+/// the directory settings give (`settings`) if it is a folder, else the
+/// default profile.
+/// `source` is absolute; paths are made absolute without resolving symlinks,
+/// like the recorded source path.
 pub fn resolve_profile(
     flag: Option<&Path>,
     source: &Path,
     kind: SourceKind,
+    settings: Option<&Path>,
     home: &Path,
 ) -> Result<PathBuf> {
     if let Some(dir) = flag {
         // pi expands `~` in PI_CODING_AGENT_DIR, so the flag may carry it.
-        let dir = match dir.strip_prefix("~") {
-            Ok(rest) => home.join(rest),
-            Err(_) => dir.to_owned(),
-        };
+        let dir = draftmux_settings::expand_home(dir, home);
         let dir = std::path::absolute(&dir)
             .with_context(|| format!("resolving pi agent dir {}", dir.display()))?;
         if !dir.is_dir() {
@@ -106,8 +106,16 @@ pub fn resolve_profile(
     {
         return Ok(profile.to_owned());
     }
-    // Directory settings will slot in here, before the built-in default.
-    Ok(home.join(".pi/agent"))
+    if let Some(dir) = settings {
+        if dir.is_dir() {
+            return Ok(dir.to_owned());
+        }
+        eprintln!(
+            "draftmux: profile {} from settings is not a directory; using the default",
+            dir.display()
+        );
+    }
+    Ok(draftmux_settings::default_profile(home))
 }
 
 #[cfg(test)]
@@ -208,19 +216,24 @@ mod tests {
         let source = Path::new("/x/sessions/slug/s.jsonl");
 
         let flag = Path::new("~/.pi-work/agent");
-        let profile = resolve_profile(Some(flag), source, SourceKind::Pi, home).unwrap();
+        let settings = Some(Path::new("/settings/agent"));
+        let profile = resolve_profile(Some(flag), source, SourceKind::Pi, settings, home).unwrap();
         assert_eq!(profile, home.join(".pi-work/agent"));
 
         let missing = home.join("missing");
-        assert!(resolve_profile(Some(&missing), source, SourceKind::Pi, home).is_err());
+        assert!(resolve_profile(Some(&missing), source, SourceKind::Pi, None, home).is_err());
     }
 
     #[test]
-    fn profile_falls_back_to_session_location_then_default() {
+    fn profile_falls_back_to_session_location_then_settings_then_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_profile = dir.path().join("settings/agent");
+        fs::create_dir_all(&settings_profile).unwrap();
         let home = Path::new("/home/me");
+        let settings = Some(settings_profile.as_path());
         let pi = Path::new("/p/.pi-work/agent/sessions/--repo--/s.jsonl");
         assert_eq!(
-            resolve_profile(None, pi, SourceKind::Pi, home).unwrap(),
+            resolve_profile(None, pi, SourceKind::Pi, settings, home).unwrap(),
             Path::new("/p/.pi-work/agent")
         );
 
@@ -228,7 +241,17 @@ mod tests {
         let claude = Path::new("/home/me/.claude/projects/sessions/s.jsonl");
         for (source, kind) in [(custom, SourceKind::Pi), (claude, SourceKind::Claude)] {
             assert_eq!(
-                resolve_profile(None, source, kind, home).unwrap(),
+                resolve_profile(None, source, kind, settings, home).unwrap(),
+                settings_profile
+            );
+            assert_eq!(
+                resolve_profile(None, source, kind, None, home).unwrap(),
+                Path::new("/home/me/.pi/agent")
+            );
+            // A profile folder that's gone falls back to the default.
+            let missing = Some(Path::new("/settings/missing"));
+            assert_eq!(
+                resolve_profile(None, source, kind, missing, home).unwrap(),
                 Path::new("/home/me/.pi/agent")
             );
         }

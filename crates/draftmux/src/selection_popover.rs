@@ -31,6 +31,7 @@ use gpui::{
 };
 use shell_env::ShellEnv;
 
+use crate::app_settings::AppSettings;
 use crate::resources;
 use crate::selection::{self, Action as SelectionAction, Request, SelectionConfig};
 use crate::theme::{self, Palette};
@@ -88,7 +89,6 @@ pub struct SelectionPopover {
     editor: Entity<Editor>,
     main: AnyWindowHandle,
     draft: Option<Draft>,
-    config: SelectionConfig,
     agent_running: bool,
     open: Option<Open>,
     panel: Option<Panel>,
@@ -168,7 +168,6 @@ impl SelectionPopover {
             editor,
             main: window.window_handle(),
             draft: None,
-            config: SelectionConfig::default(),
             agent_running: false,
             open: None,
             panel: None,
@@ -488,6 +487,7 @@ impl SelectionPopover {
         let Some(meta) = self.draft.as_ref().map(|draft| &draft.meta) else {
             return;
         };
+        let kept = meta.settings.clone();
         let Some(request) = Request::new(meta, open.text.clone(), open.range.clone(), action)
         else {
             return;
@@ -508,7 +508,10 @@ impl SelectionPopover {
         };
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let config = self.config.clone();
+        // The count is an app preference, read on every call; the rest is
+        // what the draft kept at creation.
+        let alternatives = AppSettings::global(cx).read(cx).settings.alternatives();
+        let config = SelectionConfig::for_draft(&kept, alternatives);
         let call = cx.background_executor().spawn({
             let cancel = cancel.clone();
             async move {

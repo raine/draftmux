@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 
 use crate::atomic;
-use crate::meta::{Meta, Source, Status, Target};
+use crate::meta::{DraftSettings, Meta, Source, Status, Target};
 
 const DRAFT_FILE: &str = "draft.md";
 const META_FILE: &str = "meta.json";
@@ -28,6 +28,7 @@ pub struct NewDraft {
     pub cwd: PathBuf,
     pub pi_agent_dir: PathBuf,
     pub note: Option<String>,
+    pub settings: DraftSettings,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +116,7 @@ impl Store {
                 pi_session_file: None,
                 pi_agent_dir: new.pi_agent_dir,
                 note: new.note,
+                settings: new.settings,
                 created_at: now,
                 updated_at: now,
             },
@@ -280,6 +282,7 @@ mod tests {
             cwd: "/tmp/repo".into(),
             pi_agent_dir: "/tmp/.pi/agent".into(),
             note: None,
+            settings: Default::default(),
         }
     }
 

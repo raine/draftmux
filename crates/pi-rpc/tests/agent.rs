@@ -34,6 +34,10 @@ impl Harness {
     }
 
     fn with_idle(scripts: &[&str], idle: Duration) -> Self {
+        Self::with_spec(scripts, idle, |_| {})
+    }
+
+    fn with_spec(scripts: &[&str], idle: Duration, edit: impl FnOnce(&mut LaunchSpec)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths: Vec<PathBuf> = scripts
             .iter()
@@ -66,7 +70,10 @@ impl Harness {
             draft_path: dir.path().join("draft.md"),
             target: Target::Slack,
             instructions: None,
+            context_files: true,
         };
+        let mut spec = spec;
+        edit(&mut spec);
         let (agent, events) = Agent::new(spec, idle);
         Self {
             agent,
@@ -255,6 +262,22 @@ fn spawn_contract() {
         h.dir.path().join("draft.md").to_str().unwrap()
     );
     assert!(env.get("DRAFTMUX_INSTRUCTIONS").is_none());
+}
+
+#[test]
+fn settings_reach_the_process() {
+    let h = Harness::with_spec(&[&script("### eof")], IDLE, |spec| {
+        spec.instructions = Some("Short paragraphs.".into());
+        spec.context_files = false;
+    });
+    h.agent.focus().unwrap();
+    let record = h.record(0);
+    let args = record["args"].as_array().unwrap();
+    assert!(
+        args.iter().any(|arg| arg == "--no-context-files"),
+        "{args:?}"
+    );
+    assert_eq!(record["env"]["DRAFTMUX_INSTRUCTIONS"], "Short paragraphs.");
 }
 
 #[test]

@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
 use claude_convert::ModelSelection;
 use draftmux_pi_rpc::{ForkSpec, ModelOverride};
+use draftmux_settings::Settings;
 use draftmux_storage::{Draft, NewDraft, Source, SourceKind, Store, Target};
 
 use crate::{ipc, resources, source};
@@ -27,12 +28,14 @@ pub struct Args {
     /// pi session file or Claude Code transcript to hand off from.
     session_file: PathBuf,
     /// pi profile to pin the draft to (`PI_CODING_AGENT_DIR`). Defaults to the
-    /// profile the session file is stored in, else ~/.pi/agent.
+    /// profile the session file is stored in, else the profile Draftmux's
+    /// settings give the session's directory, else ~/.pi/agent.
     #[arg(long, value_name = "DIR")]
     pi_agent_dir: Option<PathBuf>,
-    /// Platform the message is for.
-    #[arg(long, value_enum, default_value_t = TargetArg::Github)]
-    target: TargetArg,
+    /// Platform the message is for. Defaults to the one Draftmux's settings
+    /// give the session's directory, else github.
+    #[arg(long, value_enum)]
+    target: Option<TargetArg>,
     /// Note for the draft from the handing-off agent, such as what to write.
     #[arg(long)]
     note: Option<String>,
@@ -50,8 +53,15 @@ pub fn main(args: Args) -> i32 {
     // pi runs with the environment of the agent shell that called `open`,
     // which has the PATH and API keys the source session used.
     let pi = || Command::new("pi");
+    // A settings problem never blocks a handoff.
+    let settings = draftmux_storage::data_dir()
+        .and_then(|dir| Settings::load(&dir))
+        .unwrap_or_else(|err| {
+            eprintln!("draftmux: ignoring Draftmux's settings: {err:#}");
+            Settings::default()
+        });
     let created =
-        Store::default_root().and_then(|root| create(&args, &Store::new(root), &pi, None));
+        Store::default_root().and_then(|root| create(&args, &Store::new(root), &pi, &settings));
     let draft = match created {
         Ok(draft) => draft,
         Err(err) => {
@@ -75,14 +85,15 @@ pub fn main(args: Args) -> i32 {
     }
 }
 
-/// `pi` builds the base pi command. `model` overrides the model the draft
-/// starts on; without one a pi source continues on its own model and a Claude
-/// Code source on the profile's default.
+/// `pi` builds the base pi command. `settings` are resolved for the source
+/// session's directory and kept in the draft. Unless they set a drafting
+/// model, a pi source continues on its own model and a Claude Code source on
+/// the profile's default.
 fn create(
     args: &Args,
     store: &Store,
     pi: &dyn Fn() -> Command,
-    model: Option<ModelOverride>,
+    settings: &Settings,
 ) -> Result<Draft> {
     // `show --source` matches this path exactly and normalizes its argument
     // the same way.
@@ -90,13 +101,21 @@ fn create(
         .with_context(|| format!("resolving {}", args.session_file.display()))?;
     let info = source::inspect(&path)?;
     let home = std::env::home_dir().context("no home directory")?;
-    let pi_agent_dir =
-        source::resolve_profile(args.pi_agent_dir.as_deref(), &path, info.kind, &home)?;
+    let resolved = settings.resolve(&info.cwd, &home);
+    let pi_agent_dir = source::resolve_profile(
+        args.pi_agent_dir.as_deref(),
+        &path,
+        info.kind,
+        resolved.profile.value.as_deref(),
+        &home,
+    )?;
     let target = match args.target {
-        TargetArg::Github => Target::Github,
-        TargetArg::Slack => Target::Slack,
-        TargetArg::Email => Target::Email,
+        Some(TargetArg::Github) => Target::Github,
+        Some(TargetArg::Slack) => Target::Slack,
+        Some(TargetArg::Email) => Target::Email,
+        None => resolved.target.value,
     };
+    let model = resolved.model_override();
     let new = |path, cwd, pi_agent_dir| NewDraft {
         target,
         title: String::new(),
@@ -107,6 +126,7 @@ fn create(
         cwd,
         pi_agent_dir,
         note: args.note.clone(),
+        settings: resolved.draft_settings(),
     };
     match info.kind {
         SourceKind::Pi => {
@@ -131,8 +151,12 @@ fn create(
                     model,
                     timeout: FORK_TIMEOUT,
                 };
-                draftmux_pi_rpc::fork(pi(), &spec)
-                    .map_err(|err| anyhow!("forking {}: {err}", meta.source.path.display()))
+                let forked = draftmux_pi_rpc::fork(pi(), &spec)
+                    .map_err(|err| anyhow!("forking {}: {err}", meta.source.path.display()))?;
+                if let Some(warning) = forked.warning {
+                    eprintln!("draftmux: {warning}");
+                }
+                Ok(forked.session_file)
             })
         }
         // Converted before the draft exists, so a transcript that can't be
@@ -185,6 +209,8 @@ mod tests {
     use std::time::Instant;
 
     use draftmux_pi_rpc::{Agent, LaunchSpec, State, ThinkingLevel};
+    use draftmux_settings::{DraftingModel, Rule, SelectionModel};
+    use draftmux_storage::{DraftSettings, ModelChoice};
     use futures::executor::block_on;
 
     use clap::Parser;
@@ -232,6 +258,13 @@ cat > /dev/null
         panic!("pi isn't needed")
     }
 
+    /// Settings whose All directories scope sets the drafting model.
+    fn drafting_on(model: ModelOverride) -> Settings {
+        let mut settings = Settings::default();
+        settings.defaults.drafting_model = Some(DraftingModel::Model(model));
+        settings
+    }
+
     /// A v3 pi session in `<profile>/sessions/`, started in `cwd`.
     fn pi_session(profile: &Path, cwd: &Path) -> PathBuf {
         let sessions = profile.join("sessions/--repo--");
@@ -254,7 +287,7 @@ cat > /dev/null
 
         let session_arg = session.to_str().unwrap();
         let args = parse(&[session_arg, "--target", "slack", "--note", "release notes"]);
-        let draft = create(&args, &store, &fake_pi(&args_file), None).unwrap();
+        let draft = create(&args, &store, &fake_pi(&args_file), &Settings::default()).unwrap();
 
         let meta = store.load(&draft.id).unwrap().meta;
         assert_eq!(meta.source.kind, SourceKind::Pi);
@@ -300,7 +333,13 @@ cat > /dev/null
             command
         };
 
-        let err = create(&parse(&[session.to_str().unwrap()]), &store, &pi, None).unwrap_err();
+        let err = create(
+            &parse(&[session.to_str().unwrap()]),
+            &store,
+            &pi,
+            &Settings::default(),
+        )
+        .unwrap_err();
         let err = format!("{err:#}");
         assert!(err.contains("forking"), "{err}");
         assert!(err.contains("Error: no such model"), "{err}");
@@ -314,7 +353,13 @@ cat > /dev/null
         let session = pi_session(&tmp.path().join("agent"), &tmp.path().join("deleted"));
         let store = Store::new(tmp.path().join("drafts"));
 
-        let err = create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).unwrap_err();
+        let err = create(
+            &parse(&[session.to_str().unwrap()]),
+            &store,
+            &no_pi,
+            &Settings::default(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("no longer exists"), "{err}");
         assert!(store.scan().unwrap().drafts.is_empty());
     }
@@ -327,7 +372,13 @@ cat > /dev/null
         fs::write(&session, header.to_string()).unwrap();
         let store = Store::new(tmp.path().join("drafts"));
 
-        let err = create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).unwrap_err();
+        let err = create(
+            &parse(&[session.to_str().unwrap()]),
+            &store,
+            &no_pi,
+            &Settings::default(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("needs version 3"), "{err}");
         assert!(store.scan().unwrap().drafts.is_empty());
     }
@@ -339,7 +390,15 @@ cat > /dev/null
         fs::write(&session, "{}\n").unwrap();
         let store = Store::new(tmp.path().join("drafts"));
 
-        assert!(create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).is_err());
+        assert!(
+            create(
+                &parse(&[session.to_str().unwrap()]),
+                &store,
+                &no_pi,
+                &Settings::default()
+            )
+            .is_err()
+        );
         assert!(store.scan().unwrap().drafts.is_empty());
     }
 
@@ -413,7 +472,7 @@ cat > /dev/null
             "--pi-agent-dir",
             profile.to_str().unwrap(),
         ]);
-        let draft = create(&args, &store, &no_pi, None).unwrap();
+        let draft = create(&args, &store, &no_pi, &Settings::default()).unwrap();
         (store, draft)
     }
 
@@ -487,9 +546,125 @@ cat > /dev/null
             "--pi-agent-dir",
             tmp.path().to_str().unwrap(),
         ]);
-        assert!(create(&args, &store, &no_pi, None).is_err());
+        assert!(create(&args, &store, &no_pi, &Settings::default()).is_err());
         assert!(store.scan().unwrap().drafts.is_empty());
     }
+
+    /// Settings with a rule on `dir` that sets the profile, target,
+    /// instructions, context files and selection model.
+    fn rule_on(dir: &Path, profile: &Path) -> Settings {
+        let mut settings = Settings::default();
+        settings.defaults.instructions = Some("No emoji.".into());
+        let mut rule = Rule::new(dir.to_owned());
+        rule.scope.profile = Some(profile.to_owned());
+        rule.scope.target = Some(Target::Slack);
+        rule.scope.instructions = Some("Casual.".into());
+        rule.scope.context_files = Some(false);
+        rule.scope.selection_model = Some(SelectionModel::Model(ModelOverride {
+            provider: "anthropic".into(),
+            model_id: "claude-haiku-5-5".into(),
+            thinking: ThinkingLevel::Low,
+        }));
+        settings.directories.push(rule);
+        settings
+    }
+
+    #[test]
+    fn directory_settings_fill_in_what_the_flags_leave_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("work-agent");
+        fs::create_dir_all(&profile).unwrap();
+        let cwd = tmp.path().join("project");
+        fs::create_dir_all(&cwd).unwrap();
+        let transcript = tmp.path().join("transcript.jsonl");
+        fs::write(&transcript, claude_transcript(&cwd)).unwrap();
+        let store = Store::new(tmp.path().join("drafts"));
+        let mut settings = rule_on(tmp.path(), &profile);
+
+        let draft = create(
+            &parse(&[transcript.to_str().unwrap()]),
+            &store,
+            &no_pi,
+            &settings,
+        )
+        .unwrap();
+        let meta = store.load(&draft.id).unwrap().meta;
+        assert_eq!(meta.pi_agent_dir, profile);
+        assert_eq!(meta.target, Target::Slack);
+        assert_eq!(
+            meta.settings,
+            DraftSettings {
+                instructions: Some("No emoji.\n\nCasual.".into()),
+                context_files: false,
+                selection_model: Some(ModelChoice {
+                    provider: "anthropic".into(),
+                    model_id: "claude-haiku-5-5".into(),
+                    thinking: "low".into(),
+                }),
+            }
+        );
+
+        // Flags win over settings.
+        let flagged = parse(&[
+            transcript.to_str().unwrap(),
+            "--pi-agent-dir",
+            tmp.path().to_str().unwrap(),
+            "--target",
+            "github",
+        ]);
+        let other = create(&flagged, &store, &no_pi, &settings).unwrap().meta;
+        assert_eq!(other.pi_agent_dir, tmp.path());
+        assert_eq!(other.target, Target::Github);
+
+        // Later changes leave existing drafts alone.
+        settings.directories.clear();
+        let _ = create(
+            &parse(&[transcript.to_str().unwrap()]),
+            &store,
+            &no_pi,
+            &settings,
+        );
+        assert_eq!(store.load(&draft.id).unwrap().meta, meta);
+    }
+
+    #[test]
+    fn rejected_model_override_still_creates_the_draft() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("agent");
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let session = pi_session(&profile, &cwd);
+        let store = Store::new(tmp.path().join("drafts"));
+        // Answers get_state, then refuses set_model.
+        let pi = || {
+            let mut command = Command::new("sh");
+            command.args(["-c", REFUSING_PI, "fake-pi"]);
+            command
+        };
+        let settings = drafting_on(ModelOverride {
+            provider: "portkey".into(),
+            model_id: "missing".into(),
+            thinking: ThinkingLevel::High,
+        });
+        let draft = create(&parse(&[session.to_str().unwrap()]), &store, &pi, &settings).unwrap();
+        assert_eq!(
+            store.load(&draft.id).unwrap().meta.pi_session_file,
+            Some(draft.session_dir().join("fork.jsonl"))
+        );
+    }
+
+    const REFUSING_PI: &str = r#"
+while [ $# -gt 0 ]; do [ "$1" = --session-dir ] && dir=$2; shift; done
+file="$dir/fork.jsonl"
+: > "$file"
+read -r line
+id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionFile":"%s","sessionId":"s","messageCount":0,"pendingMessageCount":0}}\n' "$id" "$file"
+read -r line
+id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+printf '{"type":"response","id":"%s","command":"set_model","success":false,"error":"Model not found"}\n' "$id"
+cat > /dev/null
+"#;
 
     /// Real pi loads a converted session and answers from it. Opt-in: it
     /// sends the fixture to the profile's default model. Run with
@@ -580,7 +755,7 @@ cat > /dev/null
             model_id: "claude-opus-5-5".into(),
             thinking: ThinkingLevel::High,
         };
-        let draft = create(&args, &store, &no_pi, Some(model)).unwrap();
+        let draft = create(&args, &store, &no_pi, &drafting_on(model)).unwrap();
 
         let entries = session_entries(&draft.meta.pi_session_file.unwrap());
         let tail = &entries[entries.len() - 2..];
@@ -608,6 +783,7 @@ cat > /dev/null
             draft_path: cwd.join("draft.md"),
             target: Target::Github,
             instructions: None,
+            context_files: true,
         };
         let (agent, _events) = Agent::new(spec, Duration::from_secs(60));
         let state = block_on(agent.get_state()).expect("get_state");
@@ -688,7 +864,7 @@ cat > /dev/null
         ]);
 
         let started = Instant::now();
-        let draft = create(&args, &store, &pi, None).unwrap();
+        let draft = create(&args, &store, &pi, &Settings::default()).unwrap();
         eprintln!("fork took {} ms", started.elapsed().as_millis());
         assert_eq!(fs::read_to_string(&source).unwrap(), original + "\n");
         let file = draft.meta.pi_session_file.clone().unwrap();
@@ -722,7 +898,7 @@ cat > /dev/null
             model_id: default.id.clone(),
             thinking,
         };
-        let draft = create(&args, &store, &pi, Some(model)).unwrap();
+        let draft = create(&args, &store, &pi, &drafting_on(model)).unwrap();
         let file = draft.meta.pi_session_file.unwrap();
         let (state, _) = real_pi_state(&env, &profile, &file, &cwd);
         let model = state.model.unwrap();

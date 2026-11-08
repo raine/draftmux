@@ -35,22 +35,33 @@ pub struct ForkSpec {
 }
 
 /// A model and thinking level the draft starts on instead of the source's.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModelOverride {
     pub provider: String,
     pub model_id: String,
     pub thinking: ThinkingLevel,
 }
 
+/// A forked session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Forked {
+    pub session_file: PathBuf,
+    /// Why the model override wasn't applied; the session continues on the
+    /// source's model.
+    pub warning: Option<String>,
+}
+
 /// Runs `<command> --mode rpc --fork <source> --session-dir <dir> -e <ext>`,
 /// applies the model override with `set_model` and `set_thinking_level`, and
 /// returns the new session file, which pi reports in `get_state` and is
 /// directly in `spec.session_dir`. pi records the override in the session, so
-/// later starts with `--session` keep it. pi has exited when this returns.
+/// later starts with `--session` keep it. pi has written the whole fork before
+/// it answers `get_state`, so a refused override, such as a model the profile
+/// lacks, is a warning rather than an error. pi has exited when this returns.
 /// `command` is the base pi command, as a
 /// [`CommandFactory`](crate::CommandFactory) builds it. Errors are messages
 /// for the user.
-pub fn fork(mut command: Command, spec: &ForkSpec) -> Result<PathBuf, String> {
+pub fn fork(mut command: Command, spec: &ForkSpec) -> Result<Forked, String> {
     command
         .arg("--mode")
         .arg("rpc")
@@ -102,7 +113,7 @@ struct Rpc {
 }
 
 impl Rpc {
-    fn run(&mut self, spec: &ForkSpec) -> Result<PathBuf, String> {
+    fn run(&mut self, spec: &ForkSpec) -> Result<Forked, String> {
         let state: State = serde_json::from_value(self.request(&protocol::Command::GetState)?)
             .map_err(|err| format!("unexpected get_state answer from pi: {err}"))?;
         let file = match state.session_file {
@@ -115,16 +126,28 @@ impl Rpc {
                 ));
             }
         };
-        if let Some(model) = &spec.model {
+        let warning = spec.model.as_ref().and_then(|model| {
             self.request(&protocol::Command::SetModel {
                 provider: model.provider.clone(),
                 model_id: model.model_id.clone(),
-            })?;
-            self.request(&protocol::Command::SetThinkingLevel {
-                level: model.thinking,
-            })?;
-        }
-        Ok(file)
+            })
+            .and_then(|_| {
+                self.request(&protocol::Command::SetThinkingLevel {
+                    level: model.thinking,
+                })
+            })
+            .err()
+            .map(|err| {
+                format!(
+                    "couldn't switch to {}/{}, so the draft continues on the session's model: {err}",
+                    model.provider, model.model_id
+                )
+            })
+        });
+        Ok(Forked {
+            session_file: file,
+            warning,
+        })
     }
 
     /// Sends `command` and waits for its answer's data.

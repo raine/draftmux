@@ -13,6 +13,7 @@ claude-convert = { path = "../claude-convert" }
 clap = { version = "4.6.7", features = ["derive"] }
 draftmux-pi-profiles = { path = "../pi-profiles" }
 draftmux-pi-rpc = { path = "../pi-rpc" }
+draftmux-settings = { path = "../settings" }
 draftmux-storage = { path = "../storage" }
 editor = { path = "../editor" }
 futures = "0.3"
