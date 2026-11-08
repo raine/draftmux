@@ -4,7 +4,7 @@
 use draftmux_storage::Target;
 use gpui::{
     App, ClipboardItem, FontWeight, KeyBinding, actions, div, linear_color_stop, linear_gradient,
-    prelude::*, px, rgb, rgba, svg,
+    prelude::*, px, svg,
 };
 use objc2_app_kit::{
     NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypeString,
@@ -13,6 +13,7 @@ use objc2_foundation::{NSData, NSString};
 
 use crate::assets::COPY_ICON;
 use crate::chrome::shadow;
+use crate::theme::Palette;
 
 actions!(copy, [Copy]);
 
@@ -58,7 +59,7 @@ fn write_slack(mrkdwn: &str) {
 }
 
 /// The toolbar's primary Copy button.
-pub fn button(on_click: impl Fn(&mut App) + 'static) -> impl IntoElement {
+pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl IntoElement {
     div()
         .id("copy")
         .h(px(24.))
@@ -69,36 +70,36 @@ pub fn button(on_click: impl Fn(&mut App) + 'static) -> impl IntoElement {
         .rounded(px(6.))
         .bg(linear_gradient(
             180.,
-            linear_color_stop(rgb(0x2f86ff), 0.),
-            linear_color_stop(rgb(0x0a6cf5), 1.),
+            linear_color_stop(palette.primary_top, 0.),
+            linear_color_stop(palette.primary_bottom, 1.),
         ))
         .hover(|style| {
             style.bg(linear_gradient(
                 180.,
-                linear_color_stop(rgb(0x2a80fa), 0.),
-                linear_color_stop(rgb(0x0864eb), 1.),
+                linear_color_stop(palette.primary_hover_top, 0.),
+                linear_color_stop(palette.primary_hover_bottom, 1.),
             ))
         })
         .shadow(vec![
-            shadow(0x003cbe73, 0., 0., 0.5),
-            shadow(0x0032a038, 1., 1.5, 0.),
+            shadow(palette.primary_ring, 0., 0., 0.5),
+            shadow(palette.primary_drop, 1., 1.5, 0.),
         ])
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(0xffffff))
+        .text_color(palette.on_accent)
         .on_click(move |_, _, cx| on_click(cx))
         .child(
             svg()
                 .path(COPY_ICON)
                 .size(px(14.))
-                .text_color(rgb(0xffffff)),
+                .text_color(palette.on_accent),
         )
         .child("Copy")
         .child(
             div()
                 .text_size(px(11.))
                 .font_weight(FontWeight::NORMAL)
-                .text_color(rgba(0xffffffb3))
+                .text_color(palette.on_accent_muted)
                 .child("⌘⇧C"),
         )
 }

@@ -11,7 +11,7 @@ use draftmux_storage::Target;
 use gpui::{
     AnyElement, App, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
     Pixels, SharedString, StrikethroughStyle, StyledText, Window, div, prelude::*, px, relative,
-    rgb, rgba,
+    rgba,
 };
 use markup::{AlertKind, Alignment, Block, Document, List, Span, Table};
 
@@ -60,8 +60,15 @@ pub struct MarkupStyle {
     pub checkbox_checked: Hsla,
     pub alert_colors: AlertColors,
     /// Replace blocks Slack can't show with what it receives instead
-    /// ([`markup::slack::fallback`]), each with a short note.
-    pub slack_fallbacks: bool,
+    /// ([`markup::slack::fallback`]), each under a note in these colors.
+    pub slack_fallbacks: Option<NoteColors>,
+}
+
+#[derive(Clone, Copy)]
+pub struct NoteColors {
+    pub background: Hsla,
+    pub border: Hsla,
+    pub text: Hsla,
 }
 
 pub struct AlertColors {
@@ -85,8 +92,11 @@ impl AlertColors {
 }
 
 impl MarkupStyle {
-    /// GitHub's light markdown body (Primer light colors).
-    pub fn github_light() -> Self {
+    /// GitHub's markdown body in Primer's light or dark colors.
+    pub fn github(dark: bool) -> Self {
+        let c = |light: u32, dark_hex: u32| -> Hsla {
+            rgba(if dark { dark_hex } else { light }).into()
+        };
         Self {
             font_family: ".SystemUIFont".into(),
             mono_family: "Menlo".into(),
@@ -99,14 +109,14 @@ impl MarkupStyle {
             strong_weight: FontWeight::SEMIBOLD,
             tight_item_gap: px(3.5),
             list_indent: px(28.),
-            text_color: rgb(0x1f2328).into(),
-            muted_color: rgb(0x59636e).into(),
-            link_color: rgb(0x0969da).into(),
-            border_color: rgb(0xd1d9e0).into(),
-            heading_rule_color: rgba(0xd1d9e0b3).into(),
-            inline_code_background: rgba(0x818b981f).into(),
+            text_color: c(0x1f2328ff, 0xe6edf3ff),
+            muted_color: c(0x59636eff, 0x9198a1ff),
+            link_color: c(0x0969daff, 0x4493f8ff),
+            border_color: c(0xd1d9e0ff, 0x3d444dff),
+            heading_rule_color: c(0xd1d9e0b3, 0x3d444db3),
+            inline_code_background: c(0x818b981f, 0x656c7633),
             inline_code_color: None,
-            code_background: rgb(0xf6f8fa).into(),
+            code_background: c(0xf6f8faff, 0x151b23ff),
             code_text_size: px(11.9),
             code_line_height: 1.45,
             code_padding: px(16.),
@@ -115,26 +125,29 @@ impl MarkupStyle {
             radius: px(6.),
             quote_bar_width: px(3.5),
             quote_padding: px(14.),
-            quote_text_color: rgb(0x59636e).into(),
+            quote_text_color: c(0x59636eff, 0x9198a1ff),
             ordered_markers_by_depth: false,
-            table_stripe: rgb(0xf6f8fa).into(),
-            checkbox_checked: rgb(0x0969da).into(),
+            table_stripe: c(0xf6f8faff, 0x151b23ff),
+            checkbox_checked: c(0x0969daff, 0x4493f8ff),
             alert_colors: AlertColors {
-                note: rgb(0x0969da).into(),
-                tip: rgb(0x1a7f37).into(),
-                important: rgb(0x8250df).into(),
-                warning: rgb(0x9a6700).into(),
-                caution: rgb(0xd1242f).into(),
+                note: c(0x0969daff, 0x4493f8ff),
+                tip: c(0x1a7f37ff, 0x3fb950ff),
+                important: c(0x8250dfff, 0xab7df8ff),
+                warning: c(0x9a6700ff, 0xd29922ff),
+                caution: c(0xd1242fff, 0xf85149ff),
             },
-            slack_fallbacks: false,
+            slack_fallbacks: None,
         }
     }
 
-    /// Slack's light message text. Spacing between lines comes from the
-    /// newlines kept in the text, so blocks sit only a small margin apart.
-    pub fn slack_light() -> Self {
-        let text_color = rgb(0x1d1c1d).into();
-        let border_color = rgba(0x1d1c1d21).into();
+    /// Slack's light or dark message text. Spacing between lines comes from
+    /// the newlines kept in the text, so blocks sit only a small margin apart.
+    pub fn slack(dark: bool) -> Self {
+        let c = |light: u32, dark_hex: u32| -> Hsla {
+            rgba(if dark { dark_hex } else { light }).into()
+        };
+        let text_color = c(0x1d1c1dff, 0xd1d2d3ff);
+        let border_color = c(0x1d1c1d21, 0x4a4c50ff);
         Self {
             font_family: "Lato".into(),
             mono_family: "Monaco".into(),
@@ -149,25 +162,25 @@ impl MarkupStyle {
             tight_item_gap: px(0.),
             list_indent: px(26.),
             text_color,
-            muted_color: rgb(0x616061).into(),
-            link_color: rgb(0x1264a3).into(),
+            muted_color: c(0x616061ff, 0xababadff),
+            link_color: c(0x1264a3ff, 0x1d9bd1ff),
             border_color,
             heading_rule_color: border_color,
-            inline_code_background: rgba(0x1d1c1d0a).into(),
-            inline_code_color: Some(rgb(0xe01e5a).into()),
-            code_background: rgba(0x1d1c1d0a).into(),
+            inline_code_background: c(0x1d1c1d0a, 0x232529ff),
+            inline_code_color: Some(c(0xe01e5aff, 0xe8912dff)),
+            code_background: c(0x1d1c1d0a, 0x1f2124ff),
             code_text_size: px(12.),
             code_line_height: 1.50001,
             code_padding: px(8.),
-            code_border: Some(border_color),
+            code_border: Some(c(0x1d1c1d21, 0x36383cff)),
             code_wraps: true,
             radius: px(4.),
             quote_bar_width: px(4.),
             quote_padding: px(12.),
             quote_text_color: text_color,
             ordered_markers_by_depth: true,
-            table_stripe: rgba(0x1d1c1d0a).into(),
-            checkbox_checked: rgb(0x1264a3).into(),
+            table_stripe: c(0x1d1c1d0a, 0x232529ff),
+            checkbox_checked: c(0x1264a3ff, 0x1d9bd1ff),
             alert_colors: AlertColors {
                 note: border_color,
                 tip: border_color,
@@ -175,7 +188,11 @@ impl MarkupStyle {
                 warning: border_color,
                 caution: border_color,
             },
-            slack_fallbacks: true,
+            slack_fallbacks: Some(NoteColors {
+                background: c(0xfff8e6ff, 0xffd60a14),
+                border: c(0xf4e2b0ff, 0xffd60a33),
+                text: c(0x7a5a00ff, 0xe6c35cff),
+            }),
         }
     }
 }
@@ -215,14 +232,23 @@ pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> 
         .into_any_element()
 }
 
-/// Parses `text` and picks the style for previewing it on `target`. The one
+/// Parses `text` for previewing it on `target`. With [`style`], the one
 /// place a target chooses its parser and style.
-pub fn preview(target: Target, text: &str) -> (Document, MarkupStyle) {
+pub fn preview(target: Target, text: &str) -> Document {
     match target {
-        Target::Github => (markup::github::parse(text), MarkupStyle::github_light()),
-        Target::Slack => (markup::slack::parse(text), MarkupStyle::slack_light()),
+        Target::Github => markup::github::parse(text),
+        Target::Slack => markup::slack::parse(text),
+        Target::Email => markup::plain::parse(text),
+    }
+}
+
+/// The preview style for `target` in the light or dark appearance.
+pub fn style(target: Target, dark: bool) -> MarkupStyle {
+    match target {
+        Target::Github => MarkupStyle::github(dark),
+        Target::Slack => MarkupStyle::slack(dark),
         // An email body in the system font; nothing in it is styled.
-        Target::Email => (markup::plain::parse(text), MarkupStyle::github_light()),
+        Target::Email => MarkupStyle::github(dark),
     }
 }
 
@@ -245,13 +271,12 @@ impl Renderer<'_> {
             .iter()
             .enumerate()
             .map(|(ix, block)| {
-                let fallback = self
-                    .style
-                    .slack_fallbacks
-                    .then(|| markup::slack::fallback(block))
-                    .flatten();
+                let fallback = self.style.slack_fallbacks.and_then(|colors| {
+                    markup::slack::fallback(block)
+                        .map(|(replacement, note)| (replacement, note, colors))
+                });
                 let (block, note) = match &fallback {
-                    Some((replacement, note)) => (replacement, Some(*note)),
+                    Some((replacement, note, colors)) => (replacement, Some((*note, *colors))),
                     None => (block, None),
                 };
                 let gap = match block {
@@ -261,7 +286,9 @@ impl Renderer<'_> {
                 };
                 div()
                     .pt(gap)
-                    .when_some(note, |this, note| this.child(conversion_note(note)))
+                    .when_some(note, |this, (note, colors)| {
+                        this.child(conversion_note(note, colors))
+                    })
                     .child(self.block(block))
                     .into_any_element()
             })
@@ -544,16 +571,16 @@ impl Renderer<'_> {
 
 /// Says how a block changes on its way to the platform, above the
 /// replacement block.
-fn conversion_note(note: &'static str) -> impl IntoElement {
+fn conversion_note(note: &'static str, colors: NoteColors) -> impl IntoElement {
     div().flex().mb(px(4.)).child(
         div()
             .px(px(8.))
             .py(px(3.))
             .rounded(px(6.))
             .border_1()
-            .border_color(rgb(0xf4e2b0))
-            .bg(rgb(0xfff8e6))
-            .text_color(rgb(0x7a5a00))
+            .border_color(colors.border)
+            .bg(colors.background)
+            .text_color(colors.text)
             .font_family(".SystemUIFont")
             .text_size(px(12.))
             .line_height(relative(1.4))

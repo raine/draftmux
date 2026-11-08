@@ -5,17 +5,17 @@ use std::time::Duration;
 use chrono::Utc;
 use draftmux_storage::Target;
 use gpui::{
-    AnyElement, Context, FontWeight, MouseButton, SharedString, Task, div, img, prelude::*, px,
-    rgb, rgba, svg,
+    AnyElement, Context, FontWeight, Hsla, MouseButton, SharedString, Task, div, img, prelude::*,
+    px, svg,
 };
 
-use super::{Chrome, FAINT, MUTED, TEXT, shadow, sidebar_column};
+use super::{Chrome, shadow, sidebar_column};
 use crate::assets::{ARCHIVE_ICON, EMAIL_ICON, GITHUB_ICON, SLACK_ICON};
 use crate::drafts::{relative_time, tilde};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
+use crate::theme;
 
 const TOAST_DURATION: Duration = Duration::from_secs(4);
-const SELECTED_ROW: u32 = 0x00000016;
 
 pub(super) struct Toast {
     text: SharedString,
@@ -26,6 +26,7 @@ pub(super) struct Toast {
 
 impl Chrome {
     pub(super) fn sidebar(&self, bar: &ScrollbarState, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         let now = Utc::now();
         let home = std::env::home_dir();
         let current = self.drafts.current_id();
@@ -44,7 +45,7 @@ impl Chrome {
                 .px(px(8.))
                 .py(px(7.))
                 .rounded(px(6.))
-                .when(selected, |row| row.bg(rgba(SELECTED_ROW)))
+                .when(selected, |row| row.bg(palette.selected_row))
                 .on_click(cx.listener({
                     let id = id.clone();
                     move |this, _, window, cx| {
@@ -59,7 +60,7 @@ impl Chrome {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(platform_icon(row.draft.meta.target)),
+                        .child(platform_icon(row.draft.meta.target, palette.text)),
                 )
                 .child(
                     div()
@@ -87,7 +88,7 @@ impl Chrome {
                                     div()
                                         .flex_none()
                                         .text_size(px(11.))
-                                        .text_color(rgba(FAINT))
+                                        .text_color(palette.faint)
                                         .group_hover(group.clone(), |style| style.opacity(0.))
                                         .child(relative_time(row.draft.meta.updated_at, now)),
                                 ),
@@ -96,7 +97,7 @@ impl Chrome {
                             div()
                                 .truncate()
                                 .text_size(px(12.))
-                                .text_color(rgba(MUTED))
+                                .text_color(palette.muted)
                                 .child(tilde(&row.draft.meta.cwd, home.as_deref())),
                         ),
                 )
@@ -111,10 +112,14 @@ impl Chrome {
                         .items_center()
                         .justify_center()
                         .rounded(px(5.))
-                        .bg(rgb(if selected { 0xd9d9df } else { 0xe4e4ea }))
+                        .bg(if selected {
+                            palette.archive_button_selected
+                        } else {
+                            palette.archive_button
+                        })
                         .opacity(0.)
                         .group_hover(group, |style| style.opacity(1.))
-                        .hover(|style| style.bg(rgb(0xd6d6de)))
+                        .hover(|style| style.bg(palette.archive_button_hover))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(
                             cx.listener(move |this, _, window, cx| this.archive(&id, window, cx)),
@@ -123,12 +128,12 @@ impl Chrome {
                             svg()
                                 .path(ARCHIVE_ICON)
                                 .size(px(14.))
-                                .text_color(rgba(MUTED)),
+                                .text_color(palette.muted),
                         ),
                 )
         });
 
-        sidebar_column()
+        sidebar_column(&palette)
             .h_full()
             .flex()
             .flex_col()
@@ -141,7 +146,7 @@ impl Chrome {
                     .px(px(16.))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgba(FAINT))
+                    .text_color(palette.faint)
                     .child("Drafts"),
             )
             .child(
@@ -225,6 +230,7 @@ impl Chrome {
 
     pub(super) fn toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let toast = self.toast.as_ref()?;
+        let palette = *theme::palette(cx);
         Some(
             div()
                 .id("toast")
@@ -240,10 +246,10 @@ impl Chrome {
                 .pl(px(12.))
                 .pr(px(if toast.undo.is_some() { 8. } else { 12. }))
                 .rounded(px(9.))
-                .bg(rgb(0x26262c))
-                .text_color(rgb(0xffffff))
+                .bg(palette.toast)
+                .text_color(palette.toast_text)
                 .text_size(px(13.))
-                .shadow(vec![shadow(0x00000040, 10., 30., 0.)])
+                .shadow(vec![shadow(palette.toast_drop, 10., 30., 0.)])
                 .child(div().min_w_0().child(toast.text.clone()))
                 .children(toast.undo.clone().map(|id| {
                     div()
@@ -252,8 +258,8 @@ impl Chrome {
                         .px(px(9.))
                         .py(px(3.))
                         .rounded(px(6.))
-                        .bg(rgba(0xffffff24))
-                        .hover(|style| style.bg(rgba(0xffffff38)))
+                        .bg(palette.toast_button)
+                        .hover(|style| style.bg(palette.toast_button_hover))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.undo_archive(&id, window, cx)
                         }))
@@ -265,12 +271,12 @@ impl Chrome {
 
 /// The target's mark: GitHub's and the email envelope take the text colour,
 /// Slack's keeps its own.
-fn platform_icon(target: Target) -> AnyElement {
+fn platform_icon(target: Target, text: Hsla) -> AnyElement {
     let tinted = |path| {
         svg()
             .path(path)
             .size(px(15.))
-            .text_color(rgb(TEXT))
+            .text_color(text)
             .into_any_element()
     };
     match target {

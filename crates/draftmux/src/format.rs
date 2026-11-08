@@ -14,20 +14,17 @@ use std::time::Duration;
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, Context, Entity, FontWeight, KeyBinding, SharedString, Subscription, Task, Window,
-    actions, div, prelude::*, px, rgb, rgba,
+    actions, div, prelude::*, px,
 };
 use shell_env::ShellEnv;
 
 use crate::process;
+use crate::theme;
 
 actions!(format, [Format]);
 
 /// oxfmt is a Node script; a cold start takes about a second.
 const TIMEOUT: Duration = Duration::from_secs(5);
-
-const TEXT: u32 = 0x1d1d1f;
-const MUTED: u32 = 0x3c3c43a8;
-const BUTTON_HOVER: u32 = 0x0000000d;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-shift-f", Format, None)]);
@@ -160,6 +157,7 @@ impl Render for Formatter {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let visible = Self::oxfmt(cx).is_some() && !self.plain_text;
         let available = self.available();
+        let palette = *theme::palette(cx);
         div()
             .flex()
             .items_center()
@@ -169,7 +167,7 @@ impl Render for Formatter {
                 div()
                     .max_w(px(360.))
                     .truncate()
-                    .text_color(rgba(MUTED))
+                    .text_color(palette.muted)
                     .child(message)
             }))
             .when(visible, |this| {
@@ -182,14 +180,14 @@ impl Render for Formatter {
                         .px_2()
                         .py_0p5()
                         .rounded_md()
-                        .text_color(rgb(TEXT))
+                        .text_color(palette.text)
                         .font_weight(FontWeight::MEDIUM)
                         .child("Format")
-                        .child(div().text_color(rgba(MUTED)).child("⌘⇧F"))
+                        .child(div().text_color(palette.muted).child("⌘⇧F"))
                         .map(|button| {
                             if available {
                                 button
-                                    .hover(|style| style.bg(rgba(BUTTON_HOVER)))
+                                    .hover(|style| style.bg(palette.hover))
                                     .on_click(cx.listener(|this, _, _, cx| this.format(cx)))
                             } else {
                                 button.opacity(0.4)

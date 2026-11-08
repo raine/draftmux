@@ -1,5 +1,5 @@
 //! Thin overlay scrollbars, drawn over the right edge of a scrolling pane
-//! like macOS overlay scrollers: no track, a rounded thumb that darkens while
+//! like macOS overlay scrollers: no track, a rounded thumb that strengthens while
 //! hovered or dragged, hidden when the content fits.
 
 use std::cell::Cell;
@@ -9,14 +9,14 @@ use editor::Editor;
 use gpui::{
     App, Bounds, DispatchPhase, Entity, HitboxBehavior, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, Window, canvas, div, point, prelude::*, px,
-    quad, rgba, size,
+    quad, size,
 };
+
+use crate::theme;
 
 const TRACK_WIDTH: Pixels = px(11.);
 const THUMB_INSET: Pixels = px(3.);
 const MIN_THUMB: Pixels = px(24.);
-const THUMB: u32 = 0x00000038;
-const THUMB_ACTIVE: u32 = 0x0000005c;
 
 /// What the scrollbar scrolls.
 #[derive(Clone)]
@@ -120,6 +120,7 @@ pub fn scrollbar(source: Source, state: &ScrollbarState) -> impl IntoElement {
                         return;
                     };
                     let active = state.0.hovered.get() || state.0.grab.get().is_some();
+                    let palette = theme::palette(cx);
                     let width = TRACK_WIDTH - THUMB_INSET * 2.;
                     window.paint_quad(quad(
                         Bounds::new(
@@ -127,7 +128,11 @@ pub fn scrollbar(source: Source, state: &ScrollbarState) -> impl IntoElement {
                             size(width, height),
                         ),
                         width / 2.,
-                        rgba(if active { THUMB_ACTIVE } else { THUMB }),
+                        if active {
+                            palette.scrollbar_thumb_active
+                        } else {
+                            palette.scrollbar_thumb
+                        },
                         px(0.),
                         gpui::transparent_black(),
                         Default::default(),

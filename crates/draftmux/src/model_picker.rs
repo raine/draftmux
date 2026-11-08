@@ -9,23 +9,16 @@
 use draftmux_pi_profiles::{Availability, ModelRef, availability};
 use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton,
-    ScrollStrategy, SharedString, UniformListScrollHandle, Window, div, prelude::*, px, rgb, rgba,
+    ScrollStrategy, SharedString, UniformListScrollHandle, Window, div, prelude::*, px,
     uniform_list,
 };
 
 use crate::profiles::ModelList;
+use crate::theme;
 
 const WIDTH: gpui::Pixels = px(320.);
 const ROW_HEIGHT: gpui::Pixels = px(24.);
 const VISIBLE_ROWS: usize = 14;
-
-const TEXT: u32 = 0x1d1d1f;
-const MUTED: u32 = 0x3c3c4399;
-const FAINT: u32 = 0x3c3c4366;
-const HAIRLINE: u32 = 0x00000016;
-const ACCENT: u32 = 0x0a6cf5;
-const WARNING: u32 = 0xb25000;
-const MENU_BG: u32 = 0xf6f6f8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickerEvent {
@@ -254,6 +247,7 @@ impl ModelPicker {
     }
 
     fn render_row(&self, ix: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let palette = *theme::palette(cx);
         let row = div()
             .id(ix)
             .w_full()
@@ -266,7 +260,7 @@ impl ModelPicker {
                 .pt_1()
                 .text_size(px(11.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgba(MUTED))
+                .text_color(palette.muted)
                 .child(name.clone())
                 .into_any_element(),
             Row::Model(model) => {
@@ -275,7 +269,7 @@ impl ModelPicker {
                 row.rounded(px(5.))
                     .text_size(px(13.))
                     .when(highlighted, |row| {
-                        row.bg(rgb(ACCENT)).text_color(rgb(0xffffff))
+                        row.bg(palette.accent).text_color(palette.on_accent)
                     })
                     .child(
                         div()
@@ -300,6 +294,7 @@ impl ModelPicker {
 impl Render for ModelPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let list_height = ROW_HEIGHT * self.rows.len().min(VISIBLE_ROWS) as f32;
+        let palette = *theme::palette(cx);
         div()
             .id("model-picker")
             .key_context("ModelPicker")
@@ -311,12 +306,12 @@ impl Render for ModelPicker {
             .flex_col()
             .p_1()
             .gap_1()
-            .bg(rgb(MENU_BG))
+            .bg(palette.menu)
             .rounded(px(8.))
             .border_1()
-            .border_color(rgba(HAIRLINE))
+            .border_color(palette.hairline)
             .shadow_lg()
-            .text_color(rgb(TEXT))
+            .text_color(palette.text)
             .child(
                 div()
                     .h(px(28.))
@@ -325,16 +320,16 @@ impl Render for ModelPicker {
                     .flex()
                     .items_center()
                     .rounded(px(6.))
-                    .bg(rgb(0xffffff))
+                    .bg(palette.menu_field)
                     .border_1()
-                    .border_color(rgba(HAIRLINE))
+                    .border_color(palette.hairline)
                     .text_size(px(13.))
                     .when(!self.query.is_empty(), |field| {
                         field.child(SharedString::from(self.query.clone()))
                     })
-                    .child(div().w(px(1.)).h(px(15.)).bg(rgb(ACCENT)))
+                    .child(div().w(px(1.)).h(px(15.)).bg(palette.accent))
                     .when(self.query.is_empty(), |field| {
-                        field.child(div().text_color(rgba(FAINT)).child("Search models"))
+                        field.child(div().text_color(palette.faint).child("Search models"))
                     }),
             )
             .when_some(self.warning(), |menu, warning| {
@@ -343,7 +338,7 @@ impl Render for ModelPicker {
                         .px_2()
                         .py_1()
                         .text_size(px(12.))
-                        .text_color(rgb(WARNING))
+                        .text_color(palette.warning)
                         .child(SharedString::from(format!("⚠ {warning}"))),
                 )
             })
@@ -355,13 +350,13 @@ impl Render for ModelPicker {
                         .flex()
                         .gap_2()
                         .text_size(px(12.))
-                        .text_color(rgba(MUTED))
+                        .text_color(palette.muted)
                         .child(div().flex_1().child(status))
                         .when(retry, |row| {
                             row.child(
                                 div()
                                     .id("retry")
-                                    .text_color(rgb(ACCENT))
+                                    .text_color(palette.accent)
                                     .child("Retry")
                                     .on_mouse_down(
                                         MouseButton::Left,

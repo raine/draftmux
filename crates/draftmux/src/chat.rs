@@ -19,8 +19,8 @@ use editor::{Editor, EditorStyle};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, FollowMode, FontWeight, KeyBinding, ListAlignment, ListState, Task, Transformation,
-    Window, actions, div, font, list, percentage, prelude::*, px, relative, rgb, rgba, svg,
+    Focusable, FollowMode, FontWeight, Hsla, KeyBinding, ListAlignment, ListState, Task,
+    Transformation, Window, actions, div, font, list, percentage, prelude::*, px, relative, svg,
 };
 use shell_env::ShellEnv;
 
@@ -31,6 +31,7 @@ use crate::assets::{
 use crate::chat_model::ChatModel;
 use crate::markup_view::{self, MarkupStyle};
 use crate::profiles::ProfileCatalog;
+use crate::theme::{self, Palette, Theme};
 use transcript::{DiffLine, Item, Tool, Transcript};
 
 actions!(chat, [Send, Stop]);
@@ -39,13 +40,6 @@ actions!(chat, [Send, Stop]);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const KEY_CONTEXT: &str = "Composer";
 
-const TEXT: u32 = 0x1d1d1f;
-const MUTED: u32 = 0x3c3c43a8;
-const FAINT: u32 = 0x3c3c4373;
-const HAIRLINE: u32 = 0x00000016;
-const LINE_STRONG: u32 = 0x00000024;
-const ACCENT: u32 = 0x0a6cf5;
-const DANGER: u32 = 0xc9372c;
 const MONO: &str = "Menlo";
 
 pub fn init(cx: &mut App) {
@@ -101,22 +95,15 @@ impl Focusable for Chat {
 
 impl Chat {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let composer = cx.new(|cx| {
-            let mut editor = Editor::new("", cx);
-            editor.set_style(composer_style(), cx);
-            editor
-        });
+        let composer = theme::editor(composer_style, cx);
         cx.observe(&composer, |_, _, cx| cx.notify()).detach();
-        let mut style = MarkupStyle::github_light();
-        style.text_size = px(13.);
-        style.block_gap = px(8.);
-        style.heading_gap = px(12.);
-        style.code_padding = px(10.);
+        cx.observe_global::<Theme>(|this, cx| this.style = message_style(theme::get(cx).dark))
+            .detach();
         Self {
             sessions: HashMap::new(),
             current: None,
             composer,
-            style,
+            style: message_style(theme::get(cx).dark),
             idle: Task::ready(()),
         }
     }
@@ -502,6 +489,7 @@ impl Chat {
     }
 
     fn render_item(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let palette = *theme::palette(cx);
         let Some(session) = self.session() else {
             return div().into_any_element();
         };
@@ -525,8 +513,8 @@ impl Chat {
                         .rounded_tr(px(12.))
                         .rounded_bl(px(12.))
                         .rounded_br(px(3.))
-                        .bg(rgb(ACCENT))
-                        .text_color(rgb(0xffffff))
+                        .bg(palette.accent)
+                        .text_color(palette.on_accent)
                         .text_size(px(13.))
                         .line_height(px(19.5))
                         .child(text.clone()),
@@ -536,12 +524,12 @@ impl Chat {
                 .px(px(2.))
                 .child(markup_view::render(doc, &self.style, ("message", index)))
                 .into_any_element(),
-            Item::Tool(tool) => self.tool_row(tool, index, session, cx),
+            Item::Tool(tool) => self.tool_row(tool, index, session, &palette, cx),
             Item::Failure { error, .. } => {
                 let retry = session.transcript.retry_at(index).is_some();
-                let (message, color): (_, gpui::Hsla) = match error {
-                    Some(error) => (error.clone(), rgb(DANGER).into()),
-                    None => ("Stopped".to_owned(), rgba(MUTED).into()),
+                let (message, color) = match error {
+                    Some(error) => (error.clone(), palette.danger),
+                    None => ("Stopped".to_owned(), palette.muted),
                 };
                 div()
                     .flex()
@@ -559,10 +547,10 @@ impl Chat {
                                 .py(px(2.))
                                 .rounded(px(999.))
                                 .border_1()
-                                .border_color(rgba(LINE_STRONG))
-                                .bg(rgb(0xffffff))
-                                .text_color(rgb(TEXT))
-                                .hover(|style| style.bg(rgb(0xf4f4f7)))
+                                .border_color(palette.line_strong)
+                                .bg(palette.control)
+                                .text_color(palette.text)
+                                .hover(|style| style.bg(palette.control_hover))
                                 .on_click(cx.listener(move |this, _, _, cx| this.retry(index, cx)))
                                 .child("Retry"),
                         )
@@ -571,7 +559,7 @@ impl Chat {
             }
             Item::Notice(text) => div()
                 .text_size(px(12.))
-                .text_color(rgba(FAINT))
+                .text_color(palette.faint)
                 .text_center()
                 .child(text.clone())
                 .into_any_element(),
@@ -589,6 +577,7 @@ impl Chat {
         tool: &Tool,
         index: usize,
         session: &Session,
+        palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let meta = &session.draft.meta;
@@ -599,12 +588,16 @@ impl Chat {
         );
         let running = tool.running();
         let icon = if running {
-            spinner().into_any_element()
+            spinner(palette).into_any_element()
         } else {
             svg()
                 .path(tool_icon(&tool.name))
                 .size(px(14.))
-                .text_color(rgba(if tool.is_error() { 0xc9372ccc } else { FAINT }))
+                .text_color(if tool.is_error() {
+                    palette.tool_error
+                } else {
+                    palette.faint
+                })
                 .into_any_element()
         };
         let stats = tool.stats.filter(|_| !running);
@@ -619,7 +612,7 @@ impl Chat {
             .pr(px(6.))
             .mx(px(-2.))
             .rounded(px(6.))
-            .hover(|style| style.bg(rgba(0x0000000a)))
+            .hover(|style| style.bg(palette.hover))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(index, cx)))
             .child(
                 div()
@@ -643,7 +636,7 @@ impl Chat {
                         div()
                             .flex_none()
                             .text_size(px(12.5))
-                            .text_color(rgba(if running { TEXT } else { MUTED }))
+                            .text_color(if running { palette.text } else { palette.muted })
                             .child(tool.verb()),
                     )
                     .child(
@@ -652,7 +645,7 @@ impl Chat {
                             .truncate()
                             .font_family(MONO)
                             .text_size(px(12.))
-                            .text_color(rgb(TEXT))
+                            .text_color(palette.text)
                             .child(target),
                     ),
             )
@@ -664,16 +657,20 @@ impl Chat {
                     .gap(px(6.))
                     .pl(px(8.))
                     .when_some(stats, |meta, (added, removed)| {
-                        meta.child(stat(format!("+{added}"), 0x1f7a42, 0xe3f4e8))
+                        meta.child(stat(format!("+{added}"), palette.added, palette.added_bg))
                             .when_some(removed, |meta, removed| {
-                                meta.child(stat(format!("−{removed}"), 0xb0342a, 0xfbe7e5))
+                                meta.child(stat(
+                                    format!("−{removed}"),
+                                    palette.removed,
+                                    palette.removed_bg,
+                                ))
                             })
                     })
                     .when_some(tool.duration(), |meta, duration| {
                         meta.child(
                             div()
                                 .text_size(px(11.))
-                                .text_color(rgba(FAINT))
+                                .text_color(palette.faint)
                                 .child(format_duration(duration)),
                         )
                     })
@@ -681,7 +678,7 @@ impl Chat {
                         let chevron = svg()
                             .path(CHEVRON_ICON)
                             .size(px(10.))
-                            .text_color(rgba(FAINT));
+                            .text_color(palette.faint);
                         if tool.expanded {
                             chevron.with_transformation(Transformation::rotate(percentage(0.25)))
                         } else {
@@ -695,11 +692,13 @@ impl Chat {
             .flex()
             .flex_col()
             .child(row)
-            .when(tool.expanded, |column| column.child(tool_body(tool, index)))
+            .when(tool.expanded, |column| {
+                column.child(tool_body(tool, index, palette))
+            })
             .into_any_element()
     }
 
-    fn header(&self) -> impl IntoElement {
+    fn header(&self, palette: &Palette) -> impl IntoElement {
         div()
             .h(px(32.))
             .flex_none()
@@ -707,17 +706,18 @@ impl Chat {
             .items_center()
             .px(px(14.))
             .border_b_1()
-            .border_color(rgba(HAIRLINE))
+            .border_color(palette.hairline)
             .child(
                 div()
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgba(FAINT))
+                    .text_color(palette.faint)
                     .child("PI"),
             )
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         let busy = self.busy();
         let session = self.session();
         let empty = self.composer.read(cx).text().trim().is_empty();
@@ -730,8 +730,8 @@ impl Chat {
                 .on_action(cx.listener(|this, _: &Stop, _, cx| this.stop(cx)))
                 .rounded(px(10.))
                 .border_1()
-                .border_color(rgba(LINE_STRONG))
-                .bg(rgb(0xffffff))
+                .border_color(palette.line_strong)
+                .bg(palette.control)
                 .child(
                     div()
                         .h(px(58.))
@@ -744,7 +744,7 @@ impl Chat {
                                     .top(px(9.))
                                     .left(px(11.))
                                     .text_size(px(13.))
-                                    .text_color(rgba(FAINT))
+                                    .text_color(palette.faint)
                                     .child("Ask pi to change the draft, or ask about the session…"),
                             )
                         }),
@@ -758,14 +758,14 @@ impl Chat {
                         .pr(px(6.))
                         .pb(px(6.))
                         .text_size(px(11.))
-                        .text_color(rgba(FAINT))
+                        .text_color(palette.faint)
                         .child(div().flex_1().min_w_0().children(model))
                         .child(if busy {
                             div()
                                 .flex()
                                 .items_center()
                                 .gap_1p5()
-                                .child(spinner())
+                                .child(spinner(&palette))
                                 .child("Working…")
                         } else {
                             div().child("↵ send · ⇧↵ newline")
@@ -779,19 +779,19 @@ impl Chat {
                                 .items_center()
                                 .justify_center()
                                 .rounded(px(7.))
-                                .bg(rgb(if busy {
-                                    0x2b2b31
+                                .bg(if busy {
+                                    palette.send_busy
                                 } else if can_send {
-                                    ACCENT
+                                    palette.accent
                                 } else {
-                                    0xc9cfdf
-                                }))
-                                .text_color(rgb(0xffffff))
+                                    palette.send_disabled
+                                })
+                                .text_color(palette.on_accent)
                                 .child(
                                     svg()
                                         .path(if busy { STOP_ICON } else { SEND_ICON })
                                         .size(px(if busy { 10. } else { 14. }))
-                                        .text_color(rgb(0xffffff)),
+                                        .text_color(palette.on_accent),
                                 )
                                 .when(busy || can_send, |button| {
                                     button.on_click(cx.listener(move |this, _, _, cx| {
@@ -810,6 +810,7 @@ impl Chat {
 
 impl Render for Chat {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         let log = match self.session() {
             Some(session) => {
                 let unavailable = match &session.agent {
@@ -834,7 +835,7 @@ impl Render for Chat {
                             .px(px(14.))
                             .pb(px(4.))
                             .text_size(px(12.))
-                            .text_color(rgb(DANGER))
+                            .text_color(palette.danger)
                             .child(err)
                     }))
             }
@@ -844,14 +845,24 @@ impl Render for Chat {
             .size_full()
             .flex()
             .flex_col()
-            .child(self.header())
+            .child(self.header(&palette))
             .child(log)
             .when(self.current.is_some(), |chat| chat.child(self.composer(cx)))
     }
 }
 
+/// Assistant messages: GitHub's markdown at chat size.
+fn message_style(dark: bool) -> MarkupStyle {
+    let mut style = MarkupStyle::github(dark);
+    style.text_size = px(13.);
+    style.block_gap = px(8.);
+    style.heading_gap = px(12.);
+    style.code_padding = px(10.);
+    style
+}
+
 /// The composer's input: the UI font at chat size.
-fn composer_style() -> EditorStyle {
+fn composer_style(palette: &Palette) -> EditorStyle {
     EditorStyle {
         font: font(".SystemUIFont"),
         font_size: px(13.),
@@ -859,9 +870,9 @@ fn composer_style() -> EditorStyle {
         padding_x: px(11.),
         padding_top: px(9.),
         padding_bottom: px(4.),
-        text: rgb(TEXT).into(),
-        heading: rgb(TEXT).into(),
-        ..EditorStyle::default()
+        text: palette.text,
+        heading: palette.text,
+        ..palette.editor_style()
     }
 }
 
@@ -876,7 +887,7 @@ fn tool_icon(name: &str) -> &'static str {
 }
 
 /// A grey ring with a turning accent arc.
-fn spinner() -> impl IntoElement {
+fn spinner(palette: &Palette) -> impl IntoElement {
     div()
         .size(px(11.))
         .relative()
@@ -885,14 +896,14 @@ fn spinner() -> impl IntoElement {
                 .absolute()
                 .size_full()
                 .path(SPINNER_TRACK_ICON)
-                .text_color(rgb(0xcdd3e0)),
+                .text_color(palette.spinner_track),
         )
         .child(
             svg()
                 .absolute()
                 .size_full()
                 .path(SPINNER_ARC_ICON)
-                .text_color(rgb(ACCENT))
+                .text_color(palette.accent)
                 .with_animation(
                     "spin",
                     Animation::new(Duration::from_millis(700)).repeat(),
@@ -901,15 +912,15 @@ fn spinner() -> impl IntoElement {
         )
 }
 
-fn stat(text: String, color: u32, background: u32) -> impl IntoElement {
+fn stat(text: String, color: Hsla, background: Hsla) -> impl IntoElement {
     div()
         .px(px(4.))
         .rounded(px(4.))
         .font_family(MONO)
         .text_size(px(11.))
         .line_height(px(16.))
-        .text_color(rgb(color))
-        .bg(rgb(background))
+        .text_color(color)
+        .bg(background)
         .child(text)
 }
 
@@ -923,28 +934,32 @@ fn format_duration(duration: Duration) -> String {
 }
 
 /// The expanded row: output keeps its whitespace and scrolls sideways.
-fn tool_body(tool: &Tool, index: usize) -> impl IntoElement {
+fn tool_body(tool: &Tool, index: usize, palette: &Palette) -> impl IntoElement {
     let lines: Vec<AnyElement> = match tool.diff() {
         Some(diff) => diff
             .into_iter()
             .map(|line| {
                 let (sign, text, color, background) = match line {
-                    DiffLine::Context(text) => (" ", text, 0x3a3a42, None),
-                    DiffLine::Removed(text) => ("-", text, 0x8c2a22, Some(0xfbe7e5)),
-                    DiffLine::Added(text) => ("+", text, 0x1c5e34, Some(0xe3f4e8)),
+                    DiffLine::Context(text) => (" ", text, palette.tool_text, None),
+                    DiffLine::Removed(text) => {
+                        ("-", text, palette.diff_removed, Some(palette.removed_bg))
+                    }
+                    DiffLine::Added(text) => {
+                        ("+", text, palette.diff_added, Some(palette.added_bg))
+                    }
                 };
                 div()
                     .flex()
                     .min_w_full()
                     .pr(px(10.))
-                    .text_color(rgb(color))
-                    .when_some(background, |line, bg| line.bg(rgb(bg)))
+                    .text_color(color)
+                    .when_some(background, |line, bg| line.bg(bg))
                     .child(
                         div()
                             .w(px(18.))
                             .flex_none()
                             .text_center()
-                            .text_color(rgba(FAINT))
+                            .text_color(palette.faint)
                             .child(sign),
                     )
                     .child(div().whitespace_nowrap().child(blank_as_space(text)))
@@ -960,7 +975,7 @@ fn tool_body(tool: &Tool, index: usize) -> impl IntoElement {
                 div()
                     .px(px(10.))
                     .whitespace_nowrap()
-                    .when(command, |line| line.text_color(rgba(FAINT)).mb(px(4.)))
+                    .when(command, |line| line.text_color(palette.faint).mb(px(4.)))
                     .child(blank_as_space(line))
                     .into_any_element()
             })
@@ -974,11 +989,11 @@ fn tool_body(tool: &Tool, index: usize) -> impl IntoElement {
         .max_h(px(200.))
         .overflow_scroll()
         .rounded(px(7.))
-        .bg(rgb(0xf4f4f6))
+        .bg(palette.tool_body)
         .font_family(MONO)
         .text_size(px(11.5))
         .line_height(px(17.))
-        .text_color(rgb(0x3a3a42))
+        .text_color(palette.tool_text)
         .child(div().flex().flex_col().min_w_full().children(lines))
 }
 

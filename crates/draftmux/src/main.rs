@@ -22,6 +22,7 @@ mod selection;
 mod selection_popover;
 mod show;
 mod source;
+mod theme;
 
 use clap::{Parser, Subcommand};
 use draftmux_storage::Store;
@@ -81,6 +82,7 @@ fn main() {
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
+            theme::init(cx);
             shell_env::init(cx);
             profiles::init(cx);
             editor::init(cx);

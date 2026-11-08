@@ -4,7 +4,8 @@
 //!
 //! The window uses `WindowBackgroundAppearance::Blurred`, so anything painted
 //! with alpha below 1 shows the blurred desktop. The root paints nothing; the
-//! sidebar column paints a translucent tint and the content panes are opaque.
+//! sidebar column paints a translucent tint, opaque with Reduce Transparency,
+//! and the content panes are opaque.
 
 mod sidebar;
 
@@ -14,9 +15,9 @@ use anyhow::Result;
 use draftmux_storage::{Store, Target};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    App, BoxShadow, Context, Entity, Focusable, FontWeight, KeyBinding, MouseButton, Pixels, Point,
-    Rgba, ScrollHandle, SharedString, Subscription, Task, Window, WindowControlArea, actions, div,
-    point, prelude::*, px, rgb, rgba, svg,
+    App, BoxShadow, Context, Entity, Focusable, FontWeight, Hsla, KeyBinding, MouseButton, Pixels,
+    Point, ScrollHandle, SharedString, Subscription, Task, Window, WindowControlArea, actions, div,
+    point, prelude::*, px, svg,
 };
 use markup::Document;
 
@@ -25,9 +26,10 @@ use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
-use crate::markup_view::{self, MarkupStyle};
+use crate::markup_view;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::selection_popover::SelectionPopover;
+use crate::theme::{self, Palette};
 
 actions!(chrome, [TogglePreview]);
 
@@ -38,17 +40,6 @@ const CHAT_WIDTH: Pixels = px(340.);
 pub const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(20.), px(19.));
 /// How often relative times in the sidebar are redrawn.
 const CLOCK_TICK: Duration = Duration::from_secs(30);
-
-// Light palette of the Native variant.
-const SIDEBAR_BG: u32 = 0xe8e8edbd;
-const SIDEBAR_EDGE: u32 = 0x00000012;
-const HAIRLINE: u32 = 0x00000016;
-const TEXT: u32 = 0x1d1d1f;
-const MUTED: u32 = 0x3c3c43a8;
-const FAINT: u32 = 0x3c3c4373;
-const PANE_BG: u32 = 0xffffff;
-const CHAT_BG: u32 = 0xfbfbfc;
-const ERROR: u32 = 0xc9372c;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("alt-cmd-p", TogglePreview, None)]);
@@ -65,7 +56,7 @@ pub struct Chrome {
     chat: Entity<Chat>,
     selection: Entity<SelectionPopover>,
     /// The selected draft's text parsed for its target.
-    preview: Option<(Document, MarkupStyle)>,
+    preview: Option<Document>,
     show_preview: bool,
     /// Why the selected draft's last save failed; cleared by the next save.
     save_error: Option<SharedString>,
@@ -81,6 +72,7 @@ pub struct Chrome {
 
 impl Render for Chrome {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         let [sidebar_bar, editor_bar, preview_bar] = &self.scrollbars;
         let content = if self.drafts.current().is_some() {
             div()
@@ -88,7 +80,7 @@ impl Render for Chrome {
                 .min_w_0()
                 .flex()
                 .child(
-                    pane(rgb(PANE_BG))
+                    pane(palette.pane, &palette)
                         .flex_1()
                         .relative()
                         .child(SelectionPopover::wrap(
@@ -100,11 +92,11 @@ impl Render for Chrome {
                 )
                 .when(self.show_preview, |row| {
                     row.child(
-                        pane(rgb(PANE_BG))
+                        pane(palette.pane, &palette)
                             .flex_1()
                             .relative()
                             .border_l_1()
-                            .child(self.preview_body())
+                            .child(self.preview_body(cx))
                             .child(scrollbar(
                                 Source::Handle(self.preview_scroll.clone()),
                                 preview_bar,
@@ -112,7 +104,7 @@ impl Render for Chrome {
                     )
                 })
         } else {
-            div().flex_1().min_w_0().child(empty_state())
+            div().flex_1().min_w_0().child(empty_state(&palette))
         };
 
         div()
@@ -120,7 +112,7 @@ impl Render for Chrome {
             .relative()
             .flex()
             .flex_col()
-            .text_color(rgb(TEXT))
+            .text_color(palette.text)
             .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
             .on_action(cx.listener(|this, _: &Format, _, cx| {
                 if this.drafts.current().is_some() {
@@ -143,7 +135,7 @@ impl Render for Chrome {
                     .child(self.sidebar(sidebar_bar, cx))
                     .child(content)
                     .child(
-                        pane(rgb(CHAT_BG))
+                        pane(palette.chat, &palette)
                             .w(CHAT_WIDTH)
                             .flex_none()
                             .border_l_1()
@@ -156,7 +148,7 @@ impl Render for Chrome {
 
 impl Chrome {
     pub fn new(store: Store, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let editor = cx.new(|cx| Editor::new("", cx));
+        let editor = theme::editor(Palette::editor_style, cx);
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         let chat = cx.new(Chat::new);
         let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
@@ -167,6 +159,9 @@ impl Chrome {
                     this.edited(editor.read(cx).text().to_owned(), cx);
                 }
             }),
+            // Appearance is app-wide, and this window lives as long as the
+            // app, so it reports appearance changes for every window.
+            cx.observe_window_appearance(window, |_, _, cx| theme::sync(cx)),
             // Drafts created or archived by the CLI while the app was in the
             // background.
             cx.observe_window_activation(window, |this, window, cx| {
@@ -418,14 +413,16 @@ impl Chrome {
         self.show_toast(confirmation.to_owned(), None, cx);
     }
 
-    fn preview_body(&self) -> impl IntoElement {
-        let body = match &self.preview {
-            Some((doc, style)) if !doc.blocks.is_empty() => {
-                markup_view::render(doc, style, "preview-body")
+    fn preview_body(&self, cx: &App) -> impl IntoElement {
+        let theme = theme::get(cx);
+        let target = self.drafts.current().map(|draft| draft.meta.target);
+        let body = match (&self.preview, target) {
+            (Some(doc), Some(target)) if !doc.blocks.is_empty() => {
+                markup_view::render(doc, &markup_view::style(target, theme.dark), "preview-body")
             }
             _ => div()
                 .text_size(px(14.))
-                .text_color(rgba(FAINT))
+                .text_color(theme.palette.faint)
                 .child("Nothing to preview")
                 .into_any_element(),
         };
@@ -441,6 +438,7 @@ impl Chrome {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         let current = self.drafts.current();
         let title: SharedString = match current {
             Some(draft) => self
@@ -452,10 +450,10 @@ impl Chrome {
             None => "Draftmux".into(),
         };
         let subtitle = match (&self.save_error, current) {
-            (Some(error), _) => Some((error.clone(), rgb(ERROR))),
+            (Some(error), _) => Some((error.clone(), palette.danger)),
             (None, Some(draft)) => Some((
                 tilde(&draft.meta.cwd, std::env::home_dir().as_deref()).into(),
-                rgba(FAINT),
+                palette.faint,
             )),
             (None, None) => None,
         };
@@ -489,7 +487,7 @@ impl Chrome {
                 }
             })
             // Traffic lights sit over this segment.
-            .child(sidebar_column())
+            .child(sidebar_column(&palette))
             .child(
                 div()
                     .flex_1()
@@ -499,9 +497,9 @@ impl Chrome {
                     .gap_2()
                     .pl(px(18.))
                     .pr(px(12.))
-                    .bg(rgb(CHAT_BG))
+                    .bg(palette.toolbar)
                     .border_b_1()
-                    .border_color(rgba(HAIRLINE))
+                    .border_color(palette.hairline)
                     .child(
                         div()
                             .min_w_0()
@@ -520,14 +518,19 @@ impl Chrome {
                     }))
                     .child(div().flex_1())
                     .when_some(current.map(|draft| draft.meta.target), |bar, target| {
-                        bar.child(self.toolbar_actions(target, cx))
+                        bar.child(self.toolbar_actions(target, &palette, cx))
                     }),
             )
     }
 
     /// Draft actions at the toolbar's right end. Their mouse-downs don't reach
     /// the toolbar, so clicking them never moves or zooms the window.
-    fn toolbar_actions(&self, target: Target, cx: &mut Context<Self>) -> impl IntoElement {
+    fn toolbar_actions(
+        &self,
+        target: Target,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex_none()
             .flex()
@@ -544,18 +547,22 @@ impl Chrome {
                     .items_center()
                     .rounded(px(6.))
                     .group("toggle-preview")
-                    .hover(|style| style.bg(rgba(0x0000000e)))
+                    .hover(|style| style.bg(palette.hover))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx)))
                     .child(
                         svg()
                             .path(PREVIEW_ICON)
                             .size(px(16.))
-                            .text_color(rgba(if self.show_preview { MUTED } else { FAINT }))
-                            .group_hover("toggle-preview", |style| style.text_color(rgb(TEXT))),
+                            .text_color(if self.show_preview {
+                                palette.muted
+                            } else {
+                                palette.faint
+                            })
+                            .group_hover("toggle-preview", |style| style.text_color(palette.text)),
                     ),
             )
-            .child(target_switch(target, cx))
-            .child(copy::button({
+            .child(target_switch(target, palette, cx))
+            .child(copy::button(palette, {
                 let this = cx.weak_entity();
                 move |cx| {
                     this.update(cx, |this, cx| this.copy(cx)).ok();
@@ -565,7 +572,11 @@ impl Chrome {
 }
 
 /// GitHub/Slack/Email segmented control.
-fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement {
+fn target_switch(
+    selected: Target,
+    palette: &Palette,
+    cx: &mut Context<Chrome>,
+) -> impl IntoElement {
     let segment = |target: Target, label: &'static str| {
         let on = target == selected;
         div()
@@ -577,9 +588,9 @@ fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement
             .rounded(px(5.5))
             .text_size(px(12.))
             .when(on, |segment| {
-                segment.bg(rgb(0xffffff)).shadow(vec![
-                    shadow(0x0000000f, 0., 0., 0.5),
-                    shadow(0x00000029, 1., 2.5, 0.),
+                segment.bg(palette.segment_on).shadow(vec![
+                    shadow(palette.segment_ring, 0., 0., 0.5),
+                    shadow(palette.segment_drop, 1., 2.5, 0.),
                 ])
             })
             .when(!on, |segment| {
@@ -592,7 +603,7 @@ fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement
         .p(px(2.))
         .gap(px(2.))
         .rounded(px(7.))
-        .bg(rgba(0x7676801f))
+        .bg(palette.segment_track)
         .child(segment(Target::Github, "GitHub"))
         .child(segment(Target::Slack, "Slack"))
         .child(segment(Target::Email, "Email"))
@@ -600,9 +611,9 @@ fn target_switch(selected: Target, cx: &mut Context<Chrome>) -> impl IntoElement
 
 /// A box shadow of `color` moved down by `y`. A zero blur with a spread draws
 /// a hairline ring.
-pub(crate) fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
+pub(crate) fn shadow(color: Hsla, y: f32, blur: f32, spread: f32) -> BoxShadow {
     BoxShadow {
-        color: rgba(color).into(),
+        color,
         offset: point(px(0.), px(y)),
         blur_radius: px(blur),
         spread_radius: px(spread),
@@ -610,8 +621,8 @@ pub(crate) fn shadow(color: u32, y: f32, blur: f32, spread: f32) -> BoxShadow {
     }
 }
 
-fn empty_state() -> impl IntoElement {
-    pane(rgb(PANE_BG))
+fn empty_state(palette: &Palette) -> impl IntoElement {
+    pane(palette.pane, palette)
         .size_full()
         .flex()
         .flex_col()
@@ -622,28 +633,32 @@ fn empty_state() -> impl IntoElement {
             div()
                 .text_size(px(13.))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgba(MUTED))
+                .text_color(palette.muted)
                 .child("No drafts"),
         )
         .child(
             div()
                 .text_size(px(12.))
-                .text_color(rgba(FAINT))
+                .text_color(palette.faint)
                 .child("Hand a message off with the draft skill or draftmux open."),
         )
 }
 
-/// The translucent sidebar strip, shared by the toolbar and the body so the
-/// two read as one column.
-fn sidebar_column() -> gpui::Div {
+/// The sidebar strip, shared by the toolbar and the body so the two read as
+/// one column.
+fn sidebar_column(palette: &Palette) -> gpui::Div {
     div()
         .w(SIDEBAR_WIDTH)
         .flex_none()
-        .bg(rgba(SIDEBAR_BG))
+        .bg(palette.sidebar)
         .border_r_1()
-        .border_color(rgba(SIDEBAR_EDGE))
+        .border_color(palette.sidebar_edge)
 }
 
-fn pane(bg: Rgba) -> gpui::Div {
-    div().h_full().min_w_0().bg(bg).border_color(rgba(HAIRLINE))
+fn pane(bg: Hsla, palette: &Palette) -> gpui::Div {
+    div()
+        .h_full()
+        .min_w_0()
+        .bg(bg)
+        .border_color(palette.hairline)
 }

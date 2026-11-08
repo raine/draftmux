@@ -13,14 +13,12 @@ use draftmux_pi_profiles::ModelRef;
 use draftmux_pi_rpc::{Agent, Error, State, ThinkingLevel};
 use gpui::{
     Anchor, Context, Entity, FocusHandle, Focusable, MouseButton, SharedString, Subscription,
-    Window, anchored, deferred, div, point, prelude::*, px, rgb, rgba,
+    Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::model_picker::{ModelPicker, PickerEvent};
 use crate::profiles::ModelList;
-
-const MUTED: u32 = 0x3c3c43a8;
-const ERROR: u32 = 0xc4291c;
+use crate::theme;
 
 pub struct ChatModel {
     agent: Arc<Agent>,
@@ -191,13 +189,14 @@ fn thinking_label(level: ThinkingLevel) -> &'static str {
 
 impl Render for ChatModel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *theme::palette(cx);
         div()
             .relative()
             .flex()
             .gap_2()
             .min_w_0()
             .text_size(px(11.))
-            .text_color(rgba(MUTED))
+            .text_color(palette.muted)
             .child(
                 div()
                     .id("chat-model")
@@ -215,7 +214,7 @@ impl Render for ChatModel {
                     ),
             )
             .when_some(self.error.clone(), |row, error| {
-                row.child(div().truncate().text_color(rgb(ERROR)).child(error))
+                row.child(div().truncate().text_color(palette.danger).child(error))
             })
             .when_some(self.picker.as_ref(), |row, (picker, _)| {
                 row.child(deferred(

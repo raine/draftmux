@@ -27,12 +27,13 @@ use gpui::{
     Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, Focusable, KeyBinding,
     Pixels, SharedString, Size, Subscription, Task, Window, WindowBackgroundAppearance,
     WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, canvas, div, point, prelude::*,
-    px, rgb, rgba, size,
+    px, size,
 };
 use shell_env::ShellEnv;
 
 use crate::resources;
 use crate::selection::{self, Action as SelectionAction, Request, SelectionConfig};
+use crate::theme::{self, Palette};
 
 actions!(selection_popover, [Dismiss, Confirm, Next, Previous]);
 
@@ -57,15 +58,6 @@ const MARGIN: Pixels = px(8.);
 const PADDING: Pixels = px(5.);
 const RESULTS_WIDTH: Pixels = px(380.);
 const INSTRUCTION_WIDTH: Pixels = px(320.);
-
-// Light palette of the Native variant's menus.
-const TINT: u32 = 0xf6f6f8db;
-const TEXT: u32 = 0x1d1d1f;
-const MUTED: u32 = 0x3c3c43a8;
-const FAINT: u32 = 0x3c3c4373;
-const LINE: u32 = 0x00000016;
-const HIGHLIGHT: u32 = 0x0a6cf5;
-const HIGHLIGHT_NUMBER: u32 = 0xffffffbf;
 
 const INSTRUCTION_PLACEHOLDER: &str = "e.g. less formal, mention the timeout";
 
@@ -449,11 +441,7 @@ impl SelectionPopover {
     }
 
     fn start_instruction(&mut self, cx: &mut Context<Self>) {
-        let input = cx.new(|cx| {
-            let mut editor = Editor::new("", cx);
-            editor.set_style(input_style(), cx);
-            editor
-        });
+        let input = theme::editor(input_style, cx);
         self.set_mode(Mode::Instruction(input), None, cx);
         self.focus_panel(cx);
     }
@@ -713,13 +701,14 @@ impl SelectionPopover {
         let Some(open) = &self.open else {
             return div().into_any_element();
         };
+        let palette = *theme::palette(cx);
         let item = |index: usize| {
             let highlighted = open.highlighted == Some(index);
             div()
                 .id(("item", index))
                 .rounded(px(5.))
                 .when(highlighted, |item| {
-                    item.bg(rgb(HIGHLIGHT)).text_color(rgb(0xffffff))
+                    item.bg(palette.accent).text_color(palette.on_accent)
                 })
                 .on_mouse_move({
                     let this = this.clone();
@@ -740,7 +729,7 @@ impl SelectionPopover {
                                     .w(px(1.))
                                     .my(px(4.))
                                     .mx(px(2.))
-                                    .bg(rgba(LINE))
+                                    .bg(palette.menu_line)
                                     .into_any_element()
                             });
                             let button =
@@ -781,18 +770,18 @@ impl SelectionPopover {
                                         .absolute()
                                         .top(px(6.))
                                         .left(px(8.))
-                                        .text_color(rgba(FAINT))
+                                        .text_color(palette.faint)
                                         .child(INSTRUCTION_PLACEHOLDER),
                                 )
                             }),
                     )
-                    .child(footer(&["↵ run", "esc cancel"]))
+                    .child(footer(&["↵ run", "esc cancel"], &palette))
                     .into_any_element()
             }
             Mode::Running { .. } => div()
                 .px(px(10.))
                 .py(px(8.))
-                .text_color(rgba(MUTED))
+                .text_color(palette.muted)
                 .whitespace_nowrap()
                 .child("Generating alternatives…")
                 .into_any_element(),
@@ -817,9 +806,9 @@ impl SelectionPopover {
                                     .flex_none()
                                     .text_size(px(11.))
                                     .text_color(if highlighted {
-                                        rgba(HIGHLIGHT_NUMBER)
+                                        palette.on_accent_muted
                                     } else {
-                                        rgba(FAINT)
+                                        palette.faint
                                     })
                                     .child((index + 1).to_string()),
                             )
@@ -829,21 +818,21 @@ impl SelectionPopover {
                                 move |_, _, cx| this.update(cx, |this, cx| this.apply(index, cx))
                             })
                     }))
-                    .child(footer(&[keys.as_str(), "↑↓ move", "esc cancel"]))
+                    .child(footer(&[keys.as_str(), "↑↓ move", "esc cancel"], &palette))
                     .into_any_element()
             }
             Mode::Error(message) => div()
                 .max_w(RESULTS_WIDTH - PADDING * 2.)
                 .px(px(10.))
                 .py(px(8.))
-                .text_color(rgba(MUTED))
+                .text_color(palette.muted)
                 .child(message.clone())
                 .into_any_element(),
         }
     }
 }
 
-fn footer(hints: &[&str]) -> impl IntoElement {
+fn footer(hints: &[&str], palette: &Palette) -> impl IntoElement {
     div()
         .flex()
         .gap(px(10.))
@@ -852,9 +841,9 @@ fn footer(hints: &[&str]) -> impl IntoElement {
         .pt(px(6.))
         .pb(px(3.))
         .border_t_1()
-        .border_color(rgba(LINE))
+        .border_color(palette.menu_line)
         .text_size(px(11.))
-        .text_color(rgba(FAINT))
+        .text_color(palette.faint)
         .whitespace_nowrap()
         .children(hints.iter().map(|hint| hint.to_string()))
 }
@@ -868,10 +857,12 @@ impl Render for PopoverPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let popover = self.popover.clone();
         let content = popover.read(cx).content(&popover, cx);
+        let palette = theme::palette(cx);
+        let (background, text) = (palette.menu_tint, palette.text);
         div()
             .size_full()
-            .bg(rgba(TINT))
-            .text_color(rgb(TEXT))
+            .bg(background)
+            .text_color(text)
             .text_size(px(13.))
             .font_family(".SystemUIFont")
             .key_context(INSTRUCTION_CONTEXT)
@@ -927,7 +918,7 @@ impl Render for PopoverPanel {
 }
 
 /// The instruction field: the UI font with small padding.
-fn input_style() -> EditorStyle {
+fn input_style(palette: &Palette) -> EditorStyle {
     EditorStyle {
         font: gpui::font(".SystemUIFont"),
         font_size: px(13.),
@@ -935,6 +926,6 @@ fn input_style() -> EditorStyle {
         padding_x: px(8.),
         padding_top: px(6.),
         padding_bottom: px(6.),
-        ..EditorStyle::default()
+        ..palette.editor_style()
     }
 }
