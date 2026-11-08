@@ -418,7 +418,15 @@ mod tests {
             ),
         ];
         for (command, expected) in cases {
-            assert_eq!(command.to_line("7"), format!("{expected}\n"));
+            let line = command.to_line("7");
+            let json = line.strip_suffix('\n').expect("line ends with a newline");
+            assert!(
+                !json.contains('\n'),
+                "line is a single JSON object: {line:?}"
+            );
+            let actual: Value = serde_json::from_str(json).unwrap();
+            let expected: Value = serde_json::from_str(expected).unwrap();
+            assert_eq!(actual, expected);
         }
     }
 
