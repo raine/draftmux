@@ -152,3 +152,10 @@ fn table_fallback() {
         "| Backend | Latency | Notes |\n|:--|--:|:-:|\n| LM Studio | 0.8s | local |\n| ollama | 12.1s | `fast` |\n| é | 1 | |\n"
     ));
 }
+
+#[test]
+fn emoji_shortcodes() {
+    insta::assert_snapshot!(snapshot(
+        ":tada: :+1::skin-tone-2: (:Tada:) `:tada:` <https://a.b|:tada:> :not_an_emoji: a:smile:b ::\n"
+    ));
+}

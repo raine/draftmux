@@ -5,6 +5,7 @@
 //! knowing which syntax it came from. The tree holds structure and semantics
 //! only, no colors, sizes or fonts.
 
+mod emoji;
 pub mod github;
 pub mod plain;
 pub mod rich;

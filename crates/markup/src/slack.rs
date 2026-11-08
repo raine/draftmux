@@ -2,8 +2,10 @@
 //!
 //! Inline syntax follows Slack's mrkdwn: `*bold*`, `_italic_`, `~strike~`,
 //! `` `code` ``, `<url|label>` and bare web URLs, with `&amp;`, `&lt;` and
-//! `&gt;` decoded. Delimiters only apply at word boundaries and never span a
-//! line, so `snake_case` and `2*3*4` stay literal. Blocks follow what Slack's
+//! `&gt;` decoded. `:shortcode:`s Slack knows, outside code and link labels,
+//! become the Unicode emoji Slack shows. Delimiters only apply at word
+//! boundaries and never span a line, so `snake_case` and `2*3*4` stay
+//! literal. Blocks follow what Slack's
 //! composer shows: ```` ``` ```` code blocks (which may open and close
 //! mid-line), `>` quotes holding one paragraph, and `-`, `*`, `•` or `1.`
 //! lists nested by indentation.
@@ -474,6 +476,11 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
                 push_span(out, url, style, Some(url));
                 url.len()
             }),
+            ':' => shortcode(rest).map(|(len, emoji)| {
+                flush(out);
+                push_span(out, emoji, style, None);
+                len
+            }),
             '*' | '_' | '~' => emphasis(text, ix, c).map(|end| {
                 flush(out);
                 let style = match c {
@@ -522,6 +529,18 @@ fn code_span(text: &str) -> Option<(usize, &str)> {
     }
     let end = rest.find(['`', '\n'])?;
     (rest[end..].starts_with('`') && end > 0).then(|| (end + 2, &rest[..end]))
+}
+
+/// Length and emoji of a `:shortcode:` Slack knows at the start of `text`,
+/// in any case. A `:skin-tone-N:` right after one is its own shortcode, the
+/// modifier that combines with it.
+fn shortcode(text: &str) -> Option<(usize, &'static str)> {
+    let rest = text.strip_prefix(':')?;
+    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || "_+-'".contains(c)))?;
+    if end == 0 || !rest[end..].starts_with(':') {
+        return None;
+    }
+    crate::emoji::lookup(&rest[..end].to_ascii_lowercase()).map(|emoji| (end + 2, emoji))
 }
 
 /// Length, target and label of a `<url>` or `<url|label>` link at the start

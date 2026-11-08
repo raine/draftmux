@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\":tada: :+1::skin-tone-2: (:Tada:) `:tada:` <https://a.b|:tada:> :not_an_emoji: a:smile:b ::\\n\")"
+---
+paragraph
+  "🎉 👍🏻 (🎉) "
+  ":tada:" code
+  " "
+  ":tada:" -> https://a.b
+  " :not_an_emoji: a😄b ::"
