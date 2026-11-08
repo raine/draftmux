@@ -1,0 +1,52 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render slack text)
+---
+# posted
+note "Slack has no headings, so this pastes as a bold line."
+paragraph
+  "Release notes" strong
+paragraph
+  "Things Slack can't show as-is:\n"
+note "Slack has no tables, so this pastes as a code block."
+code lang=None "Area    |   Status    | Owner\n--------+-------------+------\nParser  |    done     | raine\nPreview | in progress | agent"
+paragraph
+note "Slack numbered lists always start at 1, so this pastes as text lines."
+paragraph
+  "3. Numbering that starts at three\n4. Keeps counting from there"
+paragraph
+note "Slack can't keep a list item on several lines, so this pastes as text lines."
+paragraph
+  "• An item that wraps\nonto a second line\n• A plain item"
+
+# html
+<meta charset="utf-8"><p><b>Release notes</b></p>
+<p>Things Slack can't show as-is:</p>
+<p><br></p>
+<pre>Area    |   Status    | Owner
+--------+-------------+------
+Parser  |    done     | raine
+Preview | in progress | agent</pre><p><br></p>
+<p>3. Numbering that starts at three</p>
+<p>4. Keeps counting from there</p>
+<p><br></p>
+<p>• An item that wraps</p>
+<p>onto a second line</p>
+<p>• A plain item</p>
+
+
+# plain
+Release notes
+Things Slack can't show as-is:
+
+Area    |   Status    | Owner
+␣--------+-------------+------
+Parser  |    done     | raine
+Preview | in progress | agent
+
+␣3. Numbering that starts at three
+␣4. Keeps counting from there
+
+• An item that wraps
+onto a second line
+• A plain item

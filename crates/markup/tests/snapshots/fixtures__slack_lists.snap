@@ -1,0 +1,73 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render slack text)
+---
+# posted
+paragraph
+  "Plan for this week:"
+list bullet tight
+  item
+    paragraph
+      "Finish the "
+      "preview" strong
+      " renderer"
+  item
+    paragraph
+      "Fix copy for Slack"
+    list bullet tight
+      item
+        paragraph
+          "pasted bold came out italic"
+      item
+        paragraph
+          "links lost their labels"
+        list bullet tight
+          item
+            paragraph
+              "only with "
+              "<url|label>" code
+              " syntax"
+  item
+    paragraph
+      "Ship it"
+paragraph
+  "\nOrder of work:"
+list ordered start=1 tight
+  item
+    paragraph
+      "Fixtures"
+  item
+    paragraph
+      "Captures"
+    list ordered start=1 tight
+      item
+        paragraph
+          "GitHub"
+      item
+        paragraph
+          "Slack"
+  item
+    paragraph
+      "Compare side by side"
+
+# html
+<meta charset="utf-8"><p>Plan for this week:</p>
+<ul><li>Finish the <b>preview</b> renderer</li><li>Fix copy for Slack<ul><li>pasted bold came out italic</li><li>links lost their labels<ul><li>only with <code>&lt;url|label&gt;</code> syntax</li></ul></li></ul></li><li>Ship it</li></ul><p><br></p>
+<p>Order of work:</p>
+<ol><li>Fixtures</li><li>Captures<ol><li>GitHub</li><li>Slack</li></ol></li><li>Compare side by side</li></ol>
+
+# plain
+Plan for this week:
+• Finish the preview renderer
+• Fix copy for Slack
+    • pasted bold came out italic
+    • links lost their labels
+        • only with <url|label> syntax
+• Ship it
+
+Order of work:
+␣1. Fixtures
+␣2. Captures
+    1. GitHub
+    2. Slack
+␣3. Compare side by side

@@ -1,0 +1,34 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render github text)
+---
+heading 1
+  "Release 0.4"
+paragraph
+  "Some intro text under the top heading, long enough to wrap onto a second line at the capture width so line height shows."
+heading 2
+  "What changed"
+paragraph
+  "The "
+  "markup" code
+  " crate now parses "
+  "alerts" strong
+  " and "
+  "task lists" emph
+  "."
+heading 3
+  "Renderer"
+heading 4
+  "Inline "
+  "code" code
+  " in a heading"
+heading 5
+  "Fifth level"
+heading 6
+  "Sixth level"
+paragraph
+  "Closing paragraph with a "
+  "link to the docs" -> https://github.com/raine/draftmux
+  " and "
+  "old" strike
+  " new text."

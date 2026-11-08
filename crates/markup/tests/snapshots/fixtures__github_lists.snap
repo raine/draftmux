@@ -1,0 +1,66 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render github text)
+---
+paragraph
+  "Changes:"
+list bullet tight
+  item
+    paragraph
+      "Parse GFM alerts"
+  item
+    paragraph
+      "Render task lists"
+    list bullet tight
+      item
+        paragraph
+          "nested bullet"
+        list bullet tight
+          item
+            paragraph
+              "third level"
+  item
+    paragraph
+      "Keep "
+      "inline code" code
+      " in items"
+paragraph
+  "Steps:"
+list ordered start=1 tight
+  item
+    paragraph
+      "Build the fixtures"
+  item
+    paragraph
+      "Capture both renderings"
+    list ordered start=1 tight
+      item
+        paragraph
+          "GitHub"
+      item
+        paragraph
+          "Draftmux"
+  item
+    paragraph
+      "Compare"
+paragraph
+  "Checklist:"
+list bullet tight
+  item [x]
+    paragraph
+      "Fixtures committed"
+  item [ ]
+    paragraph
+      "Captures reviewed"
+  item [ ]
+    paragraph
+      "Docs updated"
+paragraph
+  "Loose list:"
+list bullet loose
+  item
+    paragraph
+      "First item with a paragraph."
+  item
+    paragraph
+      "Second item, separated by a blank line."

@@ -1,0 +1,46 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render github text)
+---
+paragraph
+  "Benchmark results:"
+table [Left, Right, Center, None]
+  header
+    cell
+      "Fixture"
+    cell
+      "Before"
+    cell
+      "After"
+    cell
+      "Notes"
+  row
+    cell
+      "inline.md" code
+    cell
+      "12 ms"
+    cell
+      "4 ms"
+    cell
+      "faster"
+  row
+    cell
+      "lists.md" code
+    cell
+      "9 ms"
+    cell
+      "3 ms"
+    cell
+      "much" strong
+      " faster"
+  row
+    cell
+      "tables.md" code
+    cell
+      "15 ms"
+    cell
+      "6 ms"
+    cell
+      "wraps nothing"
+paragraph
+  "Text after the table."

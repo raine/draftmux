@@ -1,0 +1,32 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render github text)
+---
+paragraph
+  "The fix is in "
+  "Renderer::text" code
+  ", which now lays out "
+  "code" code
+  " spans itself."
+code lang=None "cargo test -j 2 -p markup --test github\ncargo test -j 2 -p draftmux --bin draftmux markup_view"
+quote
+  paragraph
+    "Quoted review comment with "
+    "bold" strong
+    " and "
+    "code" code
+    "."
+  quote
+    paragraph
+      "A nested quote."
+rule
+paragraph
+  "Final paragraph with "
+  "emphasis" emph
+  ", "
+  "strong" strong
+  ", "
+  "strike" strike
+  " and a long inline code span "
+  "crates/draftmux/src/markup_view.rs" code
+  " that may wrap."

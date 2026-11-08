@@ -17,6 +17,8 @@ use markup::{AlertKind, Alignment, Block, Document, List, Span, Table};
 
 /// Visual parameters for one target platform.
 pub struct MarkupStyle {
+    /// The platform's page background behind the body.
+    pub background: Hsla,
     pub font_family: SharedString,
     pub mono_family: SharedString,
     pub text_size: Pixels,
@@ -100,6 +102,7 @@ impl MarkupStyle {
             rgba(if dark { dark_hex } else { light }).into()
         };
         Self {
+            background: c(0xffffffff, 0x0d1117ff),
             font_family: ".SystemUIFont".into(),
             mono_family: "Menlo".into(),
             text_size: px(14.),
@@ -152,6 +155,7 @@ impl MarkupStyle {
         let text_color = c(0x1d1c1dff, 0xd1d2d3ff);
         let border_color = c(0x1d1c1d21, 0x4a4c50ff);
         Self {
+            background: c(0xffffffff, 0x1a1d21ff),
             font_family: "Lato".into(),
             mono_family: "Monaco".into(),
             text_size: px(15.),

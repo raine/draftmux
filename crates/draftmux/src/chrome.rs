@@ -416,19 +416,28 @@ impl Chrome {
     fn preview_body(&self, cx: &App) -> impl IntoElement {
         let theme = theme::get(cx);
         let target = self.drafts.current().map(|draft| draft.meta.target);
-        let body = match (&self.preview, target) {
+        let (body, background) = match (&self.preview, target) {
             (Some(doc), Some(target)) if !doc.blocks.is_empty() => {
-                markup_view::render(doc, &markup_view::style(target, theme.dark), "preview-body")
+                let style = markup_view::style(target, theme.dark);
+                (
+                    markup_view::render(doc, &style, "preview-body"),
+                    Some(style.background),
+                )
             }
-            _ => div()
-                .text_size(px(14.))
-                .text_color(theme.palette.faint)
-                .child("Nothing to preview")
-                .into_any_element(),
+            _ => (
+                div()
+                    .text_size(px(14.))
+                    .text_color(theme.palette.faint)
+                    .child("Nothing to preview")
+                    .into_any_element(),
+                None,
+            ),
         };
+        // The body sits on its platform's own page color, as it does there.
         div()
             .id("preview")
             .size_full()
+            .when_some(background, |this, background| this.bg(background))
             .overflow_y_scroll()
             .track_scroll(&self.preview_scroll)
             .px_6()

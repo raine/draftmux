@@ -1,0 +1,45 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render slack text)
+---
+# posted
+paragraph
+  "Hey team, two things.\nFirst line right under the greeting.\n\nOne blank line above, and two below.\n\n"
+quote
+  paragraph
+    "Quoted from the incident channel:\nthe upload retried "
+    "three" strong
+    " times"
+paragraph
+  "That was the only failure."
+code lang=None "cargo test -j 2 -p markup --test slack\n# exit status 0"
+paragraph
+  "Let me know if anything looks off. 👍"
+
+# html
+<meta charset="utf-8"><p>Hey team, two things.</p>
+<p>First line right under the greeting.</p>
+<p><br></p>
+<p>One blank line above, and two below.</p>
+<p><br></p>
+<p><br></p>
+<blockquote><p>Quoted from the incident channel:</p>
+<p>the upload retried <b>three</b> times</p>
+</blockquote><p>That was the only failure.</p>
+<pre>cargo test -j 2 -p markup --test slack
+# exit status 0</pre><p>Let me know if anything looks off. 👍</p>
+
+
+# plain
+Hey team, two things.
+First line right under the greeting.
+
+One blank line above, and two below.
+
+
+Quoted from the incident channel:
+the upload retried three times
+That was the only failure.
+cargo test -j 2 -p markup --test slack
+␣# exit status 0
+Let me know if anything looks off. 👍

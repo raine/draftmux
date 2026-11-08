@@ -1,0 +1,19 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render github text)
+---
+alert Note
+  paragraph
+    "Useful information that users should know, even when skimming content."
+alert Tip
+  paragraph
+    "Helpful advice for doing things better or more easily."
+alert Important
+  paragraph
+    "Key information users need to know to achieve their goal."
+alert Warning
+  paragraph
+    "Urgent info that needs immediate user attention to avoid problems."
+alert Caution
+  paragraph
+    "Advises about risks or negative outcomes of certain actions."

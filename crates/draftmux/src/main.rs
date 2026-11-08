@@ -1,5 +1,7 @@
 mod app_settings;
 mod assets;
+#[cfg(feature = "capture")]
+mod capture;
 mod chat;
 mod chat_model;
 mod chrome;
@@ -43,6 +45,9 @@ struct Cli {
 enum Command {
     Open(open::Args),
     Show(show::Args),
+    #[cfg(feature = "capture")]
+    #[command(hide = true)]
+    Capture(capture::Args),
 }
 
 fn main() {
@@ -50,6 +55,8 @@ fn main() {
         std::process::exit(match command {
             Command::Open(args) => open::main(args),
             Command::Show(args) => show::main(args),
+            #[cfg(feature = "capture")]
+            Command::Capture(args) => capture::main(args),
         });
     }
 
