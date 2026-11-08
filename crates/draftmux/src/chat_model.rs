@@ -53,19 +53,6 @@ impl ChatModel {
         cx.notify();
     }
 
-    /// Asks pi for the session's state and shows it.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let state = self.agent.get_state();
-        cx.spawn(async move |this, cx| {
-            let state = state.await;
-            this.update(cx, |this, cx| {
-                this.show(state.map_err(|e| e.to_string()), cx)
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     fn show(&mut self, state: Result<State, String>, cx: &mut Context<Self>) {
         match state {
             Ok(state) => {

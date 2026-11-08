@@ -1,6 +1,5 @@
 mod assets;
 mod chat;
-#[expect(dead_code, reason = "placed in the chat composer by the chat pane")]
 mod chat_model;
 mod chrome;
 mod copy;

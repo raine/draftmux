@@ -19,9 +19,8 @@ use editor::{Editor, EditorStyle};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, FollowMode, FontWeight, KeyBinding, ListAlignment, ListState, SharedString, Task,
-    Transformation, Window, actions, div, font, list, percentage, prelude::*, px, relative, rgb,
-    rgba, svg,
+    Focusable, FollowMode, FontWeight, KeyBinding, ListAlignment, ListState, Task, Transformation,
+    Window, actions, div, font, list, percentage, prelude::*, px, relative, rgb, rgba, svg,
 };
 use shell_env::ShellEnv;
 
@@ -29,7 +28,9 @@ use crate::assets::{
     CHEVRON_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON, TOOL_BASH_ICON,
     TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
+use crate::chat_model::ChatModel;
 use crate::markup_view::{self, MarkupStyle};
+use crate::profiles::ProfileCatalog;
 use transcript::{DiffLine, Item, Tool, Transcript};
 
 actions!(chat, [Send, Stop]);
@@ -83,8 +84,8 @@ struct Session {
     agent: Option<Result<Arc<Agent>, String>>,
     transcript: Transcript,
     list: ListState,
-    /// What `get_state` reported, for the model picker's slot.
-    model: Option<SharedString>,
+    /// Shows and switches the model of the running agent.
+    model: Option<Entity<ChatModel>>,
     history_loaded: bool,
     /// The target changed while a run was going; start a new process once
     /// it settles, since the extension reads the target at startup.
@@ -251,6 +252,16 @@ impl Chat {
             }
             Err(err) => (Err(err), None),
         };
+        session.model = agent.as_ref().ok().map(|agent| {
+            let dir = &session.draft.meta.pi_agent_dir;
+            let profile_name = ProfileCatalog::global(cx)
+                .read(cx)
+                .entry(dir)
+                .map(|entry| entry.profile.name.clone())
+                .unwrap_or_else(|| dir.display().to_string());
+            let agent = agent.clone();
+            cx.new(|_| ChatModel::new(agent, profile_name))
+        });
         session.agent = Some(agent);
         if self.current.as_deref() == Some(id) {
             self.focus_agent(id, cx);
@@ -414,8 +425,8 @@ impl Chat {
             }
             _ => None,
         };
-        if let AgentEvent::Ready(state) = &event {
-            session.model = state.model.as_ref().map(|model| model.name.clone().into());
+        if let (AgentEvent::Ready(state), Some(model)) = (&event, &session.model) {
+            model.update(cx, |model, cx| model.set_state(state.clone(), cx));
         }
         session
             .transcript
@@ -748,14 +759,7 @@ impl Chat {
                         .pb(px(6.))
                         .text_size(px(11.))
                         .text_color(rgba(FAINT))
-                        // The model picker goes here.
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .children(model.map(|model| format!("π {model}"))),
-                        )
+                        .child(div().flex_1().min_w_0().children(model))
                         .child(if busy {
                             div()
                                 .flex()
