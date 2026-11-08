@@ -1133,6 +1133,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "draftmux-pi-rpc"
+version = "0.1.0"
+dependencies = [
+ "draftmux-storage",
+ "futures",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "draftmux-storage"
 version = "0.1.0"
 dependencies = [
