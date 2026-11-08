@@ -28,6 +28,7 @@ pub const FOLDER_ICON: &str = "icons/folder.svg";
 pub const PLUS_ICON: &str = "icons/plus.svg";
 pub const RESET_ICON: &str = "icons/reset.svg";
 pub const UPDOWN_ICON: &str = "icons/updown.svg";
+pub const LINK_ICON: &str = "icons/link.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
@@ -36,6 +37,7 @@ const ASSETS: &[(&str, &[u8])] = &[
     (ARCHIVE_ICON, include_bytes!("../assets/icons/archive.svg")),
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
+    (LINK_ICON, include_bytes!("../assets/icons/link.svg")),
     (
         TOOL_BASH_ICON,
         include_bytes!("../assets/icons/tool-bash.svg"),

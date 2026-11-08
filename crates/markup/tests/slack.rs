@@ -176,3 +176,17 @@ fn emoji_shortcodes() {
         ":tada: :+1::skin-tone-2: (:Tada:) `:tada:` <https://a.b|:tada:> :not_an_emoji: a:smile:b ::\n"
     ));
 }
+
+#[test]
+fn smart_quotes() {
+    let curl = |text: &str| -> String {
+        markup::slack::smart_quotes(&text.chars().collect::<Vec<_>>())
+            .into_iter()
+            .collect()
+    };
+    assert_eq!(curl("can't"), "can’t");
+    assert_eq!(curl("the users' files"), "the users’ files");
+    assert_eq!(curl("say 'hi' and \"bye\""), "say ‘hi’ and “bye”");
+    assert_eq!(curl("the '90s"), "the ’90s");
+    assert_eq!(curl("5' tall"), "5′ tall");
+}

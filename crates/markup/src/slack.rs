@@ -735,3 +735,42 @@ fn decode(text: &str) -> String {
         .replace("&gt;", ">")
         .replace("&amp;", "&")
 }
+
+/// Slack's composer curls straight quotes in pasted text outside code and
+/// URLs (its `createSmartQuotes`): `"` and `'` opening a word become “ and ‘,
+/// closing ones ” and ’, an apostrophe inside or after a word ’, and a `'`
+/// after a digit the prime ′. `text` stands for a message's running text,
+/// with each code or URL character replaced by U+FFFC; the result has the
+/// same characters apart from the quotes.
+pub fn smart_quotes(text: &[char]) -> Vec<char> {
+    // Letters count as word characters only in the scripts Slack checks.
+    let letter = |c: Option<char>| {
+        c.is_some_and(|c| c.is_alphabetic() && !('\u{ff00}'..='\u{ffef}').contains(&c))
+    };
+    let digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
+    let space = |c: Option<char>| c.is_none_or(char::is_whitespace);
+    let mut out = text.to_vec();
+    let at = |out: &[char], ix: usize| out.get(ix).copied();
+    for ix in 0..out.len() {
+        let prev = ix.checked_sub(1).and_then(|ix| at(&out, ix));
+        let next = at(&out, ix + 1);
+        let opens = !letter(prev) && !digit(prev) && !space(next);
+        out[ix] = match out[ix] {
+            '"' if opens => '“',
+            '"' if !digit(prev) => '”',
+            '\'' if letter(prev) && letter(next) => '’',
+            '\'' if opens => {
+                if digit(next) && digit(at(&out, ix + 2)) {
+                    // '90s
+                    '’'
+                } else {
+                    '‘'
+                }
+            }
+            '\'' if letter(prev) && !digit(next) => '’',
+            '\'' if digit(prev) => '′',
+            c => c,
+        };
+    }
+    out
+}

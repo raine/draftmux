@@ -8,6 +8,7 @@ mod chrome;
 mod copy;
 mod drafts;
 mod format;
+mod inline_text;
 mod ipc;
 mod markup_view;
 mod model_picker;

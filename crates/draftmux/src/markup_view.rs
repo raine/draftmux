@@ -9,11 +9,13 @@ use std::borrow::Cow;
 
 use draftmux_storage::Target;
 use gpui::{
-    AnyElement, App, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText,
-    Pixels, SharedString, StrikethroughStyle, StyledText, Window, div, prelude::*, px, relative,
-    rgba,
+    AnyElement, App, ElementId, FontWeight, Hsla, Pixels, SharedString, div, prelude::*, px,
+    relative, rgba,
 };
 use markup::{AlertKind, Alignment, Block, Document, List, Span, Table};
+
+use crate::assets::LINK_ICON;
+use crate::inline_text::{Chip, Icon, InlineText, Segment, is_emoji};
 
 /// Visual parameters for one target platform.
 pub struct MarkupStyle {
@@ -33,17 +35,33 @@ pub struct MarkupStyle {
     pub strong_weight: FontWeight,
     /// Gap between items of a tight list.
     pub tight_item_gap: Pixels,
+    /// Gap between two blocks of running text (paragraphs, headings and
+    /// lists); other blocks are `block_gap` apart.
+    pub text_gap: Pixels,
+    /// Offset of an item's text from the list's left edge.
     pub list_indent: Pixels,
+    pub bullet: Bullet,
+    /// Space between an ordered item's number and its text.
+    pub ordered_marker_gap: Pixels,
     pub text_color: Hsla,
     pub muted_color: Hsla,
     pub link_color: Hsla,
     pub border_color: Hsla,
     pub heading_rule_color: Hsla,
-    pub inline_code_background: Hsla,
-    /// Inline code text color; `None` keeps the surrounding color.
-    /// gpui can't size, pad or border part of a line, so inline code keeps
-    /// the body size where Slack draws a smaller bordered chip.
-    pub inline_code_color: Option<Hsla>,
+    pub inline_code: InlineBox,
+    /// How `@name` mentions show; `None` leaves them as text.
+    pub mention: Option<InlineBox>,
+    /// How links labelled with their own URL show, with a link icon and a
+    /// shortened label ([`url_label`]); `None` shows them as other links.
+    pub url_slug: Option<InlineBox>,
+    /// Curl straight quotes as Slack does when the message is pasted
+    /// ([`markup::slack::smart_quotes`]).
+    pub smart_quotes: bool,
+    /// Emoji size relative to the text.
+    pub emoji_scale: f32,
+    /// Height of an empty line inside a paragraph; `None` gives it a full
+    /// line.
+    pub blank_line: Option<Pixels>,
     pub code_background: Hsla,
     pub code_text_size: Pixels,
     pub code_line_height: f32,
@@ -53,6 +71,8 @@ pub struct MarkupStyle {
     pub code_wraps: bool,
     pub radius: Pixels,
     pub quote_bar_width: Pixels,
+    pub quote_bar_color: Hsla,
+    pub quote_bar_radius: Pixels,
     pub quote_padding: Pixels,
     pub quote_text_color: Hsla,
     /// Number nested ordered lists 1., a., i. by depth instead of 1. at
@@ -73,6 +93,26 @@ pub struct NoteColors {
     pub background: Hsla,
     pub border: Hsla,
     pub text: Hsla,
+}
+
+/// Bullets are a disc, a ring and a square by depth, like CSS list markers.
+pub struct Bullet {
+    pub size: Pixels,
+    /// Offset of the bullet's left edge from the list's left edge.
+    pub left: Pixels,
+    /// Offset of the bullet's top edge from the top of the item's first
+    /// line.
+    pub top: Pixels,
+    pub ring_width: Pixels,
+}
+
+/// A run drawn in a box of its own, such as inline code.
+pub struct InlineBox {
+    /// Font size relative to the surrounding text.
+    pub scale: f32,
+    /// `None` keeps the surrounding color.
+    pub color: Option<Hsla>,
+    pub chip: Chip,
 }
 
 pub struct AlertColors {
@@ -113,14 +153,39 @@ impl MarkupStyle {
             heading_gap: px(24.),
             strong_weight: FontWeight::SEMIBOLD,
             tight_item_gap: px(3.5),
+            text_gap: px(16.),
             list_indent: px(28.),
+            bullet: Bullet {
+                size: px(5.),
+                left: px(14.),
+                top: px(9.),
+                ring_width: px(1.),
+            },
+            ordered_marker_gap: px(6.),
             text_color: c(0x1f2328ff, 0xe6edf3ff),
             muted_color: c(0x59636eff, 0x9198a1ff),
             link_color: c(0x0969daff, 0x4493f8ff),
             border_color: c(0xd1d9e0ff, 0x3d444dff),
             heading_rule_color: c(0xd1d9e0b3, 0x3d444db3),
-            inline_code_background: c(0x818b981f, 0x656c7633),
-            inline_code_color: None,
+            // `code` is 85% with .2em .4em padding in its own size.
+            inline_code: InlineBox {
+                scale: 0.85,
+                color: None,
+                chip: Chip {
+                    background: c(0x818b981f, 0x656c7633),
+                    border: None,
+                    radius: px(6.),
+                    pad_x: px(14. * 0.85 * 0.4),
+                    pad_top: px(14. * 0.85 * 0.2),
+                    pad_bottom: px(14. * 0.85 * 0.2),
+                    icon: None,
+                },
+            },
+            mention: None,
+            url_slug: None,
+            smart_quotes: false,
+            emoji_scale: 1.,
+            blank_line: None,
             code_background: c(0xf6f8faff, 0x151b23ff),
             code_text_size: px(11.9),
             code_line_height: 1.45,
@@ -129,6 +194,8 @@ impl MarkupStyle {
             code_wraps: false,
             radius: px(6.),
             quote_bar_width: px(3.5),
+            quote_bar_color: c(0xd1d9e0ff, 0x3d444dff),
+            quote_bar_radius: px(0.),
             quote_padding: px(14.),
             quote_text_color: c(0x59636eff, 0x9198a1ff),
             ordered_markers_by_depth: false,
@@ -154,10 +221,26 @@ impl MarkupStyle {
         };
         let text_color = c(0x1d1c1dff, 0xd1d2d3ff);
         let border_color = c(0x1d1c1d21, 0x4a4c50ff);
+        let link_color = c(0x1264a3ff, 0x2ba5ceff);
+        let code_background = c(0x1d1c1d0a, 0xe8e8e80a);
+        let code_border = c(0x1d1c1d21, 0xe8e8e821);
+        let tag = |color: Hsla, background: Hsla, icon: Option<Icon>| InlineBox {
+            scale: 1.,
+            color: Some(color),
+            chip: Chip {
+                background,
+                border: None,
+                radius: px(3.),
+                pad_x: px(2.),
+                pad_top: px(1.),
+                pad_bottom: px(1.),
+                icon,
+            },
+        };
         Self {
             background: c(0xffffffff, 0x1a1d21ff),
             font_family: "Lato".into(),
-            mono_family: "Monaco".into(),
+            mono_family: "Roboto Mono".into(),
             text_size: px(15.),
             line_height: 1.46668,
             // Headings are replaced by bold lines.
@@ -167,27 +250,70 @@ impl MarkupStyle {
             heading_gap: px(4.),
             strong_weight: FontWeight::BOLD,
             tight_item_gap: px(0.),
-            list_indent: px(26.),
+            // Message lines run on; only quotes and code blocks have
+            // margins.
+            text_gap: px(0.),
+            list_indent: px(28.),
+            bullet: Bullet {
+                size: px(7.),
+                left: px(7.25),
+                top: px(9.),
+                ring_width: px(1.5),
+            },
+            ordered_marker_gap: px(12.),
             text_color,
             muted_color: c(0x616061ff, 0xababadff),
-            link_color: c(0x1264a3ff, 0x1d9bd1ff),
+            link_color,
             border_color,
             heading_rule_color: border_color,
-            inline_code_background: c(0x1d1c1d0a, 0x232529ff),
-            inline_code_color: Some(c(0xe01e5aff, 0xe8912dff)),
-            code_background: c(0x1d1c1d0a, 0x1f2124ff),
+            // Roboto Mono 12px in a bordered chip.
+            inline_code: InlineBox {
+                scale: 0.8,
+                color: Some(c(0xc01343ff, 0xe8912dff)),
+                chip: Chip {
+                    background: code_background,
+                    border: Some(code_border),
+                    radius: px(3.),
+                    pad_x: px(3.),
+                    pad_top: px(2.),
+                    pad_bottom: px(1.),
+                    icon: None,
+                },
+            },
+            mention: Some(tag(
+                c(0x1264a3ff, 0xdea700ff),
+                c(0xffc6002e, 0xa073002e),
+                None,
+            )),
+            url_slug: Some(tag(
+                link_color,
+                c(0x36c5f021, 0x03669640),
+                Some(Icon {
+                    path: LINK_ICON.into(),
+                    size: px(15.),
+                    gap: px(4.),
+                }),
+            )),
+            smart_quotes: true,
+            // Emoji are 22px images.
+            emoji_scale: 1.2,
+            // An empty line is an 8px paragraph break.
+            blank_line: Some(px(8.)),
+            code_background,
             code_text_size: px(12.),
             code_line_height: 1.50001,
             code_padding: px(8.),
-            code_border: Some(c(0x1d1c1d21, 0x36383cff)),
+            code_border: Some(code_border),
             code_wraps: true,
             radius: px(4.),
             quote_bar_width: px(4.),
+            quote_bar_color: c(0xddddddff, 0xb9babdff),
+            quote_bar_radius: px(8.),
             quote_padding: px(12.),
             quote_text_color: text_color,
             ordered_markers_by_depth: true,
             table_stripe: c(0x1d1c1d0a, 0x232529ff),
-            checkbox_checked: c(0x1264a3ff, 0x1d9bd1ff),
+            checkbox_checked: link_color,
             alert_colors: AlertColors {
                 note: border_color,
                 tip: border_color,
@@ -212,6 +338,10 @@ pub fn init(cx: &mut App) {
         include_bytes!("../assets/fonts/lato/Lato-Italic.ttf"),
         include_bytes!("../assets/fonts/lato/Lato-Bold.ttf"),
         include_bytes!("../assets/fonts/lato/Lato-BoldItalic.ttf"),
+        include_bytes!("../assets/fonts/roboto-mono/RobotoMono-Regular.ttf"),
+        include_bytes!("../assets/fonts/roboto-mono/RobotoMono-Italic.ttf"),
+        include_bytes!("../assets/fonts/roboto-mono/RobotoMono-Bold.ttf"),
+        include_bytes!("../assets/fonts/roboto-mono/RobotoMono-BoldItalic.ttf"),
     ];
     cx.text_system()
         .add_fonts(fonts.into_iter().map(Cow::Borrowed).collect())
@@ -294,6 +424,7 @@ impl Renderer<'_> {
         blocks: impl IntoIterator<Item = (&'b Block, Option<(&'static str, NoteColors)>)>,
         gap: Pixels,
     ) -> Vec<AnyElement> {
+        let mut after_text = false;
         blocks
             .into_iter()
             .enumerate()
@@ -301,8 +432,10 @@ impl Renderer<'_> {
                 let gap = match block {
                     _ if ix == 0 => px(0.),
                     Block::Heading { .. } => self.style.heading_gap,
+                    _ if after_text && is_text(block) => self.style.text_gap,
                     _ => gap,
                 };
+                after_text = is_text(block);
                 div()
                     .pt(gap)
                     .when_some(note, |this, (note, colors)| {
@@ -334,10 +467,20 @@ impl Renderer<'_> {
             }
             Block::List(list) => self.list(list),
             Block::Quote(blocks) => div()
-                .border_l(style.quote_bar_width)
-                .border_color(style.border_color)
-                .px(style.quote_padding)
+                .relative()
+                .pl(style.quote_bar_width + style.quote_padding)
+                .pr(style.quote_padding)
                 .text_color(style.quote_text_color)
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(style.quote_bar_width)
+                        .rounded(style.quote_bar_radius)
+                        .bg(style.quote_bar_color),
+                )
                 .children(self.blocks(blocks, style.block_gap))
                 .into_any_element(),
             Block::Alert { kind, blocks } => {
@@ -412,7 +555,7 @@ impl Renderer<'_> {
         } else {
             (style.block_gap, style.block_gap)
         };
-        let bullet = ["•", "◦", "▪"][self.list_depth % 3];
+        let bullet_kind = self.list_depth % 3;
         let marker_depth = if style.ordered_markers_by_depth {
             self.list_depth
         } else {
@@ -426,24 +569,21 @@ impl Renderer<'_> {
             .map(|(ix, item)| {
                 let marker = match (item.task, list.start) {
                     (Some(checked), _) => self.checkbox(checked),
-                    (None, Some(start)) => {
-                        format!("{}.", ordered_marker(start + ix as u64, marker_depth))
-                            .into_any_element()
-                    }
-                    (None, None) => bullet.into_any_element(),
+                    (None, Some(start)) => div()
+                        .flex()
+                        .justify_end()
+                        .pr(style.ordered_marker_gap)
+                        .child(format!(
+                            "{}.",
+                            ordered_marker(start + ix as u64, marker_depth)
+                        ))
+                        .into_any_element(),
+                    (None, None) => bullet(&style.bullet, bullet_kind, style.text_color),
                 };
                 div()
                     .when(ix > 0, |this| this.pt(item_gap))
                     .flex()
-                    .child(
-                        div()
-                            .w(style.list_indent)
-                            .flex_none()
-                            .flex()
-                            .justify_end()
-                            .pr(px(6.))
-                            .child(marker),
-                    )
+                    .child(div().w(style.list_indent).flex_none().child(marker))
                     .child(
                         div()
                             .flex_1()
@@ -535,57 +675,222 @@ impl Renderer<'_> {
             .into_any_element()
     }
 
-    /// Inline content as one wrapped text element; link ranges are clickable.
+    /// Inline content as one wrapped paragraph; web and mail links open on
+    /// click.
     fn text(&mut self, spans: &[Span]) -> AnyElement {
         let style = self.style;
-        let mut text = String::new();
-        let mut highlights = Vec::new();
-        let mut mono_ranges = Vec::new();
-        let mut link_ranges = Vec::new();
-        let mut urls = Vec::new();
+        let curled;
+        let spans = if style.smart_quotes {
+            curled = smart_quotes(spans);
+            &curled
+        } else {
+            spans
+        };
+        let mut segments = Vec::new();
         for span in spans {
-            let start = text.len();
-            text.push_str(&span.text);
-            let range = start..text.len();
-            let mut highlight = HighlightStyle::default();
-            if span.style.strong {
-                highlight.font_weight = Some(style.strong_weight);
-            }
-            if span.style.emph {
-                highlight.font_style = Some(FontStyle::Italic);
-            }
-            if span.style.strike {
-                highlight.strikethrough = Some(StrikethroughStyle {
-                    thickness: px(1.),
-                    color: None,
-                });
-            }
+            let base = Segment {
+                weight: span.style.strong.then_some(style.strong_weight),
+                italic: span.style.emph,
+                strike: span.style.strike,
+                link: span
+                    .link
+                    .as_deref()
+                    .filter(|url| is_openable(url))
+                    .map(|url| url.to_owned().into()),
+                ..Segment::default()
+            };
+            let boxed = |inline: &InlineBox, text: String| Segment {
+                text: text.into(),
+                scale: Some(inline.scale),
+                color: inline.color.or(base.color),
+                chip: Some(inline.chip.clone()),
+                ..base.clone()
+            };
             if span.style.code {
-                highlight.background_color = Some(style.inline_code_background);
-                highlight.color = style.inline_code_color;
-                mono_ranges.push((range.clone(), style.mono_family.clone()));
-            }
-            if let Some(url) = &span.link {
-                highlight.color = Some(style.link_color);
-                link_ranges.push(range.clone());
-                urls.push(url.clone());
-            }
-            highlights.push((range, highlight));
-        }
-        let styled = StyledText::new(text)
-            .with_highlights(highlights)
-            .with_font_family_overrides(mono_ranges);
-        if link_ranges.is_empty() {
-            return styled.into_any_element();
-        }
-        InteractiveText::new(self.id(), styled)
-            .on_click(link_ranges, move |ix, _: &mut Window, cx: &mut App| {
-                if is_openable(&urls[ix]) {
-                    cx.open_url(&urls[ix]);
+                segments.push(Segment {
+                    family: Some(style.mono_family.clone()),
+                    ..boxed(&style.inline_code, span.text.clone())
+                });
+            } else if let Some(url) = &span.link {
+                match &style.url_slug {
+                    Some(slug) if span.text == *url => {
+                        segments.push(boxed(slug, url_label(url)));
+                    }
+                    _ => segments.push(Segment {
+                        text: span.text.clone().into(),
+                        color: Some(style.link_color),
+                        ..base
+                    }),
                 }
-            })
+            } else {
+                for (run, kind) in runs(&span.text, style.mention.is_some()) {
+                    segments.push(match kind {
+                        Run::Text => Segment {
+                            text: run.to_owned().into(),
+                            ..base.clone()
+                        },
+                        Run::Emoji => Segment {
+                            text: run.to_owned().into(),
+                            scale: Some(style.emoji_scale),
+                            ..base.clone()
+                        },
+                        Run::Mention => boxed(style.mention.as_ref().unwrap(), run.to_owned()),
+                    });
+                }
+            }
+        }
+        InlineText::new(segments)
+            .blank_line(style.blank_line)
             .into_any_element()
     }
+}
+
+/// `spans` with quotes curled across span boundaries, leaving code and URLs
+/// shown as themselves alone.
+fn smart_quotes(spans: &[Span]) -> Vec<Span> {
+    let verbatim = |span: &Span| span.style.code || span.link.as_ref() == Some(&span.text);
+    let text: Vec<char> = spans
+        .iter()
+        .flat_map(|span| {
+            let masked = verbatim(span);
+            span.text
+                .chars()
+                .map(move |c| if masked { '\u{fffc}' } else { c })
+        })
+        .collect();
+    let mut curled = markup::slack::smart_quotes(&text).into_iter();
+    spans
+        .iter()
+        .map(|span| {
+            let chars = curled.by_ref().take(span.text.chars().count());
+            Span {
+                text: if verbatim(span) {
+                    chars.for_each(drop);
+                    span.text.clone()
+                } else {
+                    chars.collect()
+                },
+                ..span.clone()
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, PartialEq)]
+enum Run {
+    Text,
+    Emoji,
+    /// `@name` at the start of a word.
+    Mention,
+}
+
+/// Splits plain text into emoji, mentions (when `mentions`) and other
+/// text.
+fn runs(text: &str, mentions: bool) -> Vec<(&str, Run)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    let mut prev: Option<char> = None;
+    while let Some((ix, c)) = chars.next() {
+        let run = if is_emoji(c) {
+            let mut end = ix + c.len_utf8();
+            // Variation selectors, joiners and the pictographs they join.
+            while let Some(&(at, n)) = chars.peek() {
+                if !(is_emoji(n) || matches!(n, '\u{fe0f}' | '\u{200d}' | '\u{20e3}')) {
+                    break;
+                }
+                end = at + n.len_utf8();
+                chars.next();
+            }
+            Some((end, Run::Emoji))
+        } else if c == '@' && mentions && !prev.is_some_and(|p| p.is_alphanumeric()) {
+            let name = text[ix + 1..]
+                .find(|n: char| !(n.is_alphanumeric() || matches!(n, '.' | '_' | '-')))
+                .map_or(text.len(), |len| ix + 1 + len);
+            let end = ix + 1 + text[ix + 1..name].trim_end_matches(['.', '-']).len();
+            (end > ix + 1).then(|| {
+                while chars.peek().is_some_and(|&(at, _)| at < end) {
+                    chars.next();
+                }
+                (end, Run::Mention)
+            })
+        } else {
+            None
+        };
+        if let Some((end, kind)) = run {
+            if start < ix {
+                out.push((&text[start..ix], Run::Text));
+            }
+            out.push((&text[ix..end], kind));
+            start = end;
+            prev = text[..end].chars().next_back();
+        } else {
+            prev = Some(c);
+        }
+    }
+    if start < text.len() {
+        out.push((&text[start..], Run::Text));
+    }
+    out
+}
+
+/// Slack's label for a link shown as its URL: without the scheme, `www.`,
+/// port and trailing slash, with a fragment and tracking-style queries
+/// (`ref`, `id` or a bare key) collapsed to `#…` and `?…`. Slack resolves the
+/// label on its servers, so this approximates it.
+fn url_label(url: &str) -> String {
+    let Some((_, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let (rest, fragment) = match rest.split_once('#') {
+        Some((rest, _)) => (rest, "#…"),
+        None => (rest, ""),
+    };
+    let (rest, query) = match rest.split_once('?') {
+        Some((rest, query)) => {
+            let collapse = query.split('&').any(|pair| match pair.split_once('=') {
+                Some((key, _)) => matches!(key, "ref" | "id"),
+                None => true,
+            });
+            (
+                rest,
+                if collapse {
+                    "?…".to_owned()
+                } else {
+                    format!("?{query}")
+                },
+            )
+        }
+        None => (rest, String::new()),
+    };
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let host = match host.rsplit_once(':') {
+        Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => host,
+        _ => host,
+    };
+    format!("{host}{}{query}{fragment}", path.trim_end_matches('/'))
+}
+
+fn is_text(block: &Block) -> bool {
+    matches!(
+        block,
+        Block::Paragraph(_) | Block::Heading { .. } | Block::List(_)
+    )
+}
+
+/// A disc, ring or square (`kind` 0, 1, 2) in CSS list marker style.
+fn bullet(bullet: &Bullet, kind: usize, color: Hsla) -> AnyElement {
+    let shape = div().size(bullet.size).ml(bullet.left).mt(bullet.top);
+    match kind {
+        1 => shape
+            .rounded_full()
+            .border(bullet.ring_width)
+            .border_color(color),
+        0 => shape.rounded_full().bg(color),
+        _ => shape.bg(color),
+    }
+    .into_any_element()
 }
 
 /// Says how a block changes on its way to the platform, above the
@@ -661,7 +966,7 @@ fn is_openable(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_openable, ordered_marker};
+    use super::{Run, is_openable, ordered_marker, runs, url_label};
 
     #[test]
     fn numbers_nested_ordered_lists_by_depth() {
@@ -672,6 +977,40 @@ mod tests {
         assert_eq!(ordered_marker(14, 2), "xiv");
         assert_eq!(ordered_marker(2, 3), "2");
         assert_eq!(ordered_marker(0, 1), "0");
+    }
+
+    #[test]
+    fn splits_emoji_and_mentions() {
+        assert_eq!(
+            runs("Hi @raine. 🎉👍🏽 a@b.c", true),
+            [
+                ("Hi ", Run::Text),
+                ("@raine", Run::Mention),
+                (". ", Run::Text),
+                ("🎉👍🏽", Run::Emoji),
+                (" a@b.c", Run::Text),
+            ]
+        );
+        assert_eq!(runs("@raine", false), [("@raine", Run::Text)]);
+    }
+
+    #[test]
+    fn labels_urls_like_slack() {
+        assert_eq!(url_label("https://example.com"), "example.com");
+        assert_eq!(
+            url_label("https://www.example.com:8080/a/"),
+            "example.com/a"
+        );
+        assert_eq!(
+            url_label("https://example.com/docs/setup?ref=slack"),
+            "example.com/docs/setup?…"
+        );
+        assert_eq!(
+            url_label("http://example.com/s?q=rust"),
+            "example.com/s?q=rust"
+        );
+        assert_eq!(url_label("https://example.com/a#intro"), "example.com/a#…");
+        assert_eq!(url_label("mailto:a@example.com"), "mailto:a@example.com");
     }
 
     #[test]
