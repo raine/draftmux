@@ -10,11 +10,14 @@ use std::borrow::Cow;
 use draftmux_storage::Target;
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, Pixels, SharedString, div, prelude::*, px,
-    relative, rgba,
+    relative, rgba, svg,
 };
 use markup::{AlertKind, Alignment, Block, Document, List, Span, Table};
 
-use crate::assets::LINK_ICON;
+use crate::assets::{
+    ALERT_CAUTION_ICON, ALERT_IMPORTANT_ICON, ALERT_NOTE_ICON, ALERT_TIP_ICON, ALERT_WARNING_ICON,
+    LINK_ICON,
+};
 use crate::inline_text::{Chip, Icon, InlineText, Segment, is_emoji};
 
 /// Visual parameters for one target platform.
@@ -75,11 +78,13 @@ pub struct MarkupStyle {
     pub quote_bar_radius: Pixels,
     pub quote_padding: Pixels,
     pub quote_text_color: Hsla,
-    /// Number nested ordered lists 1., a., i. by depth instead of 1. at
-    /// every depth.
-    pub ordered_markers_by_depth: bool,
+    /// How ordered lists number their items at list depths 0, 1 and 2,
+    /// repeating deeper down.
+    pub numbering: [Numbering; 3],
     pub table_stripe: Hsla,
     pub checkbox_checked: Hsla,
+    pub checkbox_unchecked_background: Hsla,
+    pub checkbox_unchecked_border: Hsla,
     pub alert_colors: AlertColors,
     /// Render what Slack posts instead of the document as written
     /// ([`markup::slack::posted`]).
@@ -93,6 +98,15 @@ pub struct NoteColors {
     pub background: Hsla,
     pub border: Hsla,
     pub text: Hsla,
+}
+
+#[derive(Clone, Copy)]
+pub enum Numbering {
+    Decimal,
+    /// a, b, … z, aa.
+    Alpha,
+    /// Lowercase roman numerals.
+    Roman,
 }
 
 /// Bullets are a disc, a ring and a square by depth, like CSS list markers.
@@ -198,9 +212,12 @@ impl MarkupStyle {
             quote_bar_radius: px(0.),
             quote_padding: px(14.),
             quote_text_color: c(0x59636eff, 0x9198a1ff),
-            ordered_markers_by_depth: false,
+            numbering: [Numbering::Decimal, Numbering::Roman, Numbering::Alpha],
             table_stripe: c(0xf6f8faff, 0x151b23ff),
             checkbox_checked: c(0x0969daff, 0x4493f8ff),
+            // The browser's own checkbox.
+            checkbox_unchecked_background: c(0xffffffff, 0x3b3b3bff),
+            checkbox_unchecked_border: c(0x767676ff, 0x858585ff),
             alert_colors: AlertColors {
                 note: c(0x0969daff, 0x4493f8ff),
                 tip: c(0x1a7f37ff, 0x3fb950ff),
@@ -311,9 +328,11 @@ impl MarkupStyle {
             quote_bar_radius: px(8.),
             quote_padding: px(12.),
             quote_text_color: text_color,
-            ordered_markers_by_depth: true,
+            numbering: [Numbering::Decimal, Numbering::Alpha, Numbering::Roman],
             table_stripe: c(0x1d1c1d0a, 0x232529ff),
             checkbox_checked: link_color,
+            checkbox_unchecked_background: c(0xffffffff, 0x1a1d21ff),
+            checkbox_unchecked_border: border_color,
             alert_colors: AlertColors {
                 note: border_color,
                 tip: border_color,
@@ -355,6 +374,7 @@ pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> 
         style,
         next_id: 0,
         list_depth: 0,
+        heading_size: None,
     };
     div()
         .id(id)
@@ -404,6 +424,8 @@ struct Renderer<'a> {
     /// Element ids are scoped by the body's root id, so a counter suffices.
     next_id: u64,
     list_depth: usize,
+    /// Font size of the heading whose text is being rendered.
+    heading_size: Option<Pixels>,
 }
 
 impl Renderer<'_> {
@@ -432,7 +454,7 @@ impl Renderer<'_> {
                 let gap = match block {
                     _ if ix == 0 => px(0.),
                     Block::Heading { .. } => self.style.heading_gap,
-                    _ if after_text && is_text(block) => self.style.text_gap,
+                    _ if after_text && is_text(block) => self.style.text_gap.min(gap),
                     _ => gap,
                 };
                 after_text = is_text(block);
@@ -453,16 +475,20 @@ impl Renderer<'_> {
             Block::Paragraph(spans) => self.text(spans),
             Block::Heading { level, spans } => {
                 let scale = style.heading_scale[(*level as usize).clamp(1, 6) - 1];
+                self.heading_size = Some(style.text_size * scale);
+                let text = self.text(spans);
+                self.heading_size = None;
                 div()
                     .text_size(style.text_size * scale)
                     .line_height(relative(1.25))
                     .font_weight(FontWeight::SEMIBOLD)
+                    .when(*level == 6, |this| this.text_color(style.muted_color))
                     .when(*level <= style.heading_rule_max_level, |this| {
                         this.pb(style.text_size * scale * 0.3)
                             .border_b_1()
                             .border_color(style.heading_rule_color)
                     })
-                    .child(self.text(spans))
+                    .child(text)
                     .into_any_element()
             }
             Block::List(list) => self.list(list),
@@ -491,10 +517,23 @@ impl Renderer<'_> {
                     .py(px(8.))
                     .px(px(16.))
                     .child(
+                        // A one-line-high title with its octicon, a
+                        // paragraph's margin above the body.
                         div()
-                            .mb(px(4.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .mb(px(16.))
+                            .line_height(relative(1.))
                             .text_color(color)
                             .font_weight(FontWeight::MEDIUM)
+                            .child(
+                                svg()
+                                    .path(alert_icon(*kind))
+                                    .size(px(16.))
+                                    .flex_none()
+                                    .text_color(color),
+                            )
                             .child(kind.label()),
                     )
                     .children(self.blocks(blocks, style.block_gap))
@@ -526,7 +565,7 @@ impl Renderer<'_> {
             Block::Table(table) => self.table(table),
             Block::Rule => div()
                 .py(px(8.))
-                .child(div().h(px(3.5)).bg(style.border_color))
+                .child(div().h(px(1.)).bg(style.border_color))
                 .into_any_element(),
             Block::Html(html) => div()
                 .text_color(style.muted_color)
@@ -556,11 +595,7 @@ impl Renderer<'_> {
             (style.block_gap, style.block_gap)
         };
         let bullet_kind = self.list_depth % 3;
-        let marker_depth = if style.ordered_markers_by_depth {
-            self.list_depth
-        } else {
-            0
-        };
+        let numbering = style.numbering[self.list_depth % 3];
         self.list_depth += 1;
         let items = list
             .items
@@ -568,15 +603,16 @@ impl Renderer<'_> {
             .enumerate()
             .map(|(ix, item)| {
                 let marker = match (item.task, list.start) {
-                    (Some(checked), _) => self.checkbox(checked),
+                    // GitHub pulls the checkbox 1.4em left of the text.
+                    (Some(checked), _) => div()
+                        .pl(style.list_indent - style.text_size * 1.4)
+                        .child(self.checkbox(checked))
+                        .into_any_element(),
                     (None, Some(start)) => div()
                         .flex()
                         .justify_end()
                         .pr(style.ordered_marker_gap)
-                        .child(format!(
-                            "{}.",
-                            ordered_marker(start + ix as u64, marker_depth)
-                        ))
+                        .child(format!("{}.", ordered_marker(start + ix as u64, numbering)))
                         .into_any_element(),
                     (None, None) => bullet(&style.bullet, bullet_kind, style.text_color),
                 };
@@ -624,7 +660,10 @@ impl Renderer<'_> {
                                 .font_weight(FontWeight::BOLD)
                                 .child("✓")
                         },
-                        |this| this.border_color(style.muted_color),
+                        |this| {
+                            this.bg(style.checkbox_unchecked_background)
+                                .border_color(style.checkbox_unchecked_border)
+                        },
                     ),
             )
             .into_any_element()
@@ -652,6 +691,8 @@ impl Renderer<'_> {
                         this.bg(style.table_stripe)
                     });
                 let cell = match table.alignments.get(col_ix) {
+                    // Header cells default to centered, as in browsers.
+                    Some(Alignment::None) if row_ix == 0 => cell.text_center(),
                     Some(Alignment::Center) => cell.text_center(),
                     Some(Alignment::Right) => cell.text_right(),
                     _ => cell,
@@ -707,9 +748,24 @@ impl Renderer<'_> {
                 ..base.clone()
             };
             if span.style.code {
+                // Code in a heading keeps the heading's size, with less
+                // padding.
+                let heading_code = self.heading_size.map(|size| InlineBox {
+                    scale: 1.,
+                    color: style.inline_code.color,
+                    chip: Chip {
+                        pad_x: size * 0.2,
+                        pad_top: px(0.),
+                        pad_bottom: px(0.),
+                        ..style.inline_code.chip.clone()
+                    },
+                });
                 segments.push(Segment {
                     family: Some(style.mono_family.clone()),
-                    ..boxed(&style.inline_code, span.text.clone())
+                    ..boxed(
+                        heading_code.as_ref().unwrap_or(&style.inline_code),
+                        span.text.clone(),
+                    )
                 });
             } else if let Some(url) = &span.link {
                 match &style.url_slug {
@@ -872,6 +928,16 @@ fn url_label(url: &str) -> String {
     format!("{host}{}{query}{fragment}", path.trim_end_matches('/'))
 }
 
+fn alert_icon(kind: AlertKind) -> &'static str {
+    match kind {
+        AlertKind::Note => ALERT_NOTE_ICON,
+        AlertKind::Tip => ALERT_TIP_ICON,
+        AlertKind::Important => ALERT_IMPORTANT_ICON,
+        AlertKind::Warning => ALERT_WARNING_ICON,
+        AlertKind::Caution => ALERT_CAUTION_ICON,
+    }
+}
+
 fn is_text(block: &Block) -> bool {
     matches!(
         block,
@@ -912,11 +978,11 @@ fn conversion_note(note: &'static str, colors: NoteColors) -> impl IntoElement {
     )
 }
 
-/// The marker for item `number` of an ordered list nested `depth` deep:
-/// decimal, then lowercase letters, then lowercase roman numerals.
-fn ordered_marker(number: u64, depth: usize) -> String {
-    match depth % 3 {
-        1 if number > 0 => {
+/// The marker for item `number` of an ordered list; numbers out of the
+/// numbering's range fall back to decimal.
+fn ordered_marker(number: u64, numbering: Numbering) -> String {
+    match numbering {
+        Numbering::Alpha if number > 0 => {
             let mut n = number;
             let mut letters = Vec::new();
             while n > 0 {
@@ -926,7 +992,7 @@ fn ordered_marker(number: u64, depth: usize) -> String {
             }
             letters.iter().rev().map(|&b| b as char).collect()
         }
-        2 if (1..4000).contains(&number) => {
+        Numbering::Roman if (1..4000).contains(&number) => {
             let mut n = number;
             let mut out = String::new();
             for (value, numeral) in [
@@ -966,17 +1032,18 @@ fn is_openable(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::Numbering::{Alpha, Decimal, Roman};
     use super::{Run, is_openable, ordered_marker, runs, url_label};
 
     #[test]
-    fn numbers_nested_ordered_lists_by_depth() {
-        assert_eq!(ordered_marker(3, 0), "3");
-        assert_eq!(ordered_marker(1, 1), "a");
-        assert_eq!(ordered_marker(27, 1), "aa");
-        assert_eq!(ordered_marker(4, 2), "iv");
-        assert_eq!(ordered_marker(14, 2), "xiv");
-        assert_eq!(ordered_marker(2, 3), "2");
-        assert_eq!(ordered_marker(0, 1), "0");
+    fn numbers_ordered_items() {
+        assert_eq!(ordered_marker(3, Decimal), "3");
+        assert_eq!(ordered_marker(1, Alpha), "a");
+        assert_eq!(ordered_marker(27, Alpha), "aa");
+        assert_eq!(ordered_marker(4, Roman), "iv");
+        assert_eq!(ordered_marker(14, Roman), "xiv");
+        assert_eq!(ordered_marker(0, Alpha), "0");
+        assert_eq!(ordered_marker(4000, Roman), "4000");
     }
 
     #[test]

@@ -29,6 +29,12 @@ pub const PLUS_ICON: &str = "icons/plus.svg";
 pub const RESET_ICON: &str = "icons/reset.svg";
 pub const UPDOWN_ICON: &str = "icons/updown.svg";
 pub const LINK_ICON: &str = "icons/link.svg";
+/// GitHub's alert octicons (Primer, MIT).
+pub const ALERT_NOTE_ICON: &str = "icons/alert-note.svg";
+pub const ALERT_TIP_ICON: &str = "icons/alert-tip.svg";
+pub const ALERT_IMPORTANT_ICON: &str = "icons/alert-important.svg";
+pub const ALERT_WARNING_ICON: &str = "icons/alert-warning.svg";
+pub const ALERT_CAUTION_ICON: &str = "icons/alert-caution.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
@@ -38,6 +44,26 @@ const ASSETS: &[(&str, &[u8])] = &[
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
     (LINK_ICON, include_bytes!("../assets/icons/link.svg")),
+    (
+        ALERT_NOTE_ICON,
+        include_bytes!("../assets/icons/alert-note.svg"),
+    ),
+    (
+        ALERT_TIP_ICON,
+        include_bytes!("../assets/icons/alert-tip.svg"),
+    ),
+    (
+        ALERT_IMPORTANT_ICON,
+        include_bytes!("../assets/icons/alert-important.svg"),
+    ),
+    (
+        ALERT_WARNING_ICON,
+        include_bytes!("../assets/icons/alert-warning.svg"),
+    ),
+    (
+        ALERT_CAUTION_ICON,
+        include_bytes!("../assets/icons/alert-caution.svg"),
+    ),
     (
         TOOL_BASH_ICON,
         include_bytes!("../assets/icons/tool-bash.svg"),
