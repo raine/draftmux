@@ -32,13 +32,16 @@ use crate::profiles::{ModelList, ProfileCatalog};
 use crate::theme::{self, Palette};
 use widgets::*;
 
-actions!(settings, [OpenSettings]);
+actions!(settings, [OpenSettings, CloseSettings]);
 
 const SIDEBAR_WIDTH: f32 = 210.;
 const HEADER_HEIGHT: f32 = 52.;
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-,", OpenSettings, None)]);
+    cx.bind_keys([
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-w", CloseSettings, Some("Settings")),
+    ]);
     cx.on_action(|_: &OpenSettings, cx| open(cx));
 }
 
@@ -1729,7 +1732,9 @@ impl Render for SettingsWindow {
             .flex()
             .text_size(px(13.))
             .text_color(c.text)
+            .key_context("Settings")
             .track_focus(&self.focus_handle)
+            .on_action(|_: &CloseSettings, window, _| window.remove_window())
             .child(self.sidebar(cx))
             .child(
                 div()
