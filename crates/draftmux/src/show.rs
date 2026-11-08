@@ -103,6 +103,10 @@ fn resolve(args: &Args, store: &Store, err: &mut impl Write) -> Result<Draft> {
         });
     };
 
+    // `open` records the source as an absolute path without resolving
+    // symlinks; normalize the same way so a relative argument still matches.
+    let source =
+        &std::path::absolute(source).with_context(|| format!("resolving {}", source.display()))?;
     let scan = store.scan()?;
     for (dir, e) in &scan.errors {
         writeln!(err, "draftmux: skipping {}: {e:#}", dir.display())?;
@@ -185,6 +189,7 @@ mod tests {
                 },
                 cwd: "/tmp/repo".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
+                note: None,
             })
             .unwrap();
         store.save_text(&draft.id, text).unwrap();
@@ -242,6 +247,16 @@ mod tests {
         let output = show(&store, &["--source", "/s/b.jsonl"]);
         assert_eq!((output.out.as_str(), output.err.as_str()), ("b", ""));
         assert_eq!(show(&store, &[&newest.id]).out, "newest");
+    }
+
+    #[test]
+    fn relative_source_matches_the_absolute_path_open_records() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let recorded = std::env::current_dir().unwrap().join("s.jsonl");
+        create(&store, "PR", recorded.to_str().unwrap(), BODY, 0);
+
+        assert_eq!(show(&store, &["--source", "s.jsonl"]).out, BODY);
     }
 
     #[test]

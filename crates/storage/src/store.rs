@@ -27,6 +27,7 @@ pub struct NewDraft {
     pub source: Source,
     pub cwd: PathBuf,
     pub pi_agent_dir: PathBuf,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,8 +72,7 @@ impl Store {
 
     /// `~/Library/Application Support/Draftmux/drafts`.
     pub fn default_root() -> Result<PathBuf> {
-        let data = dirs::data_dir().context("no application data directory")?;
-        Ok(data.join("Draftmux").join("drafts"))
+        Ok(data_dir()?.join("drafts"))
     }
 
     /// Creates `<id>/` with an empty `draft.md` and `session/`, then writes
@@ -94,6 +94,7 @@ impl Store {
             cwd: new.cwd,
             pi_session_file: None,
             pi_agent_dir: new.pi_agent_dir,
+            note: new.note,
             created_at: now,
             updated_at: now,
         };
@@ -195,6 +196,12 @@ impl Store {
     }
 }
 
+/// The app's data directory, `~/Library/Application Support/Draftmux`.
+pub fn data_dir() -> Result<PathBuf> {
+    let data = dirs::data_dir().context("no application data directory")?;
+    Ok(data.join("Draftmux"))
+}
+
 /// IDs come from the CLI, so only allow what [`Store::create`] generates and
 /// never anything that could leave the drafts directory.
 fn validate_id(id: &str) -> Result<()> {
@@ -237,6 +244,7 @@ mod tests {
             },
             cwd: "/tmp/repo".into(),
             pi_agent_dir: "/tmp/.pi/agent".into(),
+            note: None,
         }
     }
 

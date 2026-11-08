@@ -13,4 +13,4 @@ mod store;
 
 pub use autosave::Autosave;
 pub use meta::{Meta, Source, SourceKind, Status, Target};
-pub use store::{Draft, NewDraft, Scan, Store};
+pub use store::{Draft, NewDraft, Scan, Store, data_dir};

@@ -1105,6 +1105,7 @@ name = "draftmux"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "chrono",
  "clap",
  "draftmux-storage",

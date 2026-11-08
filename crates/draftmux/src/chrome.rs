@@ -5,9 +5,10 @@
 //! with alpha below 1 shows the blurred desktop. The root paints nothing; the
 //! sidebar column paints a translucent tint and the content panes are opaque.
 
+use draftmux_storage::Draft;
 use gpui::{
-    Context, FontWeight, MouseButton, Pixels, Point, Rgba, Window, WindowControlArea, div, point,
-    prelude::*, px, rgb, rgba,
+    Context, FontWeight, MouseButton, Pixels, Point, Rgba, SharedString, Window, WindowControlArea,
+    div, point, prelude::*, px, rgb, rgba,
 };
 
 const TOOLBAR_HEIGHT: Pixels = px(52.);
@@ -30,6 +31,8 @@ pub struct Chrome {
     /// Set on toolbar mouse-down; the first mouse-move then hands the drag to
     /// the window server, so a plain click never starts a move.
     should_move: bool,
+    /// The draft shown in the window, set by `draftmux open`.
+    draft: Option<Draft>,
 }
 
 impl Render for Chrome {
@@ -73,6 +76,12 @@ impl Render for Chrome {
 }
 
 impl Chrome {
+    pub fn focus_draft(&mut self, draft: Draft, cx: &mut Context<Self>) {
+        eprintln!("draftmux: focused draft {}", draft.id);
+        self.draft = Some(draft);
+        cx.notify();
+    }
+
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("toolbar")
@@ -115,7 +124,10 @@ impl Chrome {
                     .border_color(rgba(HAIRLINE))
                     .text_size(px(13.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Draftmux"),
+                    .child(match &self.draft {
+                        Some(draft) => SharedString::from(format!("Draft {}", draft.id)),
+                        None => SharedString::new_static("Draftmux"),
+                    }),
             )
     }
 }

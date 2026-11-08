@@ -19,6 +19,10 @@ pub struct Meta {
     pub pi_session_file: Option<PathBuf>,
     /// pi profile the draft is pinned to (`PI_CODING_AGENT_DIR`).
     pub pi_agent_dir: PathBuf,
+    /// Free-form note from the agent that handed the draft off
+    /// (`draftmux open --note`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Last activity; the drafts list is sorted by this, newest first.
     pub updated_at: DateTime<Utc>,
@@ -93,5 +97,6 @@ mod tests {
         let meta: Meta = serde_json::from_value(value).unwrap();
         assert_eq!(meta.title, "");
         assert_eq!(meta.pi_session_file, None);
+        assert_eq!(meta.note, None);
     }
 }

@@ -1,6 +1,9 @@
 mod chrome;
+mod ipc;
 mod markup_view;
+mod open;
 mod show;
+mod source;
 
 use clap::{Parser, Subcommand};
 
@@ -21,17 +24,34 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    Open(open::Args),
     Show(show::Args),
 }
 
 fn main() {
     if let Some(command) = Cli::parse().command {
         std::process::exit(match command {
+            Command::Open(args) => open::main(args),
             Command::Show(args) => show::main(args),
         });
     }
 
-    gpui_platform::application().run(|cx: &mut App| {
+    let server = match ipc::claim() {
+        Ok(ipc::Claim::Owner(server)) => server,
+        Ok(ipc::Claim::Taken) => {
+            if let Err(err) = ipc::activate_running() {
+                eprintln!("draftmux: {err:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        Err(err) => {
+            eprintln!("draftmux: {err:#}");
+            std::process::exit(1);
+        }
+    };
+
+    gpui_platform::application().run(move |cx: &mut App| {
         shell_env::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -57,8 +77,10 @@ fn main() {
             app_owns_titlebar_drag: true,
             ..Default::default()
         };
-        cx.open_window(options, |_, cx| cx.new(|_| chrome::Chrome::default()))
+        let window = cx
+            .open_window(options, |_, cx| cx.new(|_| chrome::Chrome::default()))
             .expect("failed to open the main window");
+        server.serve(window, cx);
         cx.activate(true);
     });
 }
