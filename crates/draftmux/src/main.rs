@@ -1,4 +1,5 @@
 mod chrome;
+mod markup_view;
 mod show;
 
 use clap::{Parser, Subcommand};

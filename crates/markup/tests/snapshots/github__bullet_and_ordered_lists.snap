@@ -1,0 +1,26 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"- one\\n- two\\n  - nested\\n    1. deep\\n\\n3. three\\n4. four\\n\")"
+---
+list bullet tight
+  item
+    paragraph
+      "one"
+  item
+    paragraph
+      "two"
+    list bullet tight
+      item
+        paragraph
+          "nested"
+        list ordered start=1 tight
+          item
+            paragraph
+              "deep"
+list ordered start=3 tight
+  item
+    paragraph
+      "three"
+  item
+    paragraph
+      "four"

@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"above\\n\\n---\\n\\n<details>\\n<summary>More</summary>\\n</details>\\n\\n\\\n         <!-- template comment -->\\n\\ninline <b>tag</b> and <!-- hidden --> comment\\n\")"
+---
+paragraph
+  "above"
+rule
+html "<details>\n<summary>More</summary>\n</details>"
+paragraph
+  "inline <b>tag</b> and  comment"

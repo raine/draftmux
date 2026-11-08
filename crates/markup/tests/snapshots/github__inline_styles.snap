@@ -1,0 +1,19 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"plain **bold** *italic* ***both*** ~~gone~~ `code` **bold `code` inside**\\n\")"
+---
+paragraph
+  "plain "
+  "bold" strong
+  " "
+  "italic" emph
+  " "
+  "both" strong+emph
+  " "
+  "gone" strike
+  " "
+  "code" code
+  " "
+  "bold " strong
+  "code" strong+code
+  " inside" strong

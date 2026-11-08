@@ -1,0 +1,11 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"see https://example.com/path. or www.example.com, mail a@example.com\\n\")"
+---
+paragraph
+  "see "
+  "https://example.com/path" -> https://example.com/path
+  ". or "
+  "www.example.com" -> http://www.example.com
+  ", mail "
+  "a@example.com" -> mailto:a@example.com

@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"soft\\nbreak\\n\\nhard  \\nbreak\\n\\nbackslash\\\\\\nbreak\\n\")"
+---
+paragraph
+  "soft\nbreak"
+paragraph
+  "hard\nbreak"
+paragraph
+  "backslash\nbreak"

@@ -1,0 +1,18 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"# One\\n## Two\\n### Three\\n#### Four\\n##### Five\\n###### Six\\n\\nSetext\\n===\\n\")"
+---
+heading 1
+  "One"
+heading 2
+  "Two"
+heading 3
+  "Three"
+heading 4
+  "Four"
+heading 5
+  "Five"
+heading 6
+  "Six"
+heading 1
+  "Setext"

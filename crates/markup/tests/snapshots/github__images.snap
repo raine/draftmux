@@ -1,0 +1,8 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"![alt text](https://img.example/a.png)\\n\\n\\\n         [![CI](https://img.example/badge.svg)](https://ci.example)\\n\")"
+---
+paragraph
+  "alt text" -> https://img.example/a.png
+paragraph
+  "CI" -> https://ci.example

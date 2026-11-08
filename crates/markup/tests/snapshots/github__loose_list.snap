@@ -1,0 +1,14 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"- first\\n\\n  second paragraph\\n\\n- item\\n\\n  ```\\n  code in item\\n  ```\\n\")"
+---
+list bullet loose
+  item
+    paragraph
+      "first"
+    paragraph
+      "second paragraph"
+  item
+    paragraph
+      "item"
+    code lang=None "code in item"

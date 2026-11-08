@@ -1,0 +1,10 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"> quoted\\nlazy continuation\\n>\\n> > nested\\n\")"
+---
+quote
+  paragraph
+    "quoted\nlazy continuation"
+  quote
+    paragraph
+      "nested"

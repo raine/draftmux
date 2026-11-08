@@ -1,0 +1,28 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"| Left | Center | Right | None |\\n|:-----|:------:|------:|------|\\n\\\n         | `a\\\\|b` | **c** | 3 | |\\n| ragged |\\n\")"
+---
+table [Left, Center, Right, None]
+  header
+    cell
+      "Left"
+    cell
+      "Center"
+    cell
+      "Right"
+    cell
+      "None"
+  row
+    cell
+      "a|b" code
+    cell
+      "c" strong
+    cell
+      "3"
+    cell
+  row
+    cell
+      "ragged"
+    cell
+    cell
+    cell

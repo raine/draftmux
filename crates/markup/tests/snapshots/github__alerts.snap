@@ -1,0 +1,24 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"> [!NOTE]\\n> Note body\\n\\n\\\n         > [!TIP]\\n> Tip body\\n\\n\\\n         > [!IMPORTANT]\\n> Important body\\n\\n\\\n         > [!WARNING]\\n> Warning body\\n\\n\\\n         > [!CAUTION]\\n> Caution **body**\\n> - list in alert\\n\")"
+---
+alert Note
+  paragraph
+    "Note body"
+alert Tip
+  paragraph
+    "Tip body"
+alert Important
+  paragraph
+    "Important body"
+alert Warning
+  paragraph
+    "Warning body"
+alert Caution
+  paragraph
+    "Caution "
+    "body" strong
+  list bullet tight
+    item
+      paragraph
+        "list in alert"

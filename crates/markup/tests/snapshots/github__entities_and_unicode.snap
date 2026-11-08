@@ -1,0 +1,6 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"&amp; &copy; \\\\*not em\\\\* 日本語 — ünïcode\\n\")"
+---
+paragraph
+  "& © *not em* 日本語 — ünïcode"

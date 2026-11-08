@@ -1,0 +1,8 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"```rust title=x\\nfn main() {\\n    println!(\\\"hi\\\");\\n}\\n```\\n\\n\\\n         ```\\nno lang\\n\\n```\\n\\n    indented code\\n\\n```\\nunclosed fence\\n\")"
+---
+code lang=Some("rust") "fn main() {\n    println!(\"hi\");\n}"
+code lang=None "no lang\n"
+code lang=None "indented code"
+code lang=None "unclosed fence"

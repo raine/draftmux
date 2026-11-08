@@ -1,0 +1,12 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"> [!FOO]\\n> unknown kind\\n\\n> [!NOTE] Custom title\\n> body\\n\")"
+---
+quote
+  paragraph
+    "[!FOO]\nunknown kind"
+quote
+  paragraph
+    "[!NOTE] Custom title"
+  paragraph
+    "body"

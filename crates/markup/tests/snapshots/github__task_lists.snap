@@ -1,0 +1,23 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"- [x] done\\n- [ ] todo\\n- plain\\n  - [X] nested done\\n\\n> - [ ] in quote\\n\")"
+---
+list bullet tight
+  item [x]
+    paragraph
+      "done"
+  item [ ]
+    paragraph
+      "todo"
+  item
+    paragraph
+      "plain"
+    list bullet tight
+      item [x]
+        paragraph
+          "nested done"
+quote
+  list bullet tight
+    item [ ]
+      paragraph
+        "in quote"

@@ -55,7 +55,18 @@ impl Render for Chrome {
                         ),
                     )
                     .child(pane(rgb(PANE_BG)).flex_1())
-                    .child(pane(rgb(PANE_BG)).flex_1().border_l_1())
+                    .child(
+                        pane(rgb(PANE_BG)).flex_1().border_l_1().child(
+                            div()
+                                .id("preview")
+                                .size_full()
+                                .overflow_y_scroll()
+                                .px_6()
+                                .pt_5()
+                                .pb_10()
+                                .child(crate::markup_view::sample()),
+                        ),
+                    )
                     .child(pane(rgb(CHAT_BG)).w(CHAT_WIDTH).border_l_1()),
             )
     }

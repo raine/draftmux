@@ -1,0 +1,11 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"[**bold** label](https://a.example) and [ref][r] and <https://b.example>\\n\\n\\\n         [r]: https://ref.example\\n\")"
+---
+paragraph
+  "bold" strong -> https://a.example
+  " label" -> https://a.example
+  " and "
+  "ref" -> https://ref.example
+  " and "
+  "https://b.example" -> https://b.example

@@ -1,0 +1,5 @@
+---
+source: crates/markup/tests/github.rs
+expression: "snapshot(\"\")"
+---
+
