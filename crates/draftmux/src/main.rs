@@ -1,4 +1,7 @@
 mod chrome;
+mod show;
+
+use clap::{Parser, Subcommand};
 
 use gpui::{
     App, KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions, WindowBackgroundAppearance,
@@ -7,7 +10,26 @@ use gpui::{
 
 actions!(draftmux, [Quit]);
 
+/// Run without a command to open the app.
+#[derive(Parser)]
+#[command(name = "draftmux")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Show(show::Args),
+}
+
 fn main() {
+    if let Some(command) = Cli::parse().command {
+        std::process::exit(match command {
+            Command::Show(args) => show::main(args),
+        });
+    }
+
     gpui_platform::application().run(|cx: &mut App| {
         shell_env::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
