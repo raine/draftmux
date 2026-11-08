@@ -973,6 +973,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_platform",
+ "shell-env",
 ]
 
 [[package]]
@@ -4058,6 +4059,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "shell-env"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "gpui",
+ "libc",
+ "tempfile",
 ]
 
 [[package]]

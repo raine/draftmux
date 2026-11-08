@@ -9,6 +9,7 @@ actions!(draftmux, [Quit]);
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
+        shell_env::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus([Menu::new("Draftmux").items([MenuItem::action("Quit Draftmux", Quit)])]);
