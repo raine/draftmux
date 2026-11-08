@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/draftmux"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+# gpui is pinned to one Zed commit; see "Bumping gpui" in README.md before
+# changing it. Both entries must name the same rev.
+[workspace.dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "b5cd310b3b54dfc659fcc06453e6358843dfe216", default-features = false }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "b5cd310b3b54dfc659fcc06453e6358843dfe216", default-features = false, features = ["font-kit"] }
+
+# Mirrors Zed's root [patch.crates-io] at the pinned rev for crates in the
+# macOS gpui graph; git dependents don't inherit Zed's patches.
+[patch.crates-io]
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }

@@ -1,0 +1,5 @@
+# Matches Zed's rust-toolchain.toml at the pinned gpui rev.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
