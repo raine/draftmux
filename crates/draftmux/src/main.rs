@@ -1,4 +1,5 @@
 mod chrome;
+mod format;
 mod ipc;
 mod markup_view;
 mod open;
@@ -56,6 +57,7 @@ fn main() {
         shell_env::init(cx);
         editor::init(cx);
         markup_view::init(cx);
+        format::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus([Menu::new("Draftmux").items([MenuItem::action("Quit Draftmux", Quit)])]);

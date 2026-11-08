@@ -5,6 +5,7 @@
 //! with alpha below 1 shows the blurred desktop. The root paints nothing; the
 //! sidebar column paints a translucent tint and the content panes are opaque.
 
+use crate::format::{Format, Formatter};
 use draftmux_storage::Draft;
 use editor::Editor;
 use gpui::{
@@ -38,6 +39,7 @@ pub struct Chrome {
     /// The draft shown in the window, set by `draftmux open`.
     draft: Option<Draft>,
     editor: Entity<Editor>,
+    formatter: Entity<Formatter>,
 }
 
 impl Render for Chrome {
@@ -47,6 +49,10 @@ impl Render for Chrome {
             .flex()
             .flex_col()
             .text_color(rgb(TEXT))
+            .on_action(cx.listener(|this, _: &Format, _, cx| {
+                this.formatter
+                    .update(cx, |formatter, cx| formatter.format(cx));
+            }))
             .child(self.toolbar(cx))
             .child(
                 div()
@@ -84,15 +90,20 @@ impl Chrome {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| Editor::new(SAMPLE_DRAFT, cx));
         window.focus(&editor.focus_handle(cx), cx);
+        let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         Self {
             should_move: false,
             draft: None,
             editor,
+            formatter,
         }
     }
 
     pub fn focus_draft(&mut self, draft: Draft, cx: &mut Context<Self>) {
         eprintln!("draftmux: focused draft {}", draft.id);
+        let dir = draft.dir.clone();
+        self.formatter
+            .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
         self.draft = Some(draft);
         cx.notify();
     }
@@ -134,6 +145,7 @@ impl Chrome {
                     .flex()
                     .items_center()
                     .pl(px(18.))
+                    .pr_3()
                     .bg(rgb(CHAT_BG))
                     .border_b_1()
                     .border_color(rgba(HAIRLINE))
@@ -142,7 +154,9 @@ impl Chrome {
                     .child(match &self.draft {
                         Some(draft) => SharedString::from(format!("Draft {}", draft.id)),
                         None => SharedString::new_static("Draftmux"),
-                    }),
+                    })
+                    .child(div().flex_1())
+                    .child(self.formatter.clone()),
             )
     }
 }

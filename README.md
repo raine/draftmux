@@ -70,6 +70,9 @@ build time). The Rust toolchain is pinned in `rust-toolchain.toml`.
 cargo run
 ```
 
+Tests that need real external tools, such as oxfmt, are ignored by default.
+Run them with `cargo test -- --ignored`.
+
 ### Layout
 
 ```text
