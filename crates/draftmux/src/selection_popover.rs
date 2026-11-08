@@ -324,18 +324,25 @@ impl SelectionPopover {
     /// The app lost focus: hide the popover, unless the focus went to the
     /// popover's own panel (the instruction field, or a click on it).
     fn dismiss_unless_panel_active(&mut self, cx: &mut Context<Self>) {
-        let Some(panel) = self.panel.as_ref().map(|panel| panel.handle) else {
+        if self.panel.is_none() && !self.opening {
             return self.dismiss(cx);
-        };
-        // The panel becomes key after the main window resigns.
+        }
+        // The panel becomes key after the main window resigns. A resize can
+        // replace the panel meanwhile, so check whichever one is current.
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
-            let panel_active = panel
-                .update(cx, |_, window, _| window.is_window_active())
-                .unwrap_or(false);
             this.update(cx, |this, cx| {
+                if this.opening {
+                    return this.dismiss_unless_panel_active(cx);
+                }
+                let panel_active = this.panel.as_ref().is_some_and(|panel| {
+                    panel
+                        .handle
+                        .update(cx, |_, window, _| window.is_window_active())
+                        .unwrap_or(false)
+                });
                 let main_active = this
                     .main
                     .update(cx, |_, window, _| window.is_window_active())
