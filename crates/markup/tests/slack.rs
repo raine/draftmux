@@ -124,33 +124,50 @@ fn empty_document() {
     insta::assert_snapshot!(snapshot("\n\n"));
 }
 
-fn fallbacks(mrkdwn: &str) -> String {
-    let blocks = slack::parse(mrkdwn)
-        .blocks
-        .iter()
-        .filter_map(slack::fallback)
+/// The outline of what Slack posts, with a line for each block's note.
+fn posted(mrkdwn: &str) -> String {
+    slack::posted(&slack::parse(mrkdwn))
+        .into_iter()
         .map(|(block, note)| {
-            format!(
-                "note {note:?}\n{}",
-                outline(&Document {
-                    blocks: vec![block]
-                })
-            )
+            let note = note
+                .map(|note| format!("note {note:?}\n"))
+                .unwrap_or_default();
+            let outline = outline(&Document {
+                blocks: vec![block],
+            });
+            format!("{note}{outline}")
         })
-        .collect::<Vec<_>>();
-    blocks.join("")
+        .collect()
 }
 
 #[test]
 fn heading_fallback() {
-    insta::assert_snapshot!(fallbacks("## Steps for _today_\n"));
+    insta::assert_snapshot!(posted("## Steps for _today_\n"));
 }
 
 #[test]
 fn table_fallback() {
-    insta::assert_snapshot!(fallbacks(
+    insta::assert_snapshot!(posted(
         "| Backend | Latency | Notes |\n|:--|--:|:-:|\n| LM Studio | 0.8s | local |\n| ollama | 12.1s | `fast` |\n| é | 1 | |\n"
     ));
+}
+
+#[test]
+fn kept_lists_post_unchanged() {
+    insta::assert_snapshot!(posted("- one\n    - nested\n1. first\n2. second\n"));
+}
+
+#[test]
+fn multi_line_item_posts_as_lines() {
+    insta::assert_snapshot!(posted(
+        "- wraps\n  onto a second line\n    - nested *bold*\n- plain\n"
+    ));
+}
+
+#[test]
+fn renumbered_lists_post_as_lines() {
+    // A start other than 1 anywhere flattens every numbered list, not bullets.
+    insta::assert_snapshot!(posted("1. one\n2. two\n\n- bullet\n\n3. three\n"));
 }
 
 #[test]

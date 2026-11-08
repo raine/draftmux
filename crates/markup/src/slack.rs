@@ -16,7 +16,7 @@
 //! lines.
 //!
 //! Markdown headings and pipe tables have no Slack equivalent but are kept as
-//! [`Block::Heading`] and [`Block::Table`]; [`fallback`] gives the block Slack
+//! [`Block::Heading`] and [`Block::Table`]; [`posted`] gives the blocks Slack
 //! actually receives.
 
 use crate::{Alignment, Block, Document, List, ListItem, Span, SpanStyle, Table, push_span};
@@ -36,36 +36,127 @@ pub fn parse(mrkdwn: &str) -> Document {
     }
 }
 
-/// The block Slack receives in place of `block`, with a short note on what
-/// changes, for blocks Slack can't show: headings become a bold line and
-/// tables a code block.
-pub fn fallback(block: &Block) -> Option<(Block, &'static str)> {
-    match block {
-        Block::Heading { spans, .. } => {
-            let spans = spans
-                .iter()
-                .map(|span| Span {
-                    style: SpanStyle {
-                        strong: true,
-                        ..span.style
-                    },
-                    ..span.clone()
-                })
-                .collect();
-            Some((
-                Block::Paragraph(spans),
-                "Slack has no headings, so this pastes as a bold line.",
-            ))
+/// The blocks Slack posts when `doc` is pasted into its composer as rich
+/// text, each with a short note on what changes for blocks Slack can't show:
+/// headings become a bold line, tables a code block, and lists Slack doesn't
+/// keep as lists become "•" or "N." text lines.
+///
+/// Slack keeps a pasted list unless one of its items, nested ones included,
+/// spans more than one line, or it is numbered and any numbered list in the
+/// paste starts at something other than 1.
+pub fn posted(doc: &Document) -> Vec<(Block, Option<&'static str>)> {
+    let renumbered = doc.blocks.iter().any(|block| {
+        let mut found = false;
+        visit_lists(block, &mut |list| {
+            found |= list.start.is_some_and(|n| n != 1)
+        });
+        found
+    });
+    doc.blocks
+        .iter()
+        .map(|block| match block {
+            Block::Heading { spans, .. } => {
+                let spans = spans
+                    .iter()
+                    .map(|span| Span {
+                        style: SpanStyle {
+                            strong: true,
+                            ..span.style
+                        },
+                        ..span.clone()
+                    })
+                    .collect();
+                (
+                    Block::Paragraph(spans),
+                    Some("Slack has no headings, so this pastes as a bold line."),
+                )
+            }
+            Block::Table(table) => (
+                Block::Code {
+                    lang: None,
+                    text: table_text(table),
+                },
+                Some("Slack has no tables, so this pastes as a code block."),
+            ),
+            Block::List(list) if multi_line_item(list) => (
+                Block::Paragraph(list_lines(list, 0)),
+                Some(
+                    "Slack can't keep a list item on several lines, so this pastes as text lines.",
+                ),
+            ),
+            Block::List(list) if renumbered && list.start.is_some() => (
+                Block::Paragraph(list_lines(list, 0)),
+                Some("Slack numbered lists always start at 1, so this pastes as text lines."),
+            ),
+            block => (block.clone(), None),
+        })
+        .collect()
+}
+
+/// Calls `f` on every list in `block`, nested ones included.
+fn visit_lists(block: &Block, f: &mut impl FnMut(&List)) {
+    if let Block::List(list) = block {
+        f(list);
+        for item in &list.items {
+            for block in &item.blocks {
+                visit_lists(block, f);
+            }
         }
-        Block::Table(table) => Some((
-            Block::Code {
-                lang: None,
-                text: table_text(table),
-            },
-            "Slack has no tables, so this pastes as a code block.",
-        )),
-        _ => None,
     }
+}
+
+fn multi_line_item(list: &List) -> bool {
+    list.items.iter().any(|item| {
+        item.blocks.iter().any(|block| match block {
+            Block::Paragraph(spans) => spans.iter().any(|span| span.text.contains('\n')),
+            block => {
+                let mut found = false;
+                visit_lists(block, &mut |list| found |= multi_line_item(list));
+                found
+            }
+        })
+    })
+}
+
+/// `list` as text lines with a "•" or "N." marker, nested items indented by
+/// four spaces per level.
+fn list_lines(list: &List, depth: usize) -> Vec<Span> {
+    let mut out = Vec::new();
+    for (ix, item) in list.items.iter().enumerate() {
+        if ix > 0 {
+            push_span(&mut out, "\n", SpanStyle::default(), None);
+        }
+        let marker = match list.start {
+            Some(start) => format!("{}. ", start + ix as u64),
+            None => "• ".to_owned(),
+        };
+        push_span(
+            &mut out,
+            &format!("{}{marker}", "    ".repeat(depth)),
+            SpanStyle::default(),
+            None,
+        );
+        for (bx, block) in item.blocks.iter().enumerate() {
+            match block {
+                Block::Paragraph(spans) => {
+                    if bx > 0 {
+                        push_span(&mut out, "\n", SpanStyle::default(), None);
+                    }
+                    for span in spans {
+                        push_span(&mut out, &span.text, span.style, span.link.as_deref());
+                    }
+                }
+                Block::List(nested) => {
+                    push_span(&mut out, "\n", SpanStyle::default(), None);
+                    for span in list_lines(nested, depth + 1) {
+                        push_span(&mut out, &span.text, span.style, span.link.as_deref());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// Lays a table out as aligned plain-text columns.

@@ -1,12 +1,11 @@
 //! Rich text for pasting a message into Slack's composer.
 //!
 //! Slack reads HTML from the pasteboard; RTF is for native apps such as Mail
-//! and Notes. Both follow Slack's newline-literal layout: every line of a
+//! and Notes, and [`plain`] for pasting without formatting. Both follow Slack's newline-literal layout: every line of a
 //! paragraph, empty ones included, is its own line, and blocks follow each
-//! other without extra spacing. Blocks Slack can't show are replaced by
-//! [`slack::fallback`], as in the preview.
+//! other without extra spacing. Both serialize [`slack::posted`], as the
+//! preview does.
 
-use std::borrow::Cow;
 use std::fmt::Write;
 
 use crate::{Block, Document, List, Span, slack};
@@ -15,7 +14,7 @@ use crate::{Block, Document, List, Span, slack};
 /// it as UTF-8.
 pub fn html(doc: &Document) -> String {
     let mut out = String::from("<meta charset=\"utf-8\">");
-    html_blocks(&mut out, &doc.blocks);
+    html_blocks(&mut out, &posted(doc));
     out
 }
 
@@ -25,9 +24,94 @@ pub fn rtf(doc: &Document) -> String {
         "{\\rtf1\\ansi\\ansicpg1252\\deff0\
          {\\fonttbl{\\f0\\fswiss Helvetica;}{\\f1\\fmodern Menlo;}}\n",
     );
-    rtf_blocks(&mut out, &doc.blocks, 0);
+    rtf_blocks(&mut out, &posted(doc), 0);
     out.push('}');
     out
+}
+
+/// The visible text of `doc` as Slack shows it: no markup, "•" and "N."
+/// list markers, link labels, code as written. Slack's composer pastes
+/// plain text that looks like Markdown as Markdown instead of reading the
+/// HTML, so a zero-width no-break space (U+FEFF, whitespace to Slack's
+/// detector) follows each `*`, `_`, `~`, `` ` `` and `]`, and leads each line
+/// starting with one of `-*>#|` `` ` `` or a digit; no Markdown pattern Slack
+/// looks for can match then.
+pub fn plain(doc: &Document) -> String {
+    let mut lines = Vec::new();
+    plain_blocks(&mut lines, &posted(doc), "");
+    let mut out = String::new();
+    for (ix, line) in lines.iter().enumerate() {
+        if ix > 0 {
+            out.push('\n');
+        }
+        if line.starts_with(['-', '>', '#', '|', '*', '`'])
+            || line.starts_with(|c: char| c.is_ascii_digit())
+        {
+            out.push(GUARD);
+        }
+        for ch in line.chars() {
+            out.push(ch);
+            if matches!(ch, '*' | '_' | '~' | '`' | ']') {
+                out.push(GUARD);
+            }
+        }
+    }
+    out
+}
+
+/// Whitespace to Slack's Markdown detector, invisible when shown.
+const GUARD: char = '\u{feff}';
+
+fn plain_blocks(out: &mut Vec<String>, blocks: &[Block], indent: &str) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(spans) => {
+                for line in lines(spans) {
+                    out.push(format!("{indent}{}", plain_spans(&line)));
+                }
+            }
+            Block::List(list) => {
+                for (ix, item) in list.items.iter().enumerate() {
+                    let marker = match list.start {
+                        None => "• ".to_owned(),
+                        Some(start) => format!("{}. ", start + ix as u64),
+                    };
+                    if let Some(checked) = item.task {
+                        out.push(format!(
+                            "{indent}{marker}{}",
+                            if checked { "☑ " } else { "☐ " }
+                        ));
+                    } else {
+                        out.push(format!("{indent}{marker}"));
+                    }
+                    let first = out.len() - 1;
+                    let nested = format!("{indent}    ");
+                    let mut item_lines = Vec::new();
+                    plain_blocks(&mut item_lines, &item.blocks, &nested);
+                    let mut item_lines = item_lines.into_iter();
+                    // The item's first paragraph line follows its marker.
+                    if let Some(Block::Paragraph(_)) = item.blocks.first()
+                        && let Some(line) = item_lines.next()
+                    {
+                        out[first].push_str(line.strip_prefix(nested.as_str()).unwrap_or(&line));
+                    }
+                    out.extend(item_lines);
+                }
+            }
+            Block::Quote(blocks) | Block::Alert { blocks, .. } => plain_blocks(out, blocks, indent),
+            Block::Code { text, .. } => {
+                out.extend(text.split('\n').map(|line| format!("{indent}{line}")));
+            }
+            Block::Rule => out.push(format!("{indent}———")),
+            Block::Html(html) => out.extend(html.split('\n').map(|line| format!("{indent}{line}"))),
+            Block::Heading { .. } => unreachable!("slack::posted replaces headings"),
+            Block::Table(_) => unreachable!("slack::posted replaces tables"),
+        }
+    }
+}
+
+fn plain_spans(spans: &[Span]) -> String {
+    spans.iter().map(|span| span.text.as_str()).collect()
 }
 
 /// `spans` split at each `\n` into lines.
@@ -49,23 +133,23 @@ fn lines(spans: &[Span]) -> Vec<Vec<Span>> {
     lines
 }
 
-/// The block Slack receives in place of `block`.
-fn for_slack(block: &Block) -> Cow<'_, Block> {
-    match slack::fallback(block) {
-        Some((replacement, _)) => Cow::Owned(replacement),
-        None => Cow::Borrowed(block),
-    }
+/// The top-level blocks Slack receives for `doc`.
+fn posted(doc: &Document) -> Vec<Block> {
+    slack::posted(doc)
+        .into_iter()
+        .map(|(block, _)| block)
+        .collect()
 }
 
 fn html_blocks(out: &mut String, blocks: &[Block]) {
     for block in blocks {
-        match &*for_slack(block) {
+        match block {
             Block::Paragraph(spans) => {
                 for line in lines(spans) {
                     html_line(out, &line);
                 }
             }
-            Block::Heading { .. } => unreachable!("slack::fallback replaces headings"),
+            Block::Heading { .. } => unreachable!("slack::posted replaces headings"),
             Block::List(list) => html_list(out, list),
             Block::Quote(blocks) => {
                 out.push_str("<blockquote>");
@@ -82,7 +166,7 @@ fn html_blocks(out: &mut String, blocks: &[Block]) {
                 html_escape(out, text);
                 out.push_str("</pre>");
             }
-            Block::Table(_) => unreachable!("slack::fallback replaces tables"),
+            Block::Table(_) => unreachable!("slack::posted replaces tables"),
             Block::Rule => out.push_str("<hr>"),
             Block::Html(html) => {
                 for line in html.split('\n') {
@@ -204,7 +288,7 @@ const INDENT: u32 = 360;
 /// Writes `blocks` indented by `indent` twips.
 fn rtf_blocks(out: &mut String, blocks: &[Block], indent: u32) {
     for block in blocks {
-        match &*for_slack(block) {
+        match block {
             Block::Paragraph(spans) => {
                 for line in lines(spans) {
                     write!(out, "\\pard\\li{indent} ").unwrap();
@@ -212,7 +296,7 @@ fn rtf_blocks(out: &mut String, blocks: &[Block], indent: u32) {
                     out.push_str("\\par\n");
                 }
             }
-            Block::Heading { .. } => unreachable!("slack::fallback replaces headings"),
+            Block::Heading { .. } => unreachable!("slack::posted replaces headings"),
             Block::List(list) => rtf_list(out, list, indent),
             Block::Quote(blocks) => rtf_blocks(out, blocks, indent + INDENT),
             Block::Alert { kind, blocks } => {
@@ -227,7 +311,7 @@ fn rtf_blocks(out: &mut String, blocks: &[Block], indent: u32) {
                     out.push_str("}\\par\n");
                 }
             }
-            Block::Table(_) => unreachable!("slack::fallback replaces tables"),
+            Block::Table(_) => unreachable!("slack::posted replaces tables"),
             Block::Rule => {
                 writeln!(
                     out,

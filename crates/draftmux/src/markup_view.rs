@@ -59,9 +59,11 @@ pub struct MarkupStyle {
     pub table_stripe: Hsla,
     pub checkbox_checked: Hsla,
     pub alert_colors: AlertColors,
-    /// Replace blocks Slack can't show with what it receives instead
-    /// ([`markup::slack::fallback`]), each under a note in these colors.
-    pub slack_fallbacks: Option<NoteColors>,
+    /// Render what Slack posts instead of the document as written
+    /// ([`markup::slack::posted`]).
+    pub slack_fallbacks: bool,
+    /// Colors of the note above each replaced block; `None` hides notes.
+    pub notes: Option<NoteColors>,
 }
 
 #[derive(Clone, Copy)]
@@ -136,7 +138,8 @@ impl MarkupStyle {
                 warning: c(0x9a6700ff, 0xd29922ff),
                 caution: c(0xd1242fff, 0xf85149ff),
             },
-            slack_fallbacks: None,
+            slack_fallbacks: false,
+            notes: None,
         }
     }
 
@@ -188,7 +191,8 @@ impl MarkupStyle {
                 warning: border_color,
                 caution: border_color,
             },
-            slack_fallbacks: Some(NoteColors {
+            slack_fallbacks: true,
+            notes: Some(NoteColors {
                 background: c(0xfff8e6ff, 0xffd60a14),
                 border: c(0xf4e2b0ff, 0xffd60a33),
                 text: c(0x7a5a00ff, 0xe6c35cff),
@@ -228,7 +232,16 @@ pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> 
         .text_size(style.text_size)
         .line_height(relative(style.line_height))
         .text_color(style.text_color)
-        .children(renderer.blocks(&doc.blocks, style.block_gap))
+        .children(if style.slack_fallbacks {
+            let posted = markup::slack::posted(doc);
+            let notes = style.notes;
+            renderer.noted_blocks(
+                posted.iter().map(|(block, note)| (block, note.zip(notes))),
+                style.block_gap,
+            )
+        } else {
+            renderer.blocks(&doc.blocks, style.block_gap)
+        })
         .into_any_element()
 }
 
@@ -267,18 +280,20 @@ impl Renderer<'_> {
 
     /// Renders sibling blocks, separated by `gap` (wider above headings).
     fn blocks(&mut self, blocks: &[Block], gap: Pixels) -> Vec<AnyElement> {
+        self.noted_blocks(blocks.iter().map(|block| (block, None)), gap)
+    }
+
+    /// Renders sibling blocks like [`Self::blocks`], each with an optional
+    /// conversion note above it.
+    fn noted_blocks<'b>(
+        &mut self,
+        blocks: impl IntoIterator<Item = (&'b Block, Option<(&'static str, NoteColors)>)>,
+        gap: Pixels,
+    ) -> Vec<AnyElement> {
         blocks
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(ix, block)| {
-                let fallback = self.style.slack_fallbacks.and_then(|colors| {
-                    markup::slack::fallback(block)
-                        .map(|(replacement, note)| (replacement, note, colors))
-                });
-                let (block, note) = match &fallback {
-                    Some((replacement, note, colors)) => (replacement, Some((*note, *colors))),
-                    None => (block, None),
-                };
+            .map(|(ix, (block, note))| {
                 let gap = match block {
                     _ if ix == 0 => px(0.),
                     Block::Heading { .. } => self.style.heading_gap,

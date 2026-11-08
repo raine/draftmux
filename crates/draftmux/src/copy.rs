@@ -40,16 +40,38 @@ pub fn copy(target: Target, text: &str, cx: &mut App) -> &'static str {
     }
 }
 
-/// Writes `mrkdwn` as HTML, which Slack's composer reads, RTF for native
-/// apps, and the mrkdwn itself as plain text. gpui's clipboard only writes
-/// plain text, so this goes to AppKit directly.
+/// Writes `mrkdwn` to the general pasteboard as Slack's composer should
+/// receive it. gpui's clipboard only writes plain text, so this goes to
+/// AppKit directly.
 fn write_slack(mrkdwn: &str) {
-    let doc = markup::slack::parse(mrkdwn);
-    let html = NSString::from_str(&markup::rich::html(&doc));
-    let rtf = NSData::with_bytes(markup::rich::rtf(&doc).as_bytes());
-    let plain = NSString::from_str(mrkdwn);
-    let pasteboard = NSPasteboard::generalPasteboard();
+    write_flavours(
+        &NSPasteboard::generalPasteboard(),
+        &slack_flavours(&markup::slack::parse(mrkdwn)),
+    );
+}
+
+/// The pasteboard contents for a Slack message: HTML, which Slack's composer
+/// reads, RTF for native apps, and the visible text for pasting without
+/// formatting.
+struct Flavours {
+    html: String,
+    rtf: String,
+    plain: String,
+}
+
+fn slack_flavours(doc: &markup::Document) -> Flavours {
+    Flavours {
+        html: markup::rich::html(doc),
+        rtf: markup::rich::rtf(doc),
+        plain: markup::rich::plain(doc),
+    }
+}
+
+fn write_flavours(pasteboard: &NSPasteboard, flavours: &Flavours) {
     pasteboard.clearContents();
+    let html = NSString::from_str(&flavours.html);
+    let rtf = NSData::with_bytes(flavours.rtf.as_bytes());
+    let plain = NSString::from_str(&flavours.plain);
     // SAFETY: AppKit's pasteboard type constants are immutable statics.
     unsafe {
         pasteboard.setString_forType(&html, NSPasteboardTypeHTML);
@@ -102,4 +124,38 @@ pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl 
                 .text_color(palette.on_accent_muted)
                 .child("⌘⇧C"),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_app_kit::{
+        NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypeString,
+    };
+    use objc2_foundation::NSString;
+
+    use super::{slack_flavours, write_flavours};
+
+    #[test]
+    fn slack_flavours_round_trip() {
+        // A private named pasteboard, so the test never touches the user's.
+        let name = NSString::from_str(&format!("draftmux.test.{}", std::process::id()));
+        let pasteboard = NSPasteboard::pasteboardWithName(&name);
+        let doc = markup::slack::parse("*Hi* `code` :tada:\n- one\n- two\n");
+        let flavours = slack_flavours(&doc);
+        write_flavours(&pasteboard, &flavours);
+        // SAFETY: AppKit's pasteboard type constants are immutable statics.
+        let (html, rtf, plain) = unsafe {
+            (
+                pasteboard.stringForType(NSPasteboardTypeHTML),
+                pasteboard.dataForType(NSPasteboardTypeRTF),
+                pasteboard.stringForType(NSPasteboardTypeString),
+            )
+        };
+        // SAFETY: `releaseGlobally` takes no arguments and returns nothing.
+        let () = unsafe { objc2::msg_send![&*pasteboard, releaseGlobally] };
+        assert_eq!(html.unwrap().to_string(), flavours.html);
+        assert_eq!(rtf.unwrap().to_vec(), flavours.rtf.into_bytes());
+        assert_eq!(plain.unwrap().to_string(), flavours.plain);
+        assert_eq!(flavours.plain, "Hi code 🎉\n• one\n• two");
+    }
 }

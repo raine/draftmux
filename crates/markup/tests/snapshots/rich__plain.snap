@@ -1,0 +1,20 @@
+---
+source: crates/markup/tests/rich.rs
+expression: "rich::plain(&slack::parse(MESSAGE)).replace('\\u{feff}', \"␣\")"
+---
+Hi team, quick old code bold link
+second  line
+
+• one
+• two
+    1. nested
+␣3. three
+quoted
+more
+let a = b < c;
+  indented {}
+Heading
+a |  b
+␣--+---
+␣1 | 22
+Ünïcode — 🎉 \path

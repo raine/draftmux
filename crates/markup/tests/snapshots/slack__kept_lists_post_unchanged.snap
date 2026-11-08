@@ -1,0 +1,19 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "posted(\"- one\\n    - nested\\n1. first\\n2. second\\n\")"
+---
+list bullet tight
+  item
+    paragraph
+      "one"
+    list bullet tight
+      item
+        paragraph
+          "nested"
+list ordered start=1 tight
+  item
+    paragraph
+      "first"
+  item
+    paragraph
+      "second"

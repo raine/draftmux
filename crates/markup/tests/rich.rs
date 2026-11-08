@@ -27,8 +27,14 @@ fn rtf() {
 }
 
 #[test]
+fn plain() {
+    insta::assert_snapshot!(rich::plain(&slack::parse(MESSAGE)).replace('\u{feff}', "␣"));
+}
+
+#[test]
 fn empty_message() {
     let doc = slack::parse("");
     assert_eq!(rich::html(&doc), "<meta charset=\"utf-8\">");
     assert!(rich::rtf(&doc).ends_with("}\n}"));
+    assert_eq!(rich::plain(&doc), "");
 }

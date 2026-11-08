@@ -1,0 +1,16 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "posted(\"1. one\\n2. two\\n\\n- bullet\\n\\n3. three\\n\")"
+---
+note "Slack numbered lists always start at 1, so this pastes as text lines."
+paragraph
+  "1. one\n2. two"
+paragraph
+list bullet tight
+  item
+    paragraph
+      "bullet"
+paragraph
+note "Slack numbered lists always start at 1, so this pastes as text lines."
+paragraph
+  "3. three"

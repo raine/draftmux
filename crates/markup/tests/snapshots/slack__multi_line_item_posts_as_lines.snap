@@ -1,0 +1,9 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "posted(\"- wraps\\n  onto a second line\\n    - nested *bold*\\n- plain\\n\")"
+---
+note "Slack can't keep a list item on several lines, so this pastes as text lines."
+paragraph
+  "• wraps\nonto a second line\n    • nested "
+  "bold" strong
+  "\n• plain"

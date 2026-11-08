@@ -9,7 +9,7 @@ expression: "rich::rtf(&slack::parse(MESSAGE))"
 \pard\li360\fi-360\tx360 \u8226?\tab {one}\par
 \pard\li360\fi-360\tx360 \u8226?\tab {two}\par
 \pard\li720\fi-360\tx720 1.\tab {nested}\par
-\pard\li360\fi-360\tx360 3.\tab {three}\par
+\pard\li0 {3. three}\par
 \pard\li360 {quoted}\par
 \pard\li360 {more}\par
 \pard\li0 {\f1 let a = b < c;}\par

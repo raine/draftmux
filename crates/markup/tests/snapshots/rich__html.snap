@@ -5,7 +5,8 @@ expression: "rich::html(&slack::parse(MESSAGE)).replace(\"</p>\", \"</p>\\n\")"
 <meta charset="utf-8"><p>Hi <b>team</b>, <i>quick</i> <s>old</s> <code>code</code> <b>bold </b><a href="https://a.example?x=1&amp;y=2"><b>link</b></a></p>
 <p>second &nbsp;line</p>
 <p><br></p>
-<ul><li>one</li><li>two<ol><li>nested</li></ol></li></ul><ol start="3"><li>three</li></ol><blockquote><p>quoted</p>
+<ul><li>one</li><li>two<ol><li>nested</li></ol></li></ul><p>3. three</p>
+<blockquote><p>quoted</p>
 <p>more</p>
 </blockquote><pre>let a = b &lt; c;
   indented {}</pre><p><b>Heading</b></p>
