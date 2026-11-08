@@ -53,6 +53,7 @@ fn main() {
 
     gpui_platform::application().run(move |cx: &mut App| {
         shell_env::init(cx);
+        editor::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus([Menu::new("Draftmux").items([MenuItem::action("Quit Draftmux", Quit)])]);
@@ -78,7 +79,9 @@ fn main() {
             ..Default::default()
         };
         let window = cx
-            .open_window(options, |_, cx| cx.new(|_| chrome::Chrome::default()))
+            .open_window(options, |window, cx| {
+                cx.new(|cx| chrome::Chrome::new(window, cx))
+            })
             .expect("failed to open the main window");
         server.serve(window, cx);
         cx.activate(true);

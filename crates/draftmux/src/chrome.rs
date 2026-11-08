@@ -6,9 +6,10 @@
 //! sidebar column paints a translucent tint and the content panes are opaque.
 
 use draftmux_storage::Draft;
+use editor::Editor;
 use gpui::{
-    Context, FontWeight, MouseButton, Pixels, Point, Rgba, SharedString, Window, WindowControlArea,
-    div, point, prelude::*, px, rgb, rgba,
+    Context, Entity, Focusable, FontWeight, MouseButton, Pixels, Point, Rgba, SharedString, Window,
+    WindowControlArea, div, point, prelude::*, px, rgb, rgba,
 };
 
 const TOOLBAR_HEIGHT: Pixels = px(52.);
@@ -26,13 +27,17 @@ const FAINT: u32 = 0x3c3c4373;
 const PANE_BG: u32 = 0xffffff;
 const CHAT_BG: u32 = 0xfbfbfc;
 
-#[derive(Default)]
+/// Placeholder draft until drafts are loaded from storage.
+const SAMPLE_DRAFT: &str = "# Draft\n\nWrite the message here. Markdown such as **bold**, *emphasis*, \
+`code` and [links](https://github.com) is highlighted.\n";
+
 pub struct Chrome {
     /// Set on toolbar mouse-down; the first mouse-move then hands the drag to
     /// the window server, so a plain click never starts a move.
     should_move: bool,
     /// The draft shown in the window, set by `draftmux open`.
     draft: Option<Draft>,
+    editor: Entity<Editor>,
 }
 
 impl Render for Chrome {
@@ -57,7 +62,7 @@ impl Render for Chrome {
                                 .child("Drafts"),
                         ),
                     )
-                    .child(pane(rgb(PANE_BG)).flex_1())
+                    .child(pane(rgb(PANE_BG)).flex_1().child(self.editor.clone()))
                     .child(
                         pane(rgb(PANE_BG)).flex_1().border_l_1().child(
                             div()
@@ -76,6 +81,16 @@ impl Render for Chrome {
 }
 
 impl Chrome {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let editor = cx.new(|cx| Editor::new(SAMPLE_DRAFT, cx));
+        window.focus(&editor.focus_handle(cx), cx);
+        Self {
+            should_move: false,
+            draft: None,
+            editor,
+        }
+    }
+
     pub fn focus_draft(&mut self, draft: Draft, cx: &mut Context<Self>) {
         eprintln!("draftmux: focused draft {}", draft.id);
         self.draft = Some(draft);
