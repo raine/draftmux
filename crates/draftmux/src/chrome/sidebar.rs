@@ -160,12 +160,19 @@ impl Chrome {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.sidebar_scroll)
-                            .px(px(8.))
-                            .pb(px(12.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(1.))
-                            .children(rows),
+                            // Padding goes on an inner column: gpui sizes an
+                            // empty scroll container's content to the
+                            // container and adds its padding, which would
+                            // make an empty list scrollable.
+                            .child(
+                                div()
+                                    .px(px(8.))
+                                    .pb(px(12.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(1.))
+                                    .children(rows),
+                            ),
                     )
                     .child(scrollbar(Source::Handle(self.sidebar_scroll.clone()), bar)),
             )
