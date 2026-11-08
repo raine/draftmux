@@ -78,28 +78,63 @@ impl Store {
     /// Creates `<id>/` with an empty `draft.md` and `session/`, then writes
     /// `meta.json` last so a scan never lists a half-created draft.
     pub fn create(&self, new: NewDraft) -> Result<Draft> {
+        self.create_draft(new, |_| Ok(None))
+    }
+
+    /// Like [`Store::create`], but `session` creates the draft's pi session
+    /// file before `meta.json` is written, and returns its path for
+    /// `pi_session_file`. If it fails, the draft directory is removed.
+    pub fn create_with_session(
+        &self,
+        new: NewDraft,
+        session: impl FnOnce(&Draft) -> Result<PathBuf>,
+    ) -> Result<Draft> {
+        self.create_draft(new, |draft| session(draft).map(Some))
+    }
+
+    fn create_draft(
+        &self,
+        new: NewDraft,
+        session: impl FnOnce(&Draft) -> Result<Option<PathBuf>>,
+    ) -> Result<Draft> {
         let id = uuid::Uuid::now_v7().to_string();
         let dir = self.root.join(&id);
-        let session = dir.join(SESSION_DIR);
-        std::fs::create_dir_all(&session)
-            .with_context(|| format!("creating {}", session.display()))?;
-        atomic::write(&dir.join(DRAFT_FILE), b"")?;
-
+        let session_dir = dir.join(SESSION_DIR);
+        std::fs::create_dir_all(&session_dir)
+            .with_context(|| format!("creating {}", session_dir.display()))?;
         let now = Utc::now();
-        let meta = Meta {
-            target: new.target,
-            status: Status::Active,
-            title: new.title,
-            source: new.source,
-            cwd: new.cwd,
-            pi_session_file: None,
-            pi_agent_dir: new.pi_agent_dir,
-            note: new.note,
-            created_at: now,
-            updated_at: now,
+        let mut draft = Draft {
+            id,
+            dir,
+            meta: Meta {
+                target: new.target,
+                status: Status::Active,
+                title: new.title,
+                source: new.source,
+                cwd: new.cwd,
+                pi_session_file: None,
+                pi_agent_dir: new.pi_agent_dir,
+                note: new.note,
+                created_at: now,
+                updated_at: now,
+            },
         };
-        write_meta(&dir, &meta)?;
-        Ok(Draft { id, dir, meta })
+        let result = atomic::write(&draft.draft_path(), b"")
+            .and_then(|()| session(&draft))
+            .and_then(|file| {
+                draft.meta.pi_session_file = file;
+                write_meta(&draft.dir, &draft.meta)
+            });
+        if let Err(err) = result {
+            if let Err(remove) = std::fs::remove_dir_all(&draft.dir) {
+                eprintln!(
+                    "draftmux: couldn't remove the unfinished draft {}: {remove}",
+                    draft.dir.display()
+                );
+            }
+            return Err(err);
+        }
+        Ok(draft)
     }
 
     pub fn load(&self, id: &str) -> Result<Draft> {
@@ -271,6 +306,35 @@ mod tests {
         let loaded = store.load(&draft.id).unwrap();
         assert_eq!(loaded.meta, draft.meta);
         assert_eq!(loaded.dir, draft.dir);
+    }
+
+    #[test]
+    fn create_with_session_records_the_file_before_meta() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = store
+            .create_with_session(new_draft("a"), |draft| {
+                assert!(draft.draft_path().is_file());
+                assert!(!draft.dir.join(META_FILE).exists());
+                let file = draft.session_dir().join("s.jsonl");
+                std::fs::write(&file, "")?;
+                Ok(file)
+            })
+            .unwrap();
+        let file = draft.session_dir().join("s.jsonl");
+        assert_eq!(draft.meta.pi_session_file.as_ref(), Some(&file));
+        assert_eq!(store.load(&draft.id).unwrap().meta, draft.meta);
+    }
+
+    #[test]
+    fn failed_session_step_leaves_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let err = store
+            .create_with_session(new_draft("a"), |_| bail!("fork failed"))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "fork failed");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]

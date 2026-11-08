@@ -1,17 +1,24 @@
 //! `draftmux open`: hands a session off to a new draft.
 //!
-//! Creates the draft directory itself, converting a Claude Code transcript
-//! into the draft's pi session, then asks the app (launching it if needed) to
-//! focus the draft. The draft exists even if the app can't be reached.
+//! Creates the draft directory itself with the draft's pi session, forked
+//! from a pi source or converted from a Claude Code transcript, then asks the
+//! app (launching it if needed) to focus the draft. The draft exists even if
+//! the app can't be reached.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
 use claude_convert::ModelSelection;
+use draftmux_pi_rpc::{ForkSpec, ModelOverride};
 use draftmux_storage::{Draft, NewDraft, Source, SourceKind, Store, Target};
 
-use crate::{ipc, source};
+use crate::{ipc, resources, source};
+
+/// How long pi gets to start and fork the source session.
+const FORK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Create a draft from a pi or Claude Code session, focus it in the app and
 /// print its ID.
@@ -39,7 +46,12 @@ enum TargetArg {
 
 /// Runs the command and returns the process exit code.
 pub fn main(args: Args) -> i32 {
-    let draft = match Store::default_root().and_then(|root| create(&args, &Store::new(root))) {
+    // pi runs with the environment of the agent shell that called `open`,
+    // which has the PATH and API keys the source session used.
+    let pi = || Command::new("pi");
+    let created =
+        Store::default_root().and_then(|root| create(&args, &Store::new(root), &pi, None));
+    let draft = match created {
         Ok(draft) => draft,
         Err(err) => {
             eprintln!("draftmux: {err:#}");
@@ -62,7 +74,15 @@ pub fn main(args: Args) -> i32 {
     }
 }
 
-fn create(args: &Args, store: &Store) -> Result<Draft> {
+/// `pi` builds the base pi command. `model` overrides the model the draft
+/// starts on; without one a pi source continues on its own model and a Claude
+/// Code source on the profile's default.
+fn create(
+    args: &Args,
+    store: &Store,
+    pi: &dyn Fn() -> Command,
+    model: Option<ModelOverride>,
+) -> Result<Draft> {
     // `show --source` matches this path exactly and normalizes its argument
     // the same way.
     let path = std::path::absolute(&args.session_file)
@@ -71,45 +91,83 @@ fn create(args: &Args, store: &Store) -> Result<Draft> {
     let home = std::env::home_dir().context("no home directory")?;
     let pi_agent_dir =
         source::resolve_profile(args.pi_agent_dir.as_deref(), &path, info.kind, &home)?;
-    // Converted before the draft exists, so a transcript that can't be
-    // converted creates nothing. pi sources are forked by the app instead.
-    let session = match info.kind {
-        SourceKind::Claude => Some(convert_claude(&path, &info.cwd, &pi_agent_dir)?),
-        SourceKind::Pi => None,
+    let target = match args.target {
+        TargetArg::Github => Target::Github,
+        TargetArg::Slack => Target::Slack,
     };
-    let mut draft = store.create(NewDraft {
-        target: match args.target {
-            TargetArg::Github => Target::Github,
-            TargetArg::Slack => Target::Slack,
-        },
+    let new = |path, cwd, pi_agent_dir| NewDraft {
+        target,
         title: String::new(),
         source: Source {
             kind: info.kind,
             path,
         },
-        cwd: info.cwd,
+        cwd,
         pi_agent_dir,
         note: args.note.clone(),
-    })?;
-    if let Some(session) = session {
-        let file = session.write_into(&draft.session_dir())?;
-        draft.meta = store.update_meta(&draft.id, |meta| meta.pi_session_file = Some(file))?;
+    };
+    match info.kind {
+        SourceKind::Pi => {
+            if !info.cwd.is_dir() {
+                bail!(
+                    "{} was started in {}, which no longer exists",
+                    path.display(),
+                    info.cwd.display()
+                );
+            }
+            let extension = resources::pi_extension()?;
+            store.create_with_session(new(path, info.cwd, pi_agent_dir), |draft| {
+                let meta = &draft.meta;
+                let spec = ForkSpec {
+                    source: meta.source.path.clone(),
+                    session_dir: draft.session_dir(),
+                    extension,
+                    cwd: meta.cwd.clone(),
+                    agent_dir: meta.pi_agent_dir.clone(),
+                    draft_path: draft.draft_path(),
+                    target: meta.target,
+                    model,
+                    timeout: FORK_TIMEOUT,
+                };
+                draftmux_pi_rpc::fork(pi(), &spec)
+                    .map_err(|err| anyhow!("forking {}: {err}", meta.source.path.display()))
+            })
+        }
+        // Converted before the draft exists, so a transcript that can't be
+        // converted creates nothing.
+        SourceKind::Claude => {
+            let session = convert_claude(&path, &info.cwd, &pi_agent_dir, model)?;
+            store.create_with_session(new(path, info.cwd, pi_agent_dir), |draft| {
+                session.write_into(&draft.session_dir())
+            })
+        }
     }
-    Ok(draft)
 }
 
-/// The session continues on the profile's default model. A `settings.json`
-/// that doesn't parse is reported and skipped, as pi does, leaving the model
-/// to pi.
+/// The session continues on `model`, else the profile's default model. A
+/// `settings.json` that doesn't parse is reported and skipped, as pi does,
+/// leaving the model to pi.
 fn convert_claude(
     transcript: &Path,
     cwd: &Path,
     pi_agent_dir: &Path,
+    model: Option<ModelOverride>,
 ) -> Result<claude_convert::Session> {
-    let model = ModelSelection::profile_default(pi_agent_dir).unwrap_or_else(|err| {
-        eprintln!("draftmux: ignoring the profile's default model: {err:#}");
-        ModelSelection::default()
-    });
+    let model = match model {
+        Some(model) => ModelSelection {
+            model: Some(claude_convert::Model {
+                provider: model.provider,
+                id: model.model_id,
+            }),
+            thinking_level: serde_json::to_value(model.thinking)?
+                .as_str()
+                .map(str::to_owned),
+        },
+        None => ModelSelection::profile_default(pi_agent_dir).unwrap_or_else(|err| {
+            eprintln!("draftmux: ignoring the profile's default model: {err:#}");
+            ModelSelection::default()
+        }),
+    };
     let file = std::fs::File::open(transcript)
         .with_context(|| format!("opening {}", transcript.display()))?;
     claude_convert::convert(std::io::BufReader::new(file), cwd, &model)
@@ -121,7 +179,11 @@ mod tests {
     use std::fs;
 
     use std::process::Stdio;
-    use std::time::{Duration, Instant};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use draftmux_pi_rpc::{Agent, LaunchSpec, State, ThinkingLevel};
+    use futures::executor::block_on;
 
     use clap::Parser;
     use serde_json::{Value, json};
@@ -140,32 +202,132 @@ mod tests {
             .args
     }
 
-    #[test]
-    fn records_source_profile_target_and_note() {
-        let tmp = tempfile::tempdir().unwrap();
-        let profile = tmp.path().join("agent");
+    /// A stand-in for `pi --mode rpc --fork`: records its arguments, creates
+    /// a session file in `--session-dir` and answers `get_state` with it.
+    const FAKE_PI: &str = r#"
+printf '%s\n' "$@" > "$FAKE_PI_ARGS"
+while [ $# -gt 0 ]; do [ "$1" = --session-dir ] && dir=$2; shift; done
+file="$dir/fork.jsonl"
+: > "$file"
+read -r line
+id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionFile":"%s","sessionId":"s","messageCount":0,"pendingMessageCount":0}}\n' "$id" "$file"
+cat > /dev/null
+"#;
+
+    fn fake_pi(args_file: &Path) -> impl Fn() -> Command + use<> {
+        let args_file = args_file.to_owned();
+        move || {
+            let mut command = Command::new("sh");
+            command
+                .args(["-c", FAKE_PI, "fake-pi"])
+                .env("FAKE_PI_ARGS", &args_file);
+            command
+        }
+    }
+
+    fn no_pi() -> Command {
+        panic!("pi isn't needed")
+    }
+
+    /// A v3 pi session in `<profile>/sessions/`, started in `cwd`.
+    fn pi_session(profile: &Path, cwd: &Path) -> PathBuf {
         let sessions = profile.join("sessions/--repo--");
         fs::create_dir_all(&sessions).unwrap();
         let session = sessions.join("s.jsonl");
-        fs::write(
-            &session,
-            r#"{"type":"session","version":3,"id":"x","timestamp":"t","cwd":"/repo"}"#,
-        )
-        .unwrap();
+        let header = json!({"type":"session","version":3,"id":"x","timestamp":"t","cwd":cwd});
+        fs::write(&session, header.to_string() + "\n").unwrap();
+        session
+    }
+
+    #[test]
+    fn pi_source_is_forked_into_the_draft_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("agent");
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let session = pi_session(&profile, &cwd);
         let store = Store::new(tmp.path().join("drafts"));
+        let args_file = tmp.path().join("args");
 
         let session_arg = session.to_str().unwrap();
         let args = parse(&[session_arg, "--target", "slack", "--note", "release notes"]);
-        let draft = create(&args, &store).unwrap();
+        let draft = create(&args, &store, &fake_pi(&args_file), None).unwrap();
 
         let meta = store.load(&draft.id).unwrap().meta;
         assert_eq!(meta.source.kind, SourceKind::Pi);
         assert_eq!(meta.source.path, session);
-        assert_eq!(meta.cwd, Path::new("/repo"));
+        assert_eq!(meta.cwd, cwd);
         assert_eq!(meta.pi_agent_dir, profile);
         assert_eq!(meta.target, Target::Slack);
         assert_eq!(meta.note.as_deref(), Some("release notes"));
-        assert_eq!(meta.pi_session_file, None);
+        assert_eq!(
+            meta.pi_session_file,
+            Some(draft.session_dir().join("fork.jsonl"))
+        );
+
+        let recorded = fs::read_to_string(&args_file).unwrap();
+        let recorded: Vec<&str> = recorded.lines().collect();
+        let session_dir = draft.session_dir();
+        let extension = resources::pi_extension().unwrap();
+        assert_eq!(
+            recorded,
+            [
+                "--mode",
+                "rpc",
+                "--fork",
+                session_arg,
+                "--session-dir",
+                session_dir.to_str().unwrap(),
+                "-e",
+                extension.to_str().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_fork_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let session = pi_session(&tmp.path().join("agent"), &cwd);
+        let store = Store::new(tmp.path().join("drafts"));
+        let pi = || {
+            let mut command = Command::new("sh");
+            command.args(["-c", "echo 'Error: no such model' >&2; exit 1"]);
+            command
+        };
+
+        let err = create(&parse(&[session.to_str().unwrap()]), &store, &pi, None).unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("forking"), "{err}");
+        assert!(err.contains("Error: no such model"), "{err}");
+        assert!(store.scan().unwrap().drafts.is_empty());
+        assert_eq!(fs::read_dir(tmp.path().join("drafts")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn pi_source_whose_cwd_is_gone_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session = pi_session(&tmp.path().join("agent"), &tmp.path().join("deleted"));
+        let store = Store::new(tmp.path().join("drafts"));
+
+        let err = create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).unwrap_err();
+        assert!(err.to_string().contains("no longer exists"), "{err}");
+        assert!(store.scan().unwrap().drafts.is_empty());
+    }
+
+    #[test]
+    fn pre_v3_pi_source_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session = tmp.path().join("s.jsonl");
+        let header = json!({"type":"session","version":2,"cwd":tmp.path()});
+        fs::write(&session, header.to_string()).unwrap();
+        let store = Store::new(tmp.path().join("drafts"));
+
+        let err = create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).unwrap_err();
+        assert!(err.to_string().contains("needs version 3"), "{err}");
+        assert!(store.scan().unwrap().drafts.is_empty());
     }
 
     #[test]
@@ -175,7 +337,7 @@ mod tests {
         fs::write(&session, "{}\n").unwrap();
         let store = Store::new(tmp.path().join("drafts"));
 
-        assert!(create(&parse(&[session.to_str().unwrap()]), &store).is_err());
+        assert!(create(&parse(&[session.to_str().unwrap()]), &store, &no_pi, None).is_err());
         assert!(store.scan().unwrap().drafts.is_empty());
     }
 
@@ -249,7 +411,7 @@ mod tests {
             "--pi-agent-dir",
             profile.to_str().unwrap(),
         ]);
-        let draft = create(&args, &store).unwrap();
+        let draft = create(&args, &store, &no_pi, None).unwrap();
         (store, draft)
     }
 
@@ -323,7 +485,7 @@ mod tests {
             "--pi-agent-dir",
             tmp.path().to_str().unwrap(),
         ]);
-        assert!(create(&args, &store).is_err());
+        assert!(create(&args, &store, &no_pi, None).is_err());
         assert!(store.scan().unwrap().drafts.is_empty());
     }
 
@@ -389,5 +551,190 @@ mod tests {
         assert_eq!(reply["message"]["role"], "assistant", "{reply}");
         assert_eq!(reply["message"]["provider"], tail["provider"]);
         assert_eq!(reply["message"]["model"], tail["modelId"]);
+    }
+
+    #[test]
+    fn model_override_replaces_the_claude_profile_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("agent");
+        fs::create_dir_all(&profile).unwrap();
+        fs::write(
+            profile.join("settings.json"),
+            r#"{"defaultProvider":"openai","defaultModel":"gpt-6"}"#,
+        )
+        .unwrap();
+        let cwd = tmp.path().join("project");
+        fs::create_dir_all(&cwd).unwrap();
+        let transcript = tmp.path().join("transcript.jsonl");
+        fs::write(&transcript, claude_transcript(&cwd)).unwrap();
+        let store = Store::new(tmp.path().join("drafts"));
+        let args = parse(&[
+            transcript.to_str().unwrap(),
+            "--pi-agent-dir",
+            profile.to_str().unwrap(),
+        ]);
+        let model = ModelOverride {
+            provider: "anthropic".into(),
+            model_id: "claude-opus-5-5".into(),
+            thinking: ThinkingLevel::High,
+        };
+        let draft = create(&args, &store, &no_pi, Some(model)).unwrap();
+
+        let entries = session_entries(&draft.meta.pi_session_file.unwrap());
+        let tail = &entries[entries.len() - 2..];
+        assert_eq!(tail[0]["provider"], "anthropic");
+        assert_eq!(tail[0]["modelId"], "claude-opus-5-5");
+        assert_eq!(tail[1]["thinkingLevel"], "high");
+    }
+
+    /// What a real pi started on `session_file` with `--session`, as the app
+    /// starts drafts, resolves for it.
+    fn real_pi_state(
+        env: &Arc<shell_env::ShellEnv>,
+        profile: &Path,
+        session_file: &Path,
+        cwd: &Path,
+    ) -> (State, Vec<draftmux_pi_rpc::Model>) {
+        let pi = env.pi().unwrap().to_owned();
+        let env = env.clone();
+        let spec = LaunchSpec {
+            command: Arc::new(move || env.command(&pi)),
+            session_file: session_file.to_owned(),
+            extension: resources::pi_extension().unwrap(),
+            cwd: cwd.to_owned(),
+            agent_dir: profile.to_owned(),
+            draft_path: cwd.join("draft.md"),
+            target: Target::Github,
+            instructions: None,
+        };
+        let (agent, _events) = Agent::new(spec, Duration::from_secs(60));
+        let state = block_on(agent.get_state()).expect("get_state");
+        let models = block_on(agent.get_available_models()).expect("get_available_models");
+        (state, models)
+    }
+
+    /// Real pi forks a pi session at handoff: the draft continues on the
+    /// source's model, an override sticks across restarts, and the source and
+    /// the profile's settings are left alone. Opt-in; calls no model. Run with
+    /// `cargo test -p draftmux -- --ignored real_pi`; `DRAFTMUX_SMOKE_PI_AGENT_DIR`
+    /// picks the profile (default `~/.pi/agent`), which needs two models with
+    /// credentials.
+    #[test]
+    #[ignore = "runs real pi against the user's profile"]
+    fn real_pi_forks_a_pi_session() {
+        let home = std::env::home_dir().unwrap();
+        let profile = std::env::var_os("DRAFTMUX_SMOKE_PI_AGENT_DIR")
+            .map_or_else(|| home.join(".pi/agent"), PathBuf::from);
+        let settings = fs::read(profile.join("settings.json")).ok();
+        let env = Arc::new(shell_env::ShellEnv::capture());
+        let tmp = tempfile::tempdir().unwrap();
+        // Resolved like pi's own cwd, which it records in session headers.
+        let cwd = tmp.path().canonicalize().unwrap().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+
+        // A model other than the one pi picks for a new session, so restoring
+        // the source's model can't pass by falling back to the default.
+        let (fresh, models) =
+            real_pi_state(&env, &profile, &tmp.path().join("probe/new.jsonl"), &cwd);
+        let default = fresh.model.expect("the profile has no default model");
+        let source_model = models
+            .iter()
+            .find(|m| m.provider == default.provider && m.id != default.id)
+            .or_else(|| models.iter().find(|m| m.id != default.id))
+            .expect("the profile needs a second model")
+            .clone();
+
+        let entry = |value: Value| value.to_string();
+        let source_lines = [
+            entry(
+                json!({"type":"session","version":3,"id":"src","timestamp":"2026-11-08T10:00:00.000Z","cwd":cwd}),
+            ),
+            entry(
+                json!({"type":"model_change","id":"e1","parentId":null,"timestamp":"2026-11-08T10:00:00.000Z",
+                         "provider":source_model.provider,"modelId":source_model.id}),
+            ),
+            entry(
+                json!({"type":"message","id":"e2","parentId":"e1","timestamp":"2026-11-08T10:00:01.000Z",
+                         "message":{"role":"user","content":[{"type":"text","text":"The codename is MARIGOLD-7."}],"timestamp":1}}),
+            ),
+            entry(
+                json!({"type":"message","id":"e3","parentId":"e2","timestamp":"2026-11-08T10:00:02.000Z",
+                         "message":{"role":"assistant","content":[{"type":"text","text":"Noted."}],
+                                    "api":source_model.api,"provider":source_model.provider,"model":source_model.id,
+                                    "usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,
+                                             "cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},
+                                    "stopReason":"stop","timestamp":2}}),
+            ),
+        ];
+        // Without a final newline, which pi adds to the source.
+        let original = source_lines.join("\n");
+        let source = tempfile::Builder::new()
+            .suffix(".jsonl")
+            .tempfile_in(tmp.path())
+            .unwrap()
+            .into_temp_path()
+            .keep()
+            .unwrap();
+        fs::write(&source, &original).unwrap();
+        let store = Store::new(tmp.path().join("drafts"));
+        let pi_path = env.pi().unwrap().to_owned();
+        let pi = || env.command(&pi_path);
+        let args = parse(&[
+            source.to_str().unwrap(),
+            "--pi-agent-dir",
+            profile.to_str().unwrap(),
+        ]);
+
+        let started = Instant::now();
+        let draft = create(&args, &store, &pi, None).unwrap();
+        eprintln!("fork took {} ms", started.elapsed().as_millis());
+        assert_eq!(fs::read_to_string(&source).unwrap(), original + "\n");
+        let file = draft.meta.pi_session_file.clone().unwrap();
+        assert_eq!(file.parent(), Some(draft.session_dir().as_path()));
+        let entries = session_entries(&file);
+        assert_eq!(entries[0]["version"], 3);
+        assert_eq!(entries[0]["cwd"], cwd.to_str().unwrap());
+        assert_eq!(entries[0]["parentSession"], source.to_str().unwrap());
+        assert_ne!(entries[0]["id"], "src");
+        let copied: Vec<Value> = source_lines[1..]
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(entries[1..=copied.len()], copied[..]);
+        let (state, _) = real_pi_state(&env, &profile, &file, &cwd);
+        let model = state.model.unwrap();
+        assert_eq!(
+            (model.provider, model.id),
+            (source_model.provider.clone(), source_model.id.clone())
+        );
+
+        // The override: back to the default model, on a thinking level the
+        // model supports.
+        let thinking = if default.reasoning {
+            ThinkingLevel::Low
+        } else {
+            ThinkingLevel::Off
+        };
+        let model = ModelOverride {
+            provider: default.provider.clone(),
+            model_id: default.id.clone(),
+            thinking,
+        };
+        let draft = create(&args, &store, &pi, Some(model)).unwrap();
+        let file = draft.meta.pi_session_file.unwrap();
+        let (state, _) = real_pi_state(&env, &profile, &file, &cwd);
+        let model = state.model.unwrap();
+        assert_eq!((model.provider, model.id), (default.provider, default.id));
+        assert_eq!(state.thinking_level, thinking);
+
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            source_lines.join("\n") + "\n"
+        );
+        assert_eq!(
+            fs::read(profile.join("settings.json")).ok(),
+            settings,
+            "pi's settings changed"
+        );
     }
 }

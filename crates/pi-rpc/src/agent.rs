@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
@@ -49,28 +49,54 @@ impl LaunchSpec {
             .arg("--mode")
             .arg("rpc")
             .arg("--session")
-            .arg(&self.session_file)
-            .arg("-e")
-            .arg(&self.extension)
-            .current_dir(&self.cwd)
-            .env("PI_CODING_AGENT_DIR", &self.agent_dir)
-            .env("DRAFTMUX_MODE", "draft")
-            .env("DRAFTMUX_DRAFT_PATH", &self.draft_path)
-            .env(
-                "DRAFTMUX_TARGET",
-                match self.target {
-                    Target::Github => "github",
-                    Target::Slack => "slack",
-                },
-            );
-        // The captured environment can carry values from a pi session the
-        // app was launched from.
-        match &self.instructions {
-            Some(instructions) => command.env("DRAFTMUX_INSTRUCTIONS", instructions),
-            None => command.env_remove("DRAFTMUX_INSTRUCTIONS"),
-        };
+            .arg(&self.session_file);
+        draft_process(
+            &mut command,
+            &DraftProcess {
+                extension: &self.extension,
+                cwd: &self.cwd,
+                agent_dir: &self.agent_dir,
+                draft_path: &self.draft_path,
+                target: self.target,
+                instructions: self.instructions.as_deref(),
+            },
+        );
         command
     }
+}
+
+/// What a pi process running in draft mode is told about its draft.
+pub(crate) struct DraftProcess<'a> {
+    pub extension: &'a Path,
+    pub cwd: &'a Path,
+    pub agent_dir: &'a Path,
+    pub draft_path: &'a Path,
+    pub target: Target,
+    pub instructions: Option<&'a str>,
+}
+
+/// Adds `-e <ext>`, the cwd, the profile and the extension's environment.
+pub(crate) fn draft_process(command: &mut Command, draft: &DraftProcess) {
+    command
+        .arg("-e")
+        .arg(draft.extension)
+        .current_dir(draft.cwd)
+        .env("PI_CODING_AGENT_DIR", draft.agent_dir)
+        .env("DRAFTMUX_MODE", "draft")
+        .env("DRAFTMUX_DRAFT_PATH", draft.draft_path)
+        .env(
+            "DRAFTMUX_TARGET",
+            match draft.target {
+                Target::Github => "github",
+                Target::Slack => "slack",
+            },
+        );
+    // The captured environment can carry values from a pi session the
+    // app was launched from.
+    match draft.instructions {
+        Some(instructions) => command.env("DRAFTMUX_INSTRUCTIONS", instructions),
+        None => command.env_remove("DRAFTMUX_INSTRUCTIONS"),
+    };
 }
 
 /// What the agent reports to the chat, in order, across process restarts.

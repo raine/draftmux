@@ -26,7 +26,6 @@ pub fn bundle(exe: &Path) -> Option<&Path> {
 }
 
 /// The pi extension passed with `-e` to every pi process the app starts.
-#[expect(dead_code)]
 pub fn pi_extension() -> Result<PathBuf> {
     pi_extension_for(&exe()?)
 }

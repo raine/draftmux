@@ -18,6 +18,10 @@ const TERM_GRACE: Duration = Duration::from_secs(2);
 /// process pi started can keep the pipes open.
 const DRAIN_GRACE: Duration = Duration::from_secs(1);
 const STDERR_TAIL: usize = 16 * 1024;
+/// The longest [`Connection::stop`] takes to end pi and drain its output.
+pub(crate) const STOP_TIMEOUT: Duration = EOF_GRACE
+    .saturating_add(TERM_GRACE)
+    .saturating_add(DRAIN_GRACE);
 
 pub(crate) enum Message {
     Line(Incoming),
