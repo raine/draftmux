@@ -7,8 +7,9 @@
 //! boundaries and never span a line, so `snake_case` and `2*3*4` stay
 //! literal. Blocks follow what Slack's
 //! composer shows: ```` ``` ```` code blocks (which may open and close
-//! mid-line), `>` quotes holding one paragraph, and `-`, `*`, `•` or `1.`
-//! lists nested by indentation.
+//! mid-line, with a language when a single word follows the opening fence
+//! on its own line, as in ```` ```diff ````), `>` quotes holding one
+//! paragraph, and `-`, `*`, `•` or `1.` lists nested by indentation.
 //!
 //! Slack text is newline-literal, so blank lines are kept: consecutive text
 //! lines, blank ones included, form one paragraph whose text holds every `\n`.
@@ -37,9 +38,10 @@ pub fn parse(mrkdwn: &str) -> Document {
 }
 
 /// The blocks Slack posts when `doc` is pasted into its composer as rich
-/// text, each with a short note on what changes for blocks Slack can't show:
-/// headings become a bold line, tables a code block, and lists Slack doesn't
-/// keep as lists become "•" or "N." text lines.
+/// text. Headings become a bold line, tables a code block, and lists Slack
+/// doesn't keep as lists become "•" or "N." text lines. Each replaced block
+/// except a heading, whose bold line shows the change, comes with a short
+/// note on what changes.
 ///
 /// Slack keeps a pasted list unless one of its items, nested ones included,
 /// spans more than one line, or it is numbered and any numbered list in the
@@ -66,10 +68,7 @@ pub fn posted(doc: &Document) -> Vec<(Block, Option<&'static str>)> {
                         ..span.clone()
                     })
                     .collect();
-                (
-                    Block::Paragraph(spans),
-                    Some("Slack has no headings, so this pastes as a bold line."),
-                )
+                (Block::Paragraph(spans), None)
             }
             Block::Table(table) => (
                 Block::Code {
@@ -319,10 +318,15 @@ impl<'a> Parser<'a> {
         }
         let body_start = self.pos + offset + 3;
         let body = &self.text[body_start..body_end];
-        let body = body.strip_prefix('\n').unwrap_or(body);
+        let (lang, body) = match body.split_once('\n') {
+            Some((word, rest)) if !word.is_empty() && !word.contains(char::is_whitespace) => {
+                (Some(decode(word)), rest)
+            }
+            _ => (None, body.strip_prefix('\n').unwrap_or(body)),
+        };
         let body = body.strip_suffix('\n').unwrap_or(body);
         self.push_block(Block::Code {
-            lang: None,
+            lang,
             text: decode(body),
         });
         // Text after the closing fence continues as its own line.
@@ -777,4 +781,101 @@ pub fn smart_quotes(text: &[char]) -> Vec<char> {
         });
     }
     out
+}
+
+/// How Slack shows a code block labelled `lang`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeLanguage {
+    /// A language Slack highlights, shown by its name, with line numbers.
+    Known(&'static str),
+    /// Plain text (`text`, `plaintext`, `txt`, `plain`): the label as
+    /// written, with line numbers.
+    Plain,
+    /// Anything else: the label as written, no line numbers, no colours.
+    Unknown,
+}
+
+pub fn code_language(lang: &str) -> CodeLanguage {
+    match crate::shiki::name(lang) {
+        Some(name) => CodeLanguage::Known(name),
+        None if matches!(lang, "text" | "plaintext" | "txt" | "plain") => CodeLanguage::Plain,
+        None => CodeLanguage::Unknown,
+    }
+}
+
+/// The colour classes of a diff line in Slack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffRole {
+    Deleted,
+    Inserted,
+    /// File names, git and command headers, and hunk ranges.
+    Header,
+    /// Punctuation such as `@@`, `---` and `!`.
+    Muted,
+}
+
+/// The coloured byte ranges of `line` in a ```` ```diff ```` block, as
+/// Slack's highlighter (shiki's TextMate diff grammar) colours them; the
+/// rest of the line is plain. Comments (`#`) take the deleted colours, as
+/// in Slack's theme.
+pub fn diff_line(line: &str) -> Vec<(std::ops::Range<usize>, DiffRole)> {
+    use DiffRole::*;
+    let len = line.len();
+    let is_range = |part: &str| {
+        part.split(',')
+            .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if matches!(
+        line,
+        "---"
+            | "***************"
+            | "==================================================================="
+    ) {
+        return vec![(0..len, Muted)];
+    }
+    // `5c5`, `12,14d11`: a normal diff's range.
+    if let Some(ix) = line.find(['a', 'c', 'd'])
+        && is_range(&line[..ix])
+        && is_range(&line[ix + 1..])
+    {
+        return vec![(0..len, Header)];
+    }
+    // `@@ -1,2 +1,2 @@ context`: what follows the closing `@@` is plain.
+    if line.starts_with("@@")
+        && let Some(end) = line
+            .get(3..)
+            .and_then(|rest| rest.find("@@"))
+            .map(|ix| ix + 3)
+    {
+        return vec![(0..2, Muted), (2..end, Header), (end..end + 2, Muted)];
+    }
+    // `--- 1,4 ----` and `*** 1,2 ****`: a context diff's range.
+    for (open, close) in [("--- ", " ----"), ("*** ", " ****")] {
+        if line.len() > open.len() + close.len() && line.starts_with(open) && line.ends_with(close)
+        {
+            return vec![(0..3, Muted), (3..len - 4, Header), (len - 4..len, Muted)];
+        }
+    }
+    if line.strip_prefix("diff ").is_some_and(|rest| {
+        rest.starts_with('-')
+            || !rest.starts_with(char::is_whitespace) && rest.split_whitespace().nth(1).is_some()
+    }) {
+        return vec![(0..len, Header)];
+    }
+    if line.len() > 4 && ["--- ", "*** ", "+++ "].iter().any(|p| line.starts_with(p)) {
+        return vec![(0..3, Muted), (3..len, Header)];
+    }
+    if line == ">" || line.starts_with("> ") || line.starts_with('+') {
+        return vec![(0..len, Inserted)];
+    }
+    if line.starts_with('!') {
+        return vec![(0..1, Muted)];
+    }
+    if line == "<" || line.starts_with("< ") || line.starts_with(['-', '#']) {
+        return vec![(0..len, Deleted)];
+    }
+    if line.starts_with("Index: ") && line.len() > 7 {
+        return vec![(5..6, Muted)];
+    }
+    Vec::new()
 }

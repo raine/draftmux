@@ -1,24 +1,29 @@
 //! Renders a [`markup::Document`] as GPUI elements.
 //!
 //! Rendering is a pure function of the document and a [`MarkupStyle`], so the
-//! preview pane and chat messages draw bodies the same way. Callers parse when
-//! the text changes and keep the document; they own scrolling, padding and
-//! backgrounds around the body.
+//! preview pane and chat messages draw bodies the same way; only the
+//! preview's footnotes ([`render_preview`]) keep state, for jumping between
+//! them. Callers parse when the text changes and keep the document; they own
+//! scrolling, padding and backgrounds around the body.
 
 use std::borrow::Cow;
+use std::time::Duration;
 
 use draftmux_storage::Target;
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, Hsla, Pixels, SharedString, div, prelude::*, px,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FontWeight, HighlightStyle, Hsla, Pixels,
+    Point, ScrollHandle, SharedString, StyledText, Task, Window, div, point, prelude::*, px,
     relative, rgba, svg,
 };
+use markup::slack::{CodeLanguage, DiffRole};
 use markup::{AlertKind, Alignment, Block, Document, List, Span, Table};
 
 use crate::assets::{
     ALERT_CAUTION_ICON, ALERT_IMPORTANT_ICON, ALERT_NOTE_ICON, ALERT_TIP_ICON, ALERT_WARNING_ICON,
-    LINK_ICON,
+    LINK_ICON, SLACK_COPY_ICON,
 };
 use crate::inline_text::{Chip, Icon, InlineText, Segment, is_emoji};
+use crate::theme::Palette;
 
 /// Visual parameters for one target platform.
 pub struct MarkupStyle {
@@ -72,6 +77,8 @@ pub struct MarkupStyle {
     pub code_border: Option<Hsla>,
     /// Wrap long code lines instead of scrolling them sideways.
     pub code_wraps: bool,
+    /// How code blocks with a language show; `None` shows them as others.
+    pub language_code: Option<LanguageCode>,
     pub radius: Pixels,
     pub quote_bar_width: Pixels,
     pub quote_bar_color: Hsla,
@@ -89,15 +96,22 @@ pub struct MarkupStyle {
     /// Render what Slack posts instead of the document as written
     /// ([`markup::slack::posted`]).
     pub slack_fallbacks: bool,
-    /// Colors of the note above each replaced block; `None` hides notes.
+    /// Colors of the footnotes [`render_preview`] puts on blocks Slack posts
+    /// differently; `None` hides them.
     pub notes: Option<NoteColors>,
 }
 
 #[derive(Clone, Copy)]
 pub struct NoteColors {
-    pub background: Hsla,
-    pub border: Hsla,
+    /// A footnote's number, on its block and in the list.
+    pub mark: Hsla,
+    /// Behind a hovered number and a block or note jumped to.
+    pub highlight: Hsla,
     pub text: Hsla,
+    /// The list's heading.
+    pub label: Hsla,
+    /// Above the list.
+    pub rule: Hsla,
 }
 
 #[derive(Clone, Copy)]
@@ -118,6 +132,47 @@ pub struct Bullet {
     /// line.
     pub top: Pixels,
     pub ring_width: Pixels,
+}
+
+/// Colors of Slack's code block for a fence with a language: a header with
+/// the language and a copy button, line numbers, and diff colors.
+pub struct LanguageCode {
+    pub background: Hsla,
+    pub border: Hsla,
+    pub label: Hsla,
+    pub icon: Hsla,
+    pub line_number: Hsla,
+    pub text: Hsla,
+    /// Text in a language Slack doesn't know, which it leaves unhighlighted.
+    pub unknown_text: Hsla,
+    /// Text and background of deleted and inserted diff lines, and of file
+    /// names and hunk ranges.
+    pub deleted: (Hsla, Hsla),
+    pub inserted: (Hsla, Hsla),
+    pub header: (Hsla, Hsla),
+    /// Diff punctuation such as `@@` and `---`.
+    pub muted: Hsla,
+}
+
+impl LanguageCode {
+    fn highlight(&self, role: DiffRole) -> HighlightStyle {
+        let (color, background) = match role {
+            DiffRole::Deleted => self.deleted,
+            DiffRole::Inserted => self.inserted,
+            DiffRole::Header => self.header,
+            DiffRole::Muted => {
+                return HighlightStyle {
+                    color: Some(self.muted),
+                    ..Default::default()
+                };
+            }
+        };
+        HighlightStyle {
+            color: Some(color),
+            background_color: Some(background),
+            ..Default::default()
+        }
+    }
 }
 
 /// A run drawn in a box of its own, such as inline code.
@@ -206,6 +261,7 @@ impl MarkupStyle {
             code_padding: px(16.),
             code_border: None,
             code_wraps: false,
+            language_code: None,
             radius: px(6.),
             quote_bar_width: px(3.5),
             quote_bar_color: c(0xd1d9e0ff, 0x3d444dff),
@@ -241,6 +297,11 @@ impl MarkupStyle {
         let link_color = c(0x1264a3ff, 0x2ba5ceff);
         let code_background = c(0x1d1c1d0a, 0xe8e8e80a);
         let code_border = c(0x1d1c1d21, 0xe8e8e821);
+        let app = if dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
         let tag = |color: Hsla, background: Hsla, icon: Option<Icon>| InlineBox {
             scale: 1.,
             color: Some(color),
@@ -322,6 +383,19 @@ impl MarkupStyle {
             code_padding: px(8.),
             code_border: Some(code_border),
             code_wraps: true,
+            language_code: Some(LanguageCode {
+                background: c(0xf8f8f8ff, 0x212428ff),
+                border: c(0x1d1c1d0f, 0xf8f8f80f),
+                label: c(0x7c7a7fff, 0x797c81ff),
+                icon: c(0x454447ff, 0xb9babdff),
+                line_number: c(0x454447ff, 0xb9babdff),
+                text: c(0x1d1c1dff, 0xf8f8f8ff),
+                unknown_text: text_color,
+                deleted: (c(0xad2e12ff, 0xdf847cff), c(0xffd6d5ff, 0x5a1005ff)),
+                inserted: (c(0x137700ff, 0x81bc69ff), c(0xd7f5c8ff, 0x123111ff)),
+                header: (c(0x2840a9ff, 0x899bdcff), c(0xdce3faff, 0x0a165aff)),
+                muted: c(0x5e5d60ff, 0x9a9b9eff),
+            }),
             radius: px(4.),
             quote_bar_width: px(4.),
             quote_bar_color: c(0xddddddff, 0xb9babdff),
@@ -341,10 +415,14 @@ impl MarkupStyle {
                 caution: border_color,
             },
             slack_fallbacks: true,
+            // The app's own text colors, as the footnotes aren't part of
+            // the message.
             notes: Some(NoteColors {
-                background: c(0xfff8e6ff, 0xffd60a14),
-                border: c(0xf4e2b0ff, 0xffd60a33),
-                text: c(0x7a5a00ff, 0xe6c35cff),
+                mark: c(0xc58a00ff, 0xe6b84aff),
+                highlight: c(0xf5be2824, 0xe6b84a24),
+                text: app.muted,
+                label: app.faint,
+                rule: app.hairline,
             }),
         }
     }
@@ -370,14 +448,225 @@ pub fn init(cx: &mut App) {
 /// Renders `doc` at the width its parent gives it. `id` must be unique among
 /// bodies shown together, such as chat messages in one list.
 pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> AnyElement {
-    let mut renderer = Renderer {
-        style,
-        next_id: 0,
-        list_depth: 0,
-        heading_size: None,
+    let mut renderer = Renderer::new(style);
+    let blocks = if style.slack_fallbacks {
+        let posted = markup::slack::posted(doc);
+        renderer.decorated_blocks(
+            posted.iter().map(|(block, _)| block),
+            style.block_gap,
+            |_, block| block,
+        )
+    } else {
+        renderer.blocks(&doc.blocks, style.block_gap)
     };
-    div()
+    root(style).id(id).children(blocks).into_any_element()
+}
+
+/// Renders `doc` like [`render`], with a numbered footnote on each block
+/// Slack posts differently and the notes listed below the body. Clicking a
+/// number scrolls `scroll`, the handle of the container the body scrolls in,
+/// to its note and highlights it; clicking a note does the same for its block.
+pub fn render_preview(
+    doc: &Document,
+    style: &MarkupStyle,
+    id: impl Into<ElementId>,
+    scroll: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (Some(colors), true) = (style.notes, style.slack_fallbacks) else {
+        return render(doc, style, id);
+    };
+    let state = window.use_keyed_state("footnotes", cx, |_, _| Footnotes::default());
+    let flash = state.read(cx).flash;
+    let posted = markup::slack::posted(doc);
+    // The block index and text of each note, in footnote order.
+    let noted: Vec<(usize, &str)> = posted
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, (_, note))| note.map(|note| (ix, note)))
+        .collect();
+    let mut renderer = Renderer::new(style);
+    let blocks = renderer.decorated_blocks(
+        posted.iter().map(|(block, _)| block),
+        style.block_gap,
+        |ix, block| {
+            let Some(n) = noted.iter().position(|&(noted, _)| noted == ix) else {
+                return block;
+            };
+            let state = state.clone();
+            let scroll = scroll.clone();
+            div()
+                .relative()
+                .when(flash == Some(Flash::Block(ix)), |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top(px(-3.))
+                            .bottom(px(-3.))
+                            .left(px(-6.))
+                            .right(px(-6.))
+                            .rounded(px(6.))
+                            .bg(colors.highlight),
+                    )
+                })
+                .child(block)
+                .child(
+                    div()
+                        .id(("footnote-ref", n))
+                        .absolute()
+                        .top(px(1.))
+                        .right(px(-18.))
+                        .px(px(3.))
+                        .py(px(2.))
+                        .rounded(px(4.))
+                        .font_family(".SystemUIFont")
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .line_height(relative(1.))
+                        .text_color(colors.mark)
+                        .cursor_pointer()
+                        .hover(|this| this.bg(colors.highlight))
+                        .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Note(n), cx))
+                        .child(SharedString::from((n + 1).to_string())),
+                )
+                .into_any_element()
+        },
+    );
+    let notes = noted.iter().enumerate().map(|(n, &(ix, note))| {
+        let state = state.clone();
+        let scroll = scroll.clone();
+        div()
+            .flex()
+            .child(
+                div()
+                    .w(px(14.))
+                    .flex_none()
+                    .pt(px(1.))
+                    .text_right()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(colors.mark)
+                    .child(format!("{}.", n + 1)),
+            )
+            .child(
+                div()
+                    .id(("footnote", n))
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(4.))
+                    .py(px(1.))
+                    .rounded(px(4.))
+                    .when(flash == Some(Flash::Note(n)), |this| {
+                        this.bg(colors.highlight)
+                    })
+                    .cursor_pointer()
+                    .hover(|this| this.text_color(style.text_color))
+                    .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Block(ix), cx))
+                    .child(note),
+            )
+    });
+    let section = (!noted.is_empty()).then(|| {
+        div()
+            .mt(px(28.))
+            .pt(px(10.))
+            .border_t_1()
+            .border_color(colors.rule)
+            .font_family(".SystemUIFont")
+            .text_size(px(12.))
+            .line_height(relative(1.5))
+            .text_color(colors.text)
+            .child(
+                div()
+                    .mb(px(4.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(colors.label)
+                    .child("When pasted into Slack"),
+            )
+            .child(
+                div()
+                    .on_children_prepainted({
+                        let state = state.clone();
+                        move |bounds, _, cx| state.update(cx, |this, _| this.notes = bounds)
+                    })
+                    .children(notes),
+            )
+    });
+    root(style)
+        .on_children_prepainted(move |bounds, _, cx| {
+            state.update(cx, |this, _| this.blocks = bounds)
+        })
         .id(id)
+        .children(blocks)
+        .children(section)
+        .into_any_element()
+}
+
+/// How long a block or note jumped to stays highlighted.
+const FLASH: Duration = Duration::from_millis(1400);
+
+/// Where the preview's footnotes were last drawn, and what is highlighted.
+#[derive(Default)]
+struct Footnotes {
+    /// Window bounds of the body's children: the blocks, then the list.
+    blocks: Vec<Bounds<Pixels>>,
+    notes: Vec<Bounds<Pixels>>,
+    flash: Option<Flash>,
+    /// Clears `flash`; replacing it cancels the previous one.
+    unflash: Option<Task<()>>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Flash {
+    Block(usize),
+    /// The n-th note, from 0.
+    Note(usize),
+}
+
+/// Scrolls `target` into view and highlights it for a moment.
+fn jump(state: &Entity<Footnotes>, scroll: &ScrollHandle, target: Flash, cx: &mut App) {
+    state.update(cx, |this, cx| {
+        let bounds = match target {
+            Flash::Block(ix) => this.blocks.get(ix),
+            Flash::Note(n) => this.notes.get(n),
+        };
+        if let Some(bounds) = bounds {
+            scroll.set_offset(reveal(scroll.bounds(), *bounds, scroll.offset()));
+        }
+        this.flash = Some(target);
+        this.unflash = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FLASH).await;
+            this.update(cx, |this, cx| {
+                this.flash = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    });
+}
+
+/// The scroll offset that brings `target` into `viewport` with the least
+/// movement, aligning its top when it doesn't fit. Both are window bounds at
+/// `offset`.
+fn reveal(
+    viewport: Bounds<Pixels>,
+    target: Bounds<Pixels>,
+    offset: Point<Pixels>,
+) -> Point<Pixels> {
+    let shift = if target.top() < viewport.top() || target.size.height > viewport.size.height {
+        viewport.top() - target.top()
+    } else if target.bottom() > viewport.bottom() {
+        viewport.bottom() - target.bottom()
+    } else {
+        px(0.)
+    };
+    point(offset.x, offset.y + shift)
+}
+
+/// The body's container, in the style's text settings.
+fn root(style: &MarkupStyle) -> Div {
+    div()
         .w_full()
         .min_w_0()
         .flex()
@@ -386,17 +675,6 @@ pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> 
         .text_size(style.text_size)
         .line_height(relative(style.line_height))
         .text_color(style.text_color)
-        .children(if style.slack_fallbacks {
-            let posted = markup::slack::posted(doc);
-            let notes = style.notes;
-            renderer.noted_blocks(
-                posted.iter().map(|(block, note)| (block, note.zip(notes))),
-                style.block_gap,
-            )
-        } else {
-            renderer.blocks(&doc.blocks, style.block_gap)
-        })
-        .into_any_element()
 }
 
 /// Parses `text` for previewing it on `target`. With [`style`], the one
@@ -428,7 +706,16 @@ struct Renderer<'a> {
     heading_size: Option<Pixels>,
 }
 
-impl Renderer<'_> {
+impl<'a> Renderer<'a> {
+    fn new(style: &'a MarkupStyle) -> Self {
+        Self {
+            style,
+            next_id: 0,
+            list_depth: 0,
+            heading_size: None,
+        }
+    }
+
     fn id(&mut self) -> ElementId {
         self.next_id += 1;
         ElementId::Integer(self.next_id)
@@ -436,35 +723,47 @@ impl Renderer<'_> {
 
     /// Renders sibling blocks, separated by `gap` (wider above headings).
     fn blocks(&mut self, blocks: &[Block], gap: Pixels) -> Vec<AnyElement> {
-        self.noted_blocks(blocks.iter().map(|block| (block, None)), gap)
+        self.decorated_blocks(blocks, gap, |_, block| block)
     }
 
-    /// Renders sibling blocks like [`Self::blocks`], each with an optional
-    /// conversion note above it.
-    fn noted_blocks<'b>(
+    /// Renders sibling blocks like [`Self::blocks`], passing each through
+    /// `decorate` with its index before it is spaced.
+    fn decorated_blocks<'b>(
         &mut self,
-        blocks: impl IntoIterator<Item = (&'b Block, Option<(&'static str, NoteColors)>)>,
+        blocks: impl IntoIterator<Item = &'b Block>,
         gap: Pixels,
+        mut decorate: impl FnMut(usize, AnyElement) -> AnyElement,
     ) -> Vec<AnyElement> {
+        // Slack posts a code block with a language as a block of its own, so
+        // its margin neither collapses into a neighbour's (code blocks and
+        // quotes have one) nor into the top of the message.
+        let separate = |block: &Block| {
+            self.style.language_code.is_some() && matches!(block, Block::Code { lang: Some(_), .. })
+        };
+        let margined = |block: &Block| matches!(block, Block::Code { .. } | Block::Quote(_));
         let mut after_text = false;
+        let mut prev: Option<&Block> = None;
         blocks
             .into_iter()
             .enumerate()
-            .map(|(ix, (block, note))| {
+            .map(|(ix, block)| {
                 let gap = match block {
+                    _ if ix == 0 && separate(block) => gap,
                     _ if ix == 0 => px(0.),
                     Block::Heading { .. } => self.style.heading_gap,
                     _ if after_text && is_text(block) => self.style.text_gap.min(gap),
+                    _ if prev.is_some_and(|prev| {
+                        separate(block) && margined(prev) || separate(prev) && margined(block)
+                    }) =>
+                    {
+                        gap * 2.
+                    }
                     _ => gap,
                 };
                 after_text = is_text(block);
-                div()
-                    .pt(gap)
-                    .when_some(note, |this, (note, colors)| {
-                        this.child(conversion_note(note, colors))
-                    })
-                    .child(self.block(block))
-                    .into_any_element()
+                prev = Some(block);
+                let block = self.block(block);
+                div().pt(gap).child(decorate(ix, block)).into_any_element()
             })
             .collect()
     }
@@ -539,6 +838,10 @@ impl Renderer<'_> {
                     .children(self.blocks(blocks, style.block_gap))
                     .into_any_element()
             }
+            Block::Code {
+                lang: Some(lang),
+                text,
+            } if style.language_code.is_some() => self.language_code(lang, text),
             Block::Code { text, .. } if style.code_wraps => self
                 .code_box()
                 .font_family(style.mono_family.clone())
@@ -574,6 +877,114 @@ impl Renderer<'_> {
                 .child(SharedString::from(html.clone()))
                 .into_any_element(),
         }
+    }
+
+    /// A code block with a language as Slack draws it: inset in the message,
+    /// a header with the language's name and a copy button, line numbers
+    /// unless Slack doesn't know the language, and diff colors. Lines never
+    /// wrap; the code scrolls sideways under fixed line numbers.
+    fn language_code(&mut self, lang: &str, text: &str) -> AnyElement {
+        let style = self.style;
+        let colors = style
+            .language_code
+            .as_ref()
+            .expect("only called with a language code style");
+        let language = markup::slack::code_language(lang);
+        let label = match language {
+            CodeLanguage::Known(name) => name,
+            CodeLanguage::Plain | CodeLanguage::Unknown => lang,
+        };
+        let lines: Vec<&str> = text.split('\n').collect();
+        // An 18px line whose text is 16px high, the height a run's
+        // background covers in Slack.
+        let line = || div().h(px(18.)).pt(px(1.)).line_height(px(16.));
+        let numbers = (language != CodeLanguage::Unknown).then(|| {
+            div()
+                .flex_none()
+                .w(px(35.))
+                .pr(px(10.))
+                .mr(px(10.))
+                .flex()
+                .flex_col()
+                .items_end()
+                .text_color(colors.line_number)
+                .children((1..=lines.len()).map(|n| line().child(n.to_string())))
+        });
+        let code = div()
+            .flex_none()
+            .pr(px(20.))
+            .text_color(if language == CodeLanguage::Unknown {
+                colors.unknown_text
+            } else {
+                colors.text
+            })
+            .children(lines.iter().map(|text| {
+                let highlights = if lang == "diff" {
+                    markup::slack::diff_line(text)
+                        .into_iter()
+                        .map(|(range, role)| (range, colors.highlight(role)))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                line().child(StyledText::new(text.to_string()).with_highlights(highlights))
+            }));
+        let header = div()
+            .h(px(40.))
+            .pl(px(12.))
+            .pr(px(4.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_size(px(13.))
+            .line_height(px(18.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(colors.label)
+            .child(SharedString::from(label.to_owned()))
+            .child(
+                div()
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        svg()
+                            .path(SLACK_COPY_ICON)
+                            .size(px(16.))
+                            .text_color(colors.icon),
+                    ),
+            );
+        div()
+            .px(px(8.))
+            .py(px(12.))
+            .child(
+                div()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.background)
+                    .child(header)
+                    .child(
+                        div()
+                            .flex()
+                            .pl(px(8.))
+                            .pb(px(16.))
+                            .font_family(style.mono_family.clone())
+                            .text_size(px(12.))
+                            .whitespace_nowrap()
+                            .children(numbers)
+                            .child(
+                                div()
+                                    .id(self.id())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_x_scroll()
+                                    .flex()
+                                    .child(code),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn code_box(&self) -> gpui::Div {
@@ -959,25 +1370,6 @@ fn bullet(bullet: &Bullet, kind: usize, color: Hsla) -> AnyElement {
     .into_any_element()
 }
 
-/// Says how a block changes on its way to the platform, above the
-/// replacement block.
-fn conversion_note(note: &'static str, colors: NoteColors) -> impl IntoElement {
-    div().flex().mb(px(4.)).child(
-        div()
-            .px(px(8.))
-            .py(px(3.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.background)
-            .text_color(colors.text)
-            .font_family(".SystemUIFont")
-            .text_size(px(12.))
-            .line_height(relative(1.4))
-            .child(note),
-    )
-}
-
 /// The marker for item `number` of an ordered list; numbers out of the
 /// numbering's range fall back to decimal.
 fn ordered_marker(number: u64, numbering: Numbering) -> String {
@@ -1033,7 +1425,33 @@ fn is_openable(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::Numbering::{Alpha, Decimal, Roman};
-    use super::{Run, is_openable, ordered_marker, runs, url_label};
+    use super::{Run, is_openable, ordered_marker, reveal, runs, url_label};
+    use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn reveals_with_least_scrolling() {
+        let viewport = Bounds::new(point(px(0.), px(100.)), size(px(300.), px(200.)));
+        let at =
+            |top: f32, height: f32| Bounds::new(point(px(10.), px(top)), size(px(50.), px(height)));
+        let offset = point(px(0.), px(-40.));
+        // Visible: stays put.
+        assert_eq!(reveal(viewport, at(150., 20.), offset), offset);
+        // Above: its top meets the viewport's.
+        assert_eq!(
+            reveal(viewport, at(60., 20.), offset),
+            point(px(0.), px(0.))
+        );
+        // Below: its bottom meets the viewport's.
+        assert_eq!(
+            reveal(viewport, at(310., 20.), offset),
+            point(px(0.), px(-70.))
+        );
+        // Taller than the viewport: its top meets the viewport's.
+        assert_eq!(
+            reveal(viewport, at(250., 400.), offset),
+            point(px(0.), px(-190.))
+        );
+    }
 
     #[test]
     fn numbers_ordered_items() {

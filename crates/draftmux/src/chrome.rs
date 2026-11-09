@@ -72,7 +72,7 @@ pub struct Chrome {
 }
 
 impl Render for Chrome {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *theme::palette(cx);
         let [sidebar_bar, editor_bar, preview_bar] = &self.scrollbars;
         let content = if self.drafts.current().is_some() {
@@ -97,7 +97,7 @@ impl Render for Chrome {
                             .flex_1()
                             .relative()
                             .border_l_1()
-                            .child(self.preview_body(cx))
+                            .child(self.preview_body(window, cx))
                             .child(scrollbar(
                                 Source::Handle(self.preview_scroll.clone()),
                                 preview_bar,
@@ -483,14 +483,21 @@ impl Chrome {
         self.show_toast(confirmation.to_owned(), None, cx);
     }
 
-    fn preview_body(&self, cx: &App) -> impl IntoElement {
+    fn preview_body(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = theme::get(cx);
         let target = self.drafts.current().map(|draft| draft.meta.target);
         let (body, background) = match (&self.preview, target) {
             (Some(doc), Some(target)) if !doc.blocks.is_empty() => {
                 let style = markup_view::style(target, theme.dark);
                 (
-                    markup_view::render(doc, &style, "preview-body"),
+                    markup_view::render_preview(
+                        doc,
+                        &style,
+                        "preview-body",
+                        &self.preview_scroll,
+                        window,
+                        cx,
+                    ),
                     Some(style.background),
                 )
             }

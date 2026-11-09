@@ -3,7 +3,6 @@ source: crates/markup/tests/fixtures.rs
 expression: fixtures! (@ render slack text)
 ---
 # posted
-note "Slack has no headings, so this pastes as a bold line."
 paragraph
   "Release notes" strong
 paragraph

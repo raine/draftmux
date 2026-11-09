@@ -1,8 +1,7 @@
 ---
 source: crates/markup/tests/slack.rs
-expression: "fallbacks(\"## Steps for _today_\\n\")"
+expression: "posted(\"## Steps for _today_\\n\")"
 ---
-note "Slack has no headings, so this pastes as a bold line."
 paragraph
   "Steps for " strong
   "today" strong+emph

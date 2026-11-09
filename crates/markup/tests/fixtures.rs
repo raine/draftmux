@@ -34,6 +34,7 @@ fixtures! {
     slack_blocks: slack "slack/blocks.md",
     slack_fallbacks: slack "slack/fallbacks.md",
     slack_lookalikes: slack "slack/lookalikes.md",
+    slack_code_languages: slack "slack/code-languages.md",
     github_headings: github "github/headings.md",
     github_lists: github "github/lists.md",
     github_tables: github "github/tables.md",

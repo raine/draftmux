@@ -1,0 +1,15 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"```diff\\n-old\\n+new\\n```\\n\\\n         ```Diff\\nkept as written\\n```\\n\\\n         ``` diff\\nspace after the fence\\n```\\n\\\n         ```diff -a\\nmore than a word\\n```\\n\\\n         ```diff```\\n\\\n         ```text\\n```\\n\\\n         before ```c++\\nx\\n``` after\\n\")"
+---
+code lang=Some("diff") "-old\n+new"
+code lang=Some("Diff") "kept as written"
+code lang=None " diff\nspace after the fence"
+code lang=None "diff -a\nmore than a word"
+code lang=None "diff"
+code lang=Some("text") ""
+paragraph
+  "before"
+code lang=Some("c++") "x"
+paragraph
+  " after"

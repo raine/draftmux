@@ -38,3 +38,17 @@ fn empty_message() {
     assert!(rich::rtf(&doc).ends_with("}\n}"));
     assert_eq!(rich::plain(&doc), "");
 }
+
+#[test]
+fn code_language() {
+    let html = rich::html(&slack::parse(
+        "```diff\n-a\n```\n```a\"><b>\nx\n```\n```\ny\n```",
+    ));
+    assert_eq!(
+        html,
+        "<meta charset=\"utf-8\">\
+         <pre data-stringify-type=\"pre\" data-stringify-language=\"diff\">-a</pre>\
+         <pre data-stringify-type=\"pre\" data-stringify-language=\"a&quot;&gt;&lt;b&gt;\">x</pre>\
+         <pre>y</pre>"
+    );
+}

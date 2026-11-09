@@ -3,9 +3,10 @@
 //!
 //! Each fixture is drawn by [`markup_view::render`] in an offscreen window,
 //! light and dark, at a fixed content width on the platform's background,
-//! and read back with gpui's `Window::render_to_image`. Slack's conversion
-//! notes are left out, since Slack never shows them. Built only with the
-//! `capture` feature, which needs gpui's test support.
+//! and read back with gpui's `Window::render_to_image`. It leaves out the
+//! preview's footnotes on what Slack posts differently, since Slack never
+//! shows them. Built only with the `capture` feature, which needs gpui's test
+//! support.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -103,8 +104,7 @@ async fn capture_all(
     for (name, text) in fixtures {
         for dark in [false, true] {
             let doc = markup_view::preview(target, text);
-            let mut style = markup_view::style(target, dark);
-            style.notes = None;
+            let style = markup_view::style(target, dark);
             let window = cx.update(|cx| {
                 cx.open_window(
                     WindowOptions {

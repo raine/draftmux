@@ -78,6 +78,19 @@ fn code_blocks() {
 }
 
 #[test]
+fn code_block_languages() {
+    insta::assert_snapshot!(snapshot(
+        "```diff\n-old\n+new\n```\n\
+         ```Diff\nkept as written\n```\n\
+         ``` diff\nspace after the fence\n```\n\
+         ```diff -a\nmore than a word\n```\n\
+         ```diff```\n\
+         ```text\n```\n\
+         before ```c++\nx\n``` after\n"
+    ));
+}
+
+#[test]
 fn unclosed_fence_is_text() {
     insta::assert_snapshot!(snapshot("```\nnever closed *bold*\n"));
 }
@@ -178,4 +191,105 @@ fn smart_quotes() {
     assert_eq!(curl("say 'hi' and \"bye\""), "say ‘hi’ and “bye”");
     assert_eq!(curl("the '90s"), "the ’90s");
     assert_eq!(curl("5' tall"), "5′ tall");
+}
+
+#[test]
+fn code_language_names() {
+    use slack::CodeLanguage::*;
+    // Labels measured in Slack.
+    for (lang, expected) in [
+        ("diff", Known("Diff")),
+        ("rs", Known("Rust")),
+        ("rust", Known("Rust")),
+        ("sh", Known("Shell")),
+        ("bash", Known("Shell")),
+        ("zsh", Known("Shell")),
+        ("console", Known("Shell Session")),
+        ("c++", Known("C++")),
+        ("c#", Known("C#")),
+        ("yml", Known("YAML")),
+        ("proto", Known("Protocol Buffer 3")),
+        ("log", Known("Log file")),
+        ("properties", Known("INI")),
+        ("hcl", Known("HashiCorp HCL")),
+        ("text", Plain),
+        ("plaintext", Plain),
+        ("txt", Plain),
+        ("plain", Plain),
+        ("foobar", Unknown),
+        ("DIFF", Unknown),
+        ("Rust", Unknown),
+        ("patch", Unknown),
+        ("gitignore", Unknown),
+    ] {
+        assert_eq!(slack::code_language(lang), expected, "{lang}");
+    }
+}
+
+#[test]
+fn diff_line_colours() {
+    use slack::DiffRole::*;
+    // Each line as Slack colours it: `[role:text]` runs, the rest plain.
+    let show = |line: &str| {
+        let mut out = String::new();
+        let mut pos = 0;
+        for (range, role) in slack::diff_line(line) {
+            out.push_str(&line[pos..range.start]);
+            let role = match role {
+                Deleted => "del",
+                Inserted => "ins",
+                Header => "hdr",
+                Muted => "mut",
+            };
+            out.push_str(&format!("[{role}:{}]", &line[range.clone()]));
+            pos = range.end;
+        }
+        out + &line[pos..]
+    };
+    for (line, expected) in [
+        (
+            "diff --git a/src/x.rs b/src/x.rs",
+            "[hdr:diff --git a/src/x.rs b/src/x.rs]",
+        ),
+        ("diff -u a b", "[hdr:diff -u a b]"),
+        (
+            "index 83db48f..bf269f4 100644",
+            "index 83db48f..bf269f4 100644",
+        ),
+        ("--- a/src/x.rs", "[mut:---][hdr: a/src/x.rs]"),
+        ("+++ b/src/x.rs", "[mut:+++][hdr: b/src/x.rs]"),
+        ("*** a/x.rs", "[mut:***][hdr: a/x.rs]"),
+        (
+            "@@ -10,7 +10,8 @@ fn main() {",
+            "[mut:@@][hdr: -10,7 +10,8 ][mut:@@] fn main() {",
+        ),
+        ("@@ broken", "@@ broken"),
+        ("--- 1,4 ----", "[mut:---][hdr: 1,4 ][mut:----]"),
+        ("*** 1,2 ****", "[mut:***][hdr: 1,2 ][mut:****]"),
+        ("5c5", "[hdr:5c5]"),
+        ("12,14d11", "[hdr:12,14d11]"),
+        ("-removed", "[del:-removed]"),
+        ("-- ", "[del:-- ]"),
+        ("< quoted del", "[del:< quoted del]"),
+        ("# comment line", "[del:# comment line]"),
+        ("+added", "[ins:+added]"),
+        ("+", "[ins:+]"),
+        ("+++", "[ins:+++]"),
+        ("> quoted add", "[ins:> quoted add]"),
+        ("! changed", "[mut:!] changed"),
+        ("---", "[mut:---]"),
+        ("***************", "[mut:***************]"),
+        (&"=".repeat(67), &format!("[mut:{}]", "=".repeat(67))),
+        ("Index: src/x.rs", "Index[mut::] src/x.rs"),
+        (" context", " context"),
+        (" -", " -"),
+        ("Only in a: b", "Only in a: b"),
+        (
+            "\\ No newline at end of file",
+            "\\ No newline at end of file",
+        ),
+        ("", ""),
+    ] {
+        assert_eq!(show(line), expected, "{line:?}");
+    }
 }

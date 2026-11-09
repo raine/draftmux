@@ -1,0 +1,52 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render slack text)
+---
+# posted
+paragraph
+  "Proposed change to the design doc step:"
+code lang=Some("diff") "diff --git a/skills/design/SKILL.md b/skills/design/SKILL.md\n--- a/skills/design/SKILL.md\n+++ b/skills/design/SKILL.md\n@@ -12,3 +12,4 @@ ## Saving\n-Save it as `$WORKSPACE/designs/<slug>.md` and upload it with\n+Date the document with the day of its first version and save it as\n+`$WORKSPACE/designs/<date>-<slug>.md`. Upload it with\n the comment below.\n! changed\n\\ No newline at end of file"
+paragraph
+  "Run it with:"
+code lang=Some("sh") "cargo test -j 2 -p markup --test slack"
+code lang=Some("rs") "fn main() {\n    println!(\"a line long enough to scroll sideways in a Slack code block, past the edge of the message\");\n}"
+code lang=Some("text") "plain text keeps its line numbers"
+code lang=Some("foobar") "an unknown language has no line numbers"
+code lang=None "no language: the old code block"
+
+# html
+<meta charset="utf-8"><p>Proposed change to the design doc step:</p>
+<pre data-stringify-type="pre" data-stringify-language="diff">diff --git a/skills/design/SKILL.md b/skills/design/SKILL.md
+--- a/skills/design/SKILL.md
++++ b/skills/design/SKILL.md
+@@ -12,3 +12,4 @@ ## Saving
+-Save it as `$WORKSPACE/designs/&lt;slug&gt;.md` and upload it with
++Date the document with the day of its first version and save it as
++`$WORKSPACE/designs/&lt;date&gt;-&lt;slug&gt;.md`. Upload it with
+ the comment below.
+! changed
+\ No newline at end of file</pre><p>Run it with:</p>
+<pre data-stringify-type="pre" data-stringify-language="sh">cargo test -j 2 -p markup --test slack</pre><pre data-stringify-type="pre" data-stringify-language="rs">fn main() {
+    println!(&quot;a line long enough to scroll sideways in a Slack code block, past the edge of the message&quot;);
+}</pre><pre data-stringify-type="pre" data-stringify-language="text">plain text keeps its line numbers</pre><pre data-stringify-type="pre" data-stringify-language="foobar">an unknown language has no line numbers</pre><pre>no language: the old code block</pre>
+
+# plain
+Proposed change to the design doc step:
+diff --git a/skills/design/SKILL.md b/skills/design/SKILL.md
+␣--- a/skills/design/SKILL.md
++++ b/skills/design/SKILL.md
+@@ -12,3 +12,4 @@ ## Saving
+␣-Save it as `␣$WORKSPACE/designs/<slug>.md`␣ and upload it with
++Date the document with the day of its first version and save it as
++`␣$WORKSPACE/designs/<date>-<slug>.md`␣. Upload it with
+ the comment below.
+! changed
+\ No newline at end of file
+Run it with:
+cargo test -j 2 -p markup --test slack
+fn main() {
+    println!("a line long enough to scroll sideways in a Slack code block, past the edge of the message");
+}
+plain text keeps its line numbers
+an unknown language has no line numbers
+no language: the old code block

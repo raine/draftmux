@@ -158,8 +158,17 @@ fn html_blocks(out: &mut String, blocks: &[Block]) {
                 html_blocks(out, blocks);
                 out.push_str("</blockquote>");
             }
-            Block::Code { text, .. } => {
-                out.push_str("<pre>");
+            Block::Code { lang, text } => {
+                // Slack's own copy format; it keeps the language only with
+                // both attributes.
+                match lang {
+                    Some(lang) => {
+                        out.push_str("<pre data-stringify-type=\"pre\" data-stringify-language=\"");
+                        html_escape(out, lang);
+                        out.push_str("\">");
+                    }
+                    None => out.push_str("<pre>"),
+                }
                 html_escape(out, text);
                 out.push_str("</pre>");
             }

@@ -9,6 +9,7 @@ mod emoji;
 pub mod github;
 pub mod plain;
 pub mod rich;
+mod shiki;
 pub mod slack;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,7 +32,8 @@ pub enum Block {
         blocks: Vec<Block>,
     },
     Code {
-        /// First word of the fence info string, if any.
+        /// First word of the fence info string, if any; in Slack, the word
+        /// alone on the opening fence's line, as written.
         lang: Option<String>,
         /// The code without a trailing newline.
         text: String,
