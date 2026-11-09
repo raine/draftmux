@@ -30,8 +30,8 @@ use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
     Focusable, FollowMode, FontWeight, HighlightStyle, Hsla, KeyBinding, ListAlignment, ListState,
-    StyledText, Task, Transformation, Window, actions, div, font, img, list, percentage,
-    prelude::*, px, relative, svg,
+    StyledText, Task, Transformation, Window, actions, div, font, list, percentage, prelude::*, px,
+    relative, svg,
 };
 use shell_env::ShellEnv;
 
@@ -884,18 +884,11 @@ impl Chat {
             .into_any_element()
     }
 
-    fn header(&self, palette: &Palette, cx: &App) -> impl IntoElement {
+    fn header(&self, palette: &Palette) -> impl IntoElement {
         let profile = self.session().and_then(|session| {
             let dir = &session.draft.meta.pi_agent_dir;
-            let catalog = ProfileCatalog::global(cx);
-            profile_label(
-                dir,
-                catalog
-                    .read(cx)
-                    .entry(dir)
-                    .map(|entry| entry.profile.name.as_str()),
-            )
-            .map(|label| (label, dir.display().to_string()))
+            profile_label(dir, std::env::home_dir().as_deref())
+                .map(|label| (label, dir.display().to_string()))
         });
         div()
             .h(px(32.))
@@ -908,20 +901,11 @@ impl Chat {
             .border_b_1()
             .border_color(palette.hairline)
             .child(
-                // The artwork occupies 469.43 units of its 800-unit viewBox.
-                // Keep its visible mark 14px wide without changing the asset.
-                div()
-                    .relative()
-                    .size(px(14.))
+                svg()
+                    .path(PI_ICON)
+                    .size(px(12.))
                     .flex_none()
-                    .overflow_hidden()
-                    .child(
-                        img(PI_ICON)
-                            .absolute()
-                            .size(px(14. * 800. / 469.43))
-                            .left(px(-14. * 165.29 / 469.43))
-                            .top(px(-14. * 165.29 / 469.43)),
-                    ),
+                    .text_color(palette.muted),
             )
             .child(
                 div()
@@ -936,9 +920,10 @@ impl Chat {
                     div()
                         .id("pi-profile")
                         .min_w_0()
-                        .ml(px(3.))
+                        .ml_auto()
                         .text_size(px(11.))
-                        .text_color(palette.faint)
+                        .line_height(px(16.))
+                        .text_color(palette.muted)
                         .text_ellipsis()
                         .tooltip(crate::tooltip::text(path))
                         .child(label),
@@ -1172,7 +1157,7 @@ impl Render for Chat {
             .size_full()
             .flex()
             .flex_col()
-            .child(self.header(&palette, cx))
+            .child(self.header(&palette))
             .child(log)
             .when(self.current.is_some(), |chat| chat.child(self.composer(cx)))
     }
@@ -1480,25 +1465,12 @@ fn first_draft_prompt(note: Option<&str>) -> String {
     text
 }
 
-/// Prefer the catalog's name, retaining a useful label for unlisted profiles.
-fn profile_label(dir: &std::path::Path, name: Option<&str>) -> Option<String> {
-    if dir.as_os_str().is_empty() {
+/// Show custom agent directories; the standard Pi directory needs no label.
+fn profile_label(dir: &std::path::Path, home: Option<&std::path::Path>) -> Option<String> {
+    if dir.as_os_str().is_empty() || home.is_some_and(|home| dir == home.join(".pi/agent")) {
         return None;
     }
-    if let Some(name) = name.filter(|name| !name.is_empty()) {
-        return Some(name.to_owned());
-    }
-    let named = if dir.file_name().is_some_and(|name| name == "agent") {
-        dir.parent().unwrap_or(dir)
-    } else {
-        dir
-    };
-    Some(
-        named
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| dir.display().to_string()),
-    )
+    Some(crate::drafts::tilde(dir, home))
 }
 
 #[cfg(test)]
@@ -1508,20 +1480,25 @@ mod tests {
     #[test]
     fn header_profile_uses_only_the_drafts_directory() {
         use std::path::Path;
+        let home = Some(Path::new("/home/user"));
         assert_eq!(
-            profile_label(Path::new("/home/user/.pi-work/agent"), Some("work")),
-            Some("work".into())
+            profile_label(Path::new("/home/user/.pi-work/agent"), home),
+            Some("~/.pi-work/agent".into())
+        );
+        assert_eq!(profile_label(Path::new("/home/user/.pi/agent"), home), None);
+        assert_eq!(
+            profile_label(Path::new("/other/.pi/agent"), home),
+            Some("/other/.pi/agent".into())
         );
         assert_eq!(
-            profile_label(Path::new("/custom/work/agent"), None),
-            Some("work".into())
+            profile_label(Path::new("/custom/work/agent"), home),
+            Some("/custom/work/agent".into())
         );
         assert_eq!(
-            profile_label(Path::new("/custom/profile"), None),
-            Some("profile".into())
+            profile_label(Path::new("/home/user/.pi/agent"), None),
+            Some("/home/user/.pi/agent".into())
         );
-        assert_eq!(profile_label(Path::new("/"), None), Some("/".into()));
-        assert_eq!(profile_label(Path::new(""), Some("default")), None);
+        assert_eq!(profile_label(Path::new(""), home), None);
     }
 
     #[test]
