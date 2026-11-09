@@ -5,8 +5,9 @@ use std::time::Duration;
 use chrono::Utc;
 use draftmux_storage::Target;
 use gpui::{
-    AnyElement, ClipboardItem, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels,
-    Point, SharedString, Task, anchored, deferred, div, img, prelude::*, px, svg,
+    AnyElement, App, ClipboardItem, Context, FontWeight, Hsla, KeyBinding, MouseButton,
+    MouseDownEvent, Pixels, Point, SharedString, Task, actions, anchored, deferred, div, img,
+    prelude::*, px, svg,
 };
 
 use super::{Chrome, shadow, sidebar_column};
@@ -17,6 +18,34 @@ use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme;
 
 const TOAST_DURATION: Duration = Duration::from_secs(4);
+const KEY_CONTEXT: &str = "DraftSidebar";
+
+actions!(sidebar, [PreviousDraft, NextDraft, ArchiveDraft]);
+
+pub(super) fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("up", PreviousDraft, Some(KEY_CONTEXT)),
+        KeyBinding::new("down", NextDraft, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            editor::secondary!("backspace"),
+            ArchiveDraft,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new("delete", ArchiveDraft, Some(KEY_CONTEXT)),
+    ]);
+}
+
+fn adjacent_row(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match current {
+        Some(index) if forward => index.saturating_add(1).min(len - 1),
+        Some(index) => index.saturating_sub(1).min(len - 1),
+        None if forward => 0,
+        None => len - 1,
+    })
+}
 
 pub(super) struct Toast {
     text: SharedString,
@@ -42,6 +71,44 @@ enum RowAction {
 }
 
 impl Chrome {
+    fn move_sidebar_selection(
+        &mut self,
+        forward: bool,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.drafts.rows();
+        let current = rows
+            .iter()
+            .position(|row| Some(row.draft.id.as_str()) == self.drafts.current_id());
+        if let Some(index) = adjacent_row(current, rows.len(), forward) {
+            let id = rows[index].draft.id.clone();
+            self.select(&id, window, cx).ok();
+            self.focus_sidebar(window, cx);
+        }
+    }
+
+    fn focus_sidebar(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        window.focus(&self.sidebar_focus, cx);
+        if let Some(index) = self
+            .drafts
+            .rows()
+            .iter()
+            .position(|row| Some(row.draft.id.as_str()) == self.drafts.current_id())
+        {
+            self.sidebar_scroll.scroll_to_item(index);
+        }
+        self.row_menu = None;
+        cx.notify();
+    }
+
+    fn archive_sidebar_selection(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.drafts.current_id().map(str::to_owned) {
+            self.archive(&id, window, cx);
+            self.focus_sidebar(window, cx);
+        }
+    }
+
     pub(super) fn sidebar(&self, bar: &ScrollbarState, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *theme::palette(cx);
         let now = Utc::now();
@@ -58,6 +125,7 @@ impl Chrome {
                 .id(group.clone())
                 .group(group.clone())
                 .relative()
+                .flex_none()
                 .flex()
                 .gap(px(8.))
                 .px(px(8.))
@@ -95,6 +163,7 @@ impl Chrome {
                     let id = id.clone();
                     move |this, _, window, cx| {
                         this.select(&id, window, cx).ok();
+                        this.focus_sidebar(window, cx);
                     }
                 }))
                 .child(
@@ -214,22 +283,30 @@ impl Chrome {
                     .child(
                         div()
                             .id("drafts")
+                            .key_context(KEY_CONTEXT)
+                            .track_focus(&self.sidebar_focus)
+                            .on_action(cx.listener(|this, _: &PreviousDraft, window, cx| {
+                                this.move_sidebar_selection(false, window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &NextDraft, window, cx| {
+                                this.move_sidebar_selection(true, window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &ArchiveDraft, window, cx| {
+                                this.archive_sidebar_selection(window, cx);
+                            }))
                             .size_full()
+                            .px(px(8.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.))
                             .overflow_y_scroll()
                             .track_scroll(&self.sidebar_scroll)
-                            // Padding goes on an inner column: gpui sizes an
-                            // empty scroll container's content to the
-                            // container and adds its padding, which would
-                            // make an empty list scrollable.
-                            .child(
-                                div()
-                                    .px(px(8.))
-                                    .pb(px(12.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(1.))
-                                    .children(rows),
-                            ),
+                            .children(rows)
+                            // A spacer avoids making an empty list scrollable
+                            // with vertical padding on the scroll container.
+                            .when(!self.drafts.rows().is_empty(), |list| {
+                                list.child(div().h(px(11.)).flex_none())
+                            }),
                     )
                     .child(scrollbar(Source::Handle(self.sidebar_scroll.clone()), bar)),
             )
@@ -261,27 +338,31 @@ impl Chrome {
         ];
         let this = cx.entity().downgrade();
         let id = menu.id.clone();
-        let panel = menu_panel(palette, &items, move |action, window, cx| {
-            this.update(cx, |this, cx| this.row_action(&id, action, window, cx))
-                .ok();
-        });
+        let dismiss = cx.entity().downgrade();
+        let closing_menu = menu.clone();
+        let panel = menu_panel(
+            palette,
+            &items,
+            move |action, window, cx| {
+                this.update(cx, |this, cx| this.row_action(&id, action, window, cx))
+                    .ok();
+            },
+            move |_, cx| {
+                dismiss
+                    .update(cx, |this, cx| {
+                        if this.row_menu.as_ref() == Some(&closing_menu) {
+                            this.row_menu = None;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            },
+        );
         Some(deferred(
             anchored()
                 .position(menu.position)
                 .snap_to_window_with_margin(px(8.))
-                .child(
-                    div()
-                        .occlude()
-                        // A right-click on another row replaces the menu
-                        // before this runs, so only close the menu it shows.
-                        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                            if this.row_menu.as_ref() == Some(&menu) {
-                                this.row_menu = None;
-                                cx.notify();
-                            }
-                        }))
-                        .child(panel),
-                ),
+                .child(panel),
         ))
     }
 
@@ -422,6 +503,29 @@ impl Chrome {
                         .child("Undo")
                 })),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjacent_row;
+
+    #[test]
+    fn sidebar_navigation_moves_without_wrapping() {
+        assert_eq!(adjacent_row(Some(1), 3, false), Some(0));
+        assert_eq!(adjacent_row(Some(1), 3, true), Some(2));
+        assert_eq!(adjacent_row(Some(0), 3, false), Some(0));
+        assert_eq!(adjacent_row(Some(2), 3, true), Some(2));
+        assert_eq!(adjacent_row(Some(0), 1, false), Some(0));
+        assert_eq!(adjacent_row(Some(0), 1, true), Some(0));
+    }
+
+    #[test]
+    fn sidebar_navigation_handles_empty_and_unselected_lists() {
+        assert_eq!(adjacent_row(None, 0, false), None);
+        assert_eq!(adjacent_row(None, 0, true), None);
+        assert_eq!(adjacent_row(None, 3, false), Some(2));
+        assert_eq!(adjacent_row(None, 3, true), Some(0));
     }
 }
 

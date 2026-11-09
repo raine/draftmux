@@ -15,9 +15,9 @@ use anyhow::Result;
 use draftmux_storage::{Store, Target};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    App, BoxShadow, Context, Entity, Focusable, FontWeight, Hsla, KeyBinding, MouseButton, Pixels,
-    Point, ScrollHandle, SharedString, Subscription, Task, Window, WindowControlArea, actions, div,
-    point, prelude::*, px, svg,
+    App, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyBinding,
+    MouseButton, Pixels, Point, ScrollHandle, SharedString, Subscription, Task, Window,
+    WindowControlArea, actions, div, point, prelude::*, px, svg,
 };
 use markup::Document;
 
@@ -43,6 +43,7 @@ pub const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(20.), px(19.));
 const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
+    sidebar::init(cx);
     cx.bind_keys([KeyBinding::new(
         editor::secondary!("alt-p"),
         TogglePreview,
@@ -69,6 +70,7 @@ pub struct Chrome {
     /// The sidebar row context menu, while it is open.
     row_menu: Option<sidebar::RowMenu>,
     sidebar_scroll: ScrollHandle,
+    sidebar_focus: FocusHandle,
     preview_scroll: ScrollHandle,
     scrollbars: [ScrollbarState; 3],
     /// Wakes up when the pending edit is due to be saved.
@@ -222,6 +224,7 @@ impl Chrome {
             toast: None,
             row_menu: None,
             sidebar_scroll: ScrollHandle::new(),
+            sidebar_focus: cx.focus_handle(),
             preview_scroll: ScrollHandle::new(),
             scrollbars: Default::default(),
             autosave: Task::ready(()),

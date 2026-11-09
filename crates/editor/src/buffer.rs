@@ -69,6 +69,8 @@ pub enum SelectionAfter {
     /// The existing selection, moved by the edit: offsets before it stay, offsets
     /// after it shift, and offsets inside it move to its start.
     Map,
+    /// An explicitly mapped selection, recorded for redo.
+    Exact(Selection),
 }
 
 #[derive(Debug)]
@@ -274,6 +276,7 @@ impl Buffer {
 
         self.selection = match selection_after {
             SelectionAfter::Collapse => Selection::caret(range.start + new.len()),
+            SelectionAfter::Exact(selection) => selection,
             SelectionAfter::Map => {
                 let map = |offset: usize| {
                     if offset < range.start {

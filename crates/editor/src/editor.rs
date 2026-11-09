@@ -27,6 +27,9 @@ actions!(
         DeleteToLineStart,
         DeleteToLineEnd,
         Newline,
+        Tab,
+        Indent,
+        Outdent,
         Left,
         Right,
         Up,
@@ -83,6 +86,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-k", DeleteToLineEnd, ctx),
         KeyBinding::new("enter", Newline, ctx),
         KeyBinding::new("shift-enter", Newline, ctx),
+        KeyBinding::new("tab", Tab, ctx),
+        KeyBinding::new("shift-tab", Outdent, ctx),
         KeyBinding::new("left", Left, ctx),
         KeyBinding::new("ctrl-b", Left, ctx),
         KeyBinding::new("right", Right, ctx),
@@ -117,6 +122,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-down", SelectDocumentEnd, ctx),
         KeyBinding::new("pageup", PageUp, ctx),
         KeyBinding::new("pagedown", PageDown, ctx),
+        KeyBinding::new("cmd-]", Indent, ctx),
+        KeyBinding::new("cmd-[", Outdent, ctx),
         KeyBinding::new("cmd-a", SelectAll, ctx),
         KeyBinding::new("cmd-c", Copy, ctx),
         KeyBinding::new("cmd-x", Cut, ctx),
@@ -130,6 +137,11 @@ fn bindings() -> Vec<KeyBinding> {
 
 #[cfg(target_os = "linux")]
 fn bindings() -> Vec<KeyBinding> {
+    linux_bindings()
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn linux_bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
     vec![
         KeyBinding::new("backspace", Backspace, ctx),
@@ -139,6 +151,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-delete", DeleteWordRight, ctx),
         KeyBinding::new("enter", Newline, ctx),
         KeyBinding::new("shift-enter", Newline, ctx),
+        KeyBinding::new("tab", Tab, ctx),
+        KeyBinding::new("shift-tab", Outdent, ctx),
         KeyBinding::new("left", Left, ctx),
         KeyBinding::new("right", Right, ctx),
         KeyBinding::new("up", Up, ctx),
@@ -161,6 +175,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-end", SelectDocumentEnd, ctx),
         KeyBinding::new("pageup", PageUp, ctx),
         KeyBinding::new("pagedown", PageDown, ctx),
+        KeyBinding::new("ctrl-]", Indent, ctx),
+        KeyBinding::new("ctrl-[", Outdent, ctx),
         KeyBinding::new("ctrl-a", SelectAll, ctx),
         KeyBinding::new("ctrl-c", Copy, ctx),
         KeyBinding::new("ctrl-x", Cut, ctx),
@@ -998,6 +1014,15 @@ impl Render for Editor {
             .on_action(cx.listener(|this, _: &Newline, window, cx| {
                 this.user_edit(window, cx, |b| b.insert("\n"));
             }))
+            .on_action(cx.listener(|this, _: &Tab, window, cx| {
+                this.user_edit(window, cx, Buffer::tab);
+            }))
+            .on_action(cx.listener(|this, _: &Indent, window, cx| {
+                this.user_edit(window, cx, Buffer::indent_lines);
+            }))
+            .on_action(cx.listener(|this, _: &Outdent, window, cx| {
+                this.user_edit(window, cx, Buffer::outdent_lines);
+            }))
             .on_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.user_edit(window, cx, |b| {
                     b.undo();
@@ -1106,13 +1131,13 @@ impl Render for Editor {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod keymap_tests {
     use super::*;
     use gpui::Action;
     #[test]
     fn linux_keys_are_unique_and_do_not_use_super() {
-        let bindings = bindings();
+        let bindings = linux_bindings();
         let mut keys = std::collections::HashSet::new();
         for binding in &bindings {
             let key = format!("{:?}", binding.keystrokes());

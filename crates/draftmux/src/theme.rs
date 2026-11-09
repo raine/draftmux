@@ -105,11 +105,17 @@ fn context_menu(items: Vec<ContextMenuItem>, _: &mut Window, cx: &mut App) -> An
         })
         .unzip();
     let actions = Rc::new(actions);
-    menu_panel(palette(cx), &items, move |ix, window, cx| {
-        if let Some(action) = &actions[ix] {
-            window.dispatch_action(action.boxed_clone(), cx);
-        }
-    })
+    menu_panel(
+        palette(cx),
+        &items,
+        move |ix, window, cx| {
+            window.dispatch_action(Box::new(editor::DismissMenu), cx);
+            if let Some(action) = &actions[ix] {
+                window.dispatch_action(action.boxed_clone(), cx);
+            }
+        },
+        |window, cx| window.dispatch_action(Box::new(editor::DismissMenu), cx),
+    )
     .into_any_element()
 }
 

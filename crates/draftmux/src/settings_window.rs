@@ -973,10 +973,24 @@ impl SettingsWindow {
             .filter(|(open, _)| *open == field)
             .map(|(_, items)| {
                 let this = cx.entity().downgrade();
-                menu_panel(c, items, move |choice, window, cx| {
-                    this.update(cx, |this, cx| this.choose(choice, window, cx))
-                        .ok();
-                })
+                let dismiss = this.clone();
+                menu_panel(
+                    c,
+                    items,
+                    move |choice, window, cx| {
+                        this.update(cx, |this, cx| this.choose(choice, window, cx))
+                            .ok();
+                    },
+                    move |_, cx| {
+                        dismiss
+                            .update(cx, |this, cx| {
+                                this.menu = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                )
+                .popup()
             });
         let picker = self
             .picker
@@ -993,21 +1007,7 @@ impl SettingsWindow {
                 width,
                 cx.listener(move |this, _, _, cx| this.open_menu(field, cx)),
             ))
-            .when_some(menu, |button, menu| {
-                button.child(deferred(
-                    anchored()
-                        .anchor(Anchor::TopLeft)
-                        .offset(point(px(0.), px(24.)))
-                        .child(
-                            div()
-                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                    this.menu = None;
-                                    cx.notify();
-                                }))
-                                .child(menu),
-                        ),
-                ))
-            })
+            .when_some(menu, |button, menu| button.child(deferred(menu)))
             .when_some(picker, |button, picker| {
                 button.child(deferred(
                     anchored()

@@ -157,7 +157,103 @@ pub fn drag_selection(
     }
 }
 
+// Four spaces also nest items beneath CommonMark ordered markers such as `1.`.
+const INDENT: &str = "    ";
+
+fn is_list_line(line: &str) -> bool {
+    let line = line.trim_start_matches([' ', '\t']);
+    let rest = if line.starts_with(['-', '*', '+']) {
+        &line[1..]
+    } else {
+        let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+        if !(1..=9).contains(&digits) || !line[digits..].starts_with('.') {
+            return false;
+        }
+        &line[digits + 1..]
+    };
+    rest.is_empty() || rest.starts_with([' ', '\t', '\n'])
+}
+
 impl Buffer {
+    pub fn tab(&mut self) {
+        let selection = self.selection();
+        let line = line_range(self.text(), selection.head);
+        if !selection.is_empty() || is_list_line(&self.text()[line]) {
+            self.indent_lines();
+        } else {
+            self.replace_range(selection.range(), INDENT);
+        }
+    }
+
+    pub fn indent_lines(&mut self) {
+        self.change_indentation(false);
+    }
+
+    pub fn outdent_lines(&mut self) {
+        self.change_indentation(true);
+    }
+
+    fn change_indentation(&mut self, outdent: bool) {
+        let selection = self.selection();
+        let range = selection.range();
+        let start = line_range(self.text(), range.start).start;
+        // A selection ending at a line start does not touch that line.
+        let last = if !range.is_empty() && self.text()[..range.end].ends_with('\n') {
+            range.end - 1
+        } else {
+            range.end
+        };
+        let end = line_range(self.text(), last).end;
+        let mut replacement = String::new();
+        let mut mapped = selection;
+        let mut offset = start;
+        loop {
+            let line_end = line_range(self.text(), offset).end.min(end);
+            let line = &self.text()[offset..line_end];
+            let removed = if outdent {
+                let mut columns = 0;
+                line.bytes()
+                    .take_while(|byte| {
+                        if columns >= INDENT.len() {
+                            return false;
+                        }
+                        match byte {
+                            b' ' => columns += 1,
+                            b'\t' => columns = INDENT.len(),
+                            _ => return false,
+                        }
+                        true
+                    })
+                    .count()
+            } else {
+                0
+            };
+            let added = if outdent { 0 } else { INDENT.len() };
+            for (original, mapped) in [
+                (selection.anchor, &mut mapped.anchor),
+                (selection.head, &mut mapped.head),
+            ] {
+                if original >= offset {
+                    *mapped = *mapped + added - removed.min(original - offset);
+                }
+            }
+            if !outdent {
+                replacement.push_str(INDENT);
+            }
+            replacement.push_str(&line[removed..]);
+            if line_end == end {
+                break;
+            }
+            offset = line_end;
+        }
+        self.edit(
+            start..end,
+            &replacement,
+            EditKind::Atomic,
+            SelectionAfter::Exact(mapped),
+        );
+    }
+
     fn move_head(&mut self, head: usize, affinity: Affinity, select: bool) {
         let anchor = if select {
             self.selection().anchor
@@ -390,6 +486,120 @@ mod tests {
 
     fn caret(b: &mut Buffer, offset: usize) {
         b.set_selection(Selection::caret(offset));
+    }
+
+    #[test]
+    fn tab_inserts_at_caret_or_indents_list_line() {
+        for text in ["hello", "-not a list", "1.not a list"] {
+            let mut b = Buffer::new(text);
+            caret(&mut b, 1);
+            b.tab();
+            assert_eq!(b.text(), format!("{}    {}", &text[..1], &text[1..]));
+            assert_eq!(b.selection(), Selection::caret(5));
+            b.undo();
+            assert_eq!(b.text(), text);
+            assert!(!b.can_undo());
+        }
+        for text in [
+            "- item",
+            "* item",
+            "+ item",
+            "1. item",
+            "12. item",
+            "  - [ ] task",
+            "-",
+        ] {
+            for offset in 0..=text.len() {
+                let mut b = Buffer::new(text);
+                caret(&mut b, offset);
+                b.tab();
+                assert_eq!(b.text(), format!("    {text}"));
+                assert_eq!(b.selection(), Selection::caret(offset + 4));
+            }
+        }
+    }
+
+    #[test]
+    fn indent_selection_preserves_direction_and_undo_redo() {
+        for reversed in [false, true] {
+            let mut b = Buffer::new("écho\n🙂 last\nuntouched");
+            let end = b.text().find("untouched").unwrap();
+            b.select_range(2..end, reversed);
+            let before = b.selection();
+            b.tab();
+            assert_eq!(b.text(), "    écho\n    🙂 last\nuntouched");
+            assert_eq!(b.selection().range(), 6..end + 8);
+            assert_eq!(b.selection().reversed(), reversed);
+            let after = b.selection();
+            b.undo();
+            assert_eq!(b.selection(), before);
+            assert!(!b.can_undo());
+            b.redo();
+            assert_eq!(b.selection(), after);
+            b.outdent_lines();
+            assert_eq!(b.text(), "écho\n🙂 last\nuntouched");
+            assert_eq!(b.selection(), before);
+            b.undo();
+            assert_eq!(b.selection(), after);
+        }
+    }
+
+    #[test]
+    fn outdent_handles_partial_spaces_tabs_and_unindented_lines() {
+        let mut b = Buffer::new("  a\n\tb\n \tc\nd\n     e");
+        b.select_all();
+        b.outdent_lines();
+        assert_eq!(b.text(), "a\nb\nc\nd\n e");
+        assert_eq!(b.selection().range(), 0..b.len());
+        b.undo();
+        assert!(!b.can_undo());
+        caret(&mut b, 1);
+        b.outdent_lines();
+        assert_eq!(b.selection(), Selection::caret(0));
+        b = Buffer::new("plain");
+        b.outdent_lines();
+        assert!(!b.can_undo());
+    }
+
+    #[test]
+    fn indent_handles_empty_lines_and_single_line_selections() {
+        let mut b = Buffer::new("");
+        b.tab();
+        assert_eq!(b.text(), "    ");
+        b.outdent_lines();
+        assert_eq!(b.text(), "");
+        b = Buffer::new("a\n\nb\n");
+        b.select_all();
+        b.indent_lines();
+        assert_eq!(b.text(), "    a\n    \n    b\n");
+        b.move_to_end(false);
+        b.indent_lines();
+        assert!(b.text().ends_with("\n    "));
+        b = Buffer::new("hello");
+        b.select_range(1..4, true);
+        b.tab();
+        assert_eq!(b.selected_text(), "ell");
+        assert!(b.selection().reversed());
+    }
+
+    #[test]
+    fn indentation_nests_bullets_and_ordered_items_in_comrak() {
+        use comrak::{Arena, Options, nodes::NodeValue, parse_document};
+        for marker in ["-", "*", "+", "1.", "10."] {
+            let child_marker = if marker.ends_with('.') { "1." } else { marker };
+            let mut b = Buffer::new(&format!("{marker} parent\n{child_marker} child"));
+            caret(&mut b, 0);
+            b.move_to_end(false);
+            b.tab();
+            let arena = Arena::new();
+            let root = parse_document(&arena, b.text(), &Options::default());
+            let item = root.first_child().unwrap().first_child().unwrap();
+            assert!(
+                item.children()
+                    .any(|node| matches!(node.data().value, NodeValue::List(_))),
+                "{marker}"
+            );
+        }
     }
 
     #[test]
