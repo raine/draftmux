@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Build only the app package and produce a relocatable tarball.
+set -euo pipefail
+if [[ $(uname -s) != Linux || $# -gt 1 || ( $# -eq 1 && $1 != --install ) ]]; then
+  echo "usage (on Linux): bundle-linux [--install]" >&2
+  exit 2
+fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+cargo build --locked -j 2 -p draftmux --bin draftmux
+target="${CARGO_TARGET_DIR:-$root/target}"
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+app=$("$root/scripts/assemble-linux-app" "$target/debug/draftmux" "$out")
+archive="$target/draftmux-linux-$(uname -m).tar.gz"
+tar -czf "$archive" -C "$out" draftmux-linux
+printf '%s\n' "$archive"
+if [[ ${1:-} == --install ]]; then "$app/install"; fi

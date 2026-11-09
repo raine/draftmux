@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/out" "$tmp/home"
+printf '#!/bin/sh\necho stub\n' > "$tmp/binary"
+app=$("$root/scripts/assemble-linux-app" "$tmp/binary" "$tmp/out")
+export HOME="$tmp/home" DRAFTMUX_INSTALL_PREFIX="$tmp/local space" XDG_DATA_HOME="$tmp/data"
+"$app/install" >/dev/null
+[[ $("$DRAFTMUX_INSTALL_PREFIX/bin/draftmux") == stub ]]
+cmp "$root/pi-extension/draftmux.ts" "$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/share/draftmux/pi-extension/draftmux.ts"
+grep -Fx "Exec=\"$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/bin/draftmux\"" "$XDG_DATA_HOME/applications/io.github.raine.Draftmux.desktop"
+"$app/install" >/dev/null
+rm "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux"
+printf 'unrelated\n' > "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux"
+if "$app/install" >/dev/null 2>&1; then echo 'replaced unrelated command' >&2; exit 1; fi
+[[ $(cat "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux") == unrelated ]]
+rm "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux"
+rm "$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/.draftmux-bundle"
+if "$app/install" >/dev/null 2>&1; then echo 'replaced unowned app' >&2; exit 1; fi
+echo 'Linux assembly and install tests passed'

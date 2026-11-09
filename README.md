@@ -1,6 +1,6 @@
 # Draftmux
 
-Draftmux is a macOS app for drafting GitHub, Slack, rich-text and plain-text
+Draftmux is a macOS and Linux app for drafting GitHub, Slack, rich-text and plain-text
 messages with an agent. Hand off from a pi or Claude Code session, polish the
 message next to a preview of where it goes with an embedded pi agent and
 steer-style selection actions, then copy it out or let the original agent read
@@ -9,6 +9,8 @@ it back.
 Status: early development.
 
 ## Install
+
+### macOS
 
 Requires macOS with full Xcode installed, the Rust toolchain (see
 Development) and [just](https://github.com/casey/just).
@@ -30,6 +32,56 @@ since the link points into it. To uninstall, delete `Draftmux.app` and the
 (`target/release/Draftmux.app`); `just app-debug` builds
 `target/debug/Draftmux.app`. Both are ad-hoc signed for running locally, not
 notarized for distribution.
+
+### Linux
+
+Wayland and X11 are supported on glibc distributions. Install the Rust
+toolchain from `rust-toolchain.toml`, just, a C/C++ toolchain and pkg-config.
+On Debian 12 / Ubuntu, the build libraries are:
+
+```sh
+sudo apt install build-essential pkg-config cmake clang libxkbcommon-dev \
+  libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev \
+  libfontconfig-dev libfreetype-dev libvulkan-dev libzstd-dev
+just linux-install
+```
+
+This builds a debug binary with two cargo jobs, installs the app and its pi
+extension in `~/.local/lib/draftmux`, and links `~/.local/bin/draftmux`.
+The desktop entry and icon go under `${XDG_DATA_HOME:-~/.local/share}`.
+Add `~/.local/bin` to PATH for CLI and agent use. Run the recipe again to
+update; it refuses to replace an unrelated command or unmarked app tree.
+`DRAFTMUX_INSTALL_PREFIX` overrides `~/.local`.
+
+`just linux-app` produces `target/draftmux-linux-<architecture>.tar.gz`
+without installing it. Extract it and run `draftmux-linux/install` on a
+machine with a compatible glibc and architecture. The binary finds resources
+relative to itself, including when launched through the command symlink.
+These are local builds, not automatically published releases.
+
+Runtime packages on Debian are `libxcb1 libxkbcommon0 libxkbcommon-x11-0
+libfreetype6 libvulkan1 libegl1 libwayland-client0 libwayland-egl1 fontconfig
+fonts-dejavu-core fonts-liberation`, plus graphics drivers (Mesa:
+`mesa-vulkan-drivers libegl-mesa0 libgl1-mesa-dri`). Run in a graphical
+session with a session D-Bus bus. pi and oxfmt are optional external tools,
+just as on macOS.
+
+Linux shortcuts use Ctrl instead of Cmd: Ctrl+Q quits, Ctrl+, opens Settings,
+Ctrl+Shift+C copies for the target, and Ctrl+Shift+F formats. Settings is also
+available in the main toolbar. The editor uses Ctrl+Left/Right for words,
+Ctrl+Home/End for the document, and Ctrl+A to select all.
+
+Rich text and Slack copy HTML with a plain-text alternative. Wayland rich
+copy requires data-control support or a working XWayland clipboard bridge.
+When unavailable, Draftmux copies plain text and shows a warning toast.
+Client-side window controls appear when the compositor provides none.
+Linux previews keep the Apple Mail sizing with Liberation Sans and DejaVu
+Sans Mono in place of Helvetica and Menlo.
+
+Drafts live in `${XDG_DATA_HOME:-~/.local/share}/Draftmux`. To uninstall,
+remove `~/.local/lib/draftmux`, the `~/.local/bin/draftmux` symlink, and
+`io.github.raine.Draftmux.desktop` / `io.github.raine.Draftmux.png` from
+the applications and icons directories. Drafts are not removed.
 
 ### Draftmux skill
 
@@ -66,14 +118,17 @@ bundled with the app.
 
 ## Development
 
-Requires macOS with full Xcode installed (gpui compiles its Metal shaders at
-build time). The Rust toolchain is pinned in `rust-toolchain.toml`.
+On macOS, full Xcode is required (gpui compiles Metal shaders at build time).
+On Linux, install the build libraries above. The Rust toolchain is pinned
+in `rust-toolchain.toml`.
 
 ```sh
 cargo run
 ```
 
-`cargo run` uses your real drafts. To try a change without touching them, run
+`cargo run` uses your real drafts. On Linux, use
+`DRAFTMUX_DATA_DIR="$(mktemp -d)" cargo run -j 2 -p draftmux` for scratch data.
+On macOS, to try a change without touching them, run
 `just dev-app`: it builds a debug `Draftmux Dev.app` and opens it with its own
 data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`),
 beside the installed app. Your pi profiles and shell environment stay the
@@ -152,7 +207,7 @@ bump it deliberately:
 1. Set the same new `rev` on both `gpui` and `gpui_platform`.
 2. Match `rust-toolchain.toml` to Zed's at that rev.
 3. Compare Zed's root `[patch.crates-io]` with ours and mirror entries for
-   crates in the macOS graph
+   crates in the enabled platform graphs
    (`cargo tree --target aarch64-apple-darwin -i <crate>`).
 4. Run `cargo update -p gpui -p gpui_platform`, build, fix API changes, and
    check the window chrome with `cargo run`.

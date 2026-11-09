@@ -249,7 +249,8 @@ impl Store {
 pub const DATA_DIR_VAR: &str = "DRAFTMUX_DATA_DIR";
 
 /// The app's data directory: `$DRAFTMUX_DATA_DIR` when set, else
-/// `~/Library/Application Support/Draftmux`.
+/// `~/Library/Application Support/Draftmux` on macOS or
+/// `$XDG_DATA_HOME/Draftmux` (normally `~/.local/share/Draftmux`) on Linux.
 pub fn data_dir() -> Result<PathBuf> {
     data_dir_from(std::env::var_os(DATA_DIR_VAR))
 }
@@ -329,7 +330,7 @@ mod tests {
         );
         assert!(data_dir_from(Some("data".into())).is_err());
         let default = data_dir_from(None).unwrap();
-        assert!(default.ends_with("Application Support/Draftmux"));
+        assert_eq!(default, dirs::data_dir().unwrap().join("Draftmux"));
         assert_eq!(data_dir_from(Some("".into())).unwrap(), default);
     }
 

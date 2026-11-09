@@ -2,33 +2,25 @@
 //! appearance, and the Reduce Transparency accessibility setting.
 //!
 //! [`Theme`] is a gpui global read at render time, so any window can use it
-//! with [`get`] or [`palette`]. It changes only through [`sync`], which
+//! with [`get`] or [`palette`]. Appearance changes call [`sync_window`], which
 //! refreshes every window; editors made with [`editor`] restyle themselves.
 //!
 //! Blurred windows keep their blur when Reduce Transparency is on: the
 //! surfaces that would show it paint [`Palette::sidebar`] and
 //! [`Palette::menu_tint`], which turn opaque and cover it.
 
-use std::ptr::NonNull;
-
-use block2::RcBlock;
+use crate::platform;
+/// The monospaced font for code, paths and model names.
+pub use editor::platform::MONO;
 use editor::{Editor, EditorStyle};
 use gpui::{App, AppContext, Entity, Global, Hsla, rgba};
-use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{MainThreadMarker, msg_send};
-use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSWorkspace};
-use objc2_foundation::{NSArray, NSNotification, NSObjectProtocol, NSOperationQueue, NSString};
-
-/// The monospaced font for code, paths and model names.
-pub const MONO: &str = "Menlo";
 
 pub struct Theme {
     pub dark: bool,
     pub reduce_transparency: bool,
     pub palette: Palette,
     /// Keeps the Reduce Transparency observer registered.
-    _observer: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+    _observer: platform::AppearanceObserver,
 }
 
 impl Global for Theme {}
@@ -44,42 +36,29 @@ pub fn palette(cx: &App) -> &Palette {
 /// Reads the system state and starts following Reduce Transparency. Call
 /// before opening windows so their first frame has the right colours.
 pub fn init(cx: &mut App) {
-    let (tx, rx) = async_channel::bounded::<()>(1);
-    let block = RcBlock::new(move |_: NonNull<NSNotification>| {
-        tx.try_send(()).ok();
-    });
-    // SAFETY: the notification name is an AppKit constant, the main queue
-    // runs the block on the thread that registered it, and the block only
-    // sends on a channel.
-    let observer = unsafe {
-        NSWorkspace::sharedWorkspace()
-            .notificationCenter()
-            .addObserverForName_object_queue_usingBlock(
-                Some(NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification),
-                None,
-                Some(&NSOperationQueue::mainQueue()),
-                &block,
-            )
-    };
-    let (dark, reduce_transparency) = (system_dark(), reduce_transparency());
+    let observer = platform::observe_appearance(cx);
+    let (dark, reduce_transparency) = (platform::system_dark(cx), platform::reduce_transparency());
     cx.set_global(Theme {
         dark,
         reduce_transparency,
         palette: Palette::resolve(dark, reduce_transparency),
         _observer: observer,
     });
-    cx.spawn(async move |cx| {
-        while rx.recv().await.is_ok() {
-            cx.update(sync);
-        }
-    })
-    .detach();
 }
 
 /// Re-reads the system appearance and Reduce Transparency, refreshing every
 /// window if either changed. Call when a window's appearance changes.
+#[cfg(target_os = "macos")]
 pub fn sync(cx: &mut App) {
-    let (dark, reduce_transparency) = (system_dark(), reduce_transparency());
+    update(platform::system_dark(cx), cx);
+}
+
+pub fn sync_window(window: &gpui::Window, cx: &mut App) {
+    update(platform::window_dark(window, cx), cx);
+}
+
+fn update(dark: bool, cx: &mut App) {
+    let reduce_transparency = platform::reduce_transparency();
     let theme = get(cx);
     if theme.dark == dark && theme.reduce_transparency == reduce_transparency {
         return;
@@ -104,38 +83,6 @@ pub fn editor(style: fn(&Palette) -> EditorStyle, cx: &mut App) -> Entity<Editor
         .detach();
         editor
     })
-}
-
-/// Whether the app's effective appearance is dark. Matches against Aqua and
-/// Dark Aqua so the Increase Contrast variants count too; gpui's
-/// `WindowAppearance` reports those as light.
-fn system_dark() -> bool {
-    let Some(mtm) = MainThreadMarker::new() else {
-        return false;
-    };
-    // SAFETY: the names are AppKit constants.
-    let (aqua, dark_aqua) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
-    let best = NSApplication::sharedApplication(mtm)
-        .effectiveAppearance()
-        .bestMatchFromAppearancesWithNames(&NSArray::from_slice(&[aqua, dark_aqua]));
-    best.is_some_and(|name| &*name == dark_aqua)
-}
-
-fn reduce_transparency() -> bool {
-    // objc2-app-kit declares this under its NSAccessibility feature, which
-    // gpui's dependency graph doesn't enable.
-    // SAFETY: an NSWorkspace property returning BOOL, available since 10.10.
-    unsafe {
-        msg_send![
-            &*NSWorkspace::sharedWorkspace(),
-            accessibilityDisplayShouldReduceTransparency
-        ]
-    }
-}
-
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    static NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification: &'static NSString;
 }
 
 /// Colours of the "Native" prototype variant (history/docs/prototype/index.html):

@@ -43,7 +43,11 @@ pub const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(20.), px(19.));
 const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("alt-cmd-p", TogglePreview, None)]);
+    cx.bind_keys([KeyBinding::new(
+        editor::secondary!("alt-p"),
+        TogglePreview,
+        None,
+    )]);
 }
 
 pub struct Chrome {
@@ -111,8 +115,9 @@ impl Render for Chrome {
                 .child(self.empty_state(&palette, cx))
         };
 
-        div()
+        let content = div()
             .size_full()
+            .font_family(editor::platform::ui_font())
             .relative()
             .flex()
             .flex_col()
@@ -146,7 +151,14 @@ impl Render for Chrome {
                             .child(self.chat.clone()),
                     ),
             )
-            .children(self.toast(cx))
+            .children(self.toast(cx));
+        crate::platform::frame(
+            content.into_any_element(),
+            window,
+            cx,
+            Box::new(crate::Quit),
+            "Draftmux",
+        )
     }
 }
 
@@ -165,7 +177,7 @@ impl Chrome {
             }),
             // Appearance is app-wide, and this window lives as long as the
             // app, so it reports appearance changes for every window.
-            cx.observe_window_appearance(window, |_, _, cx| theme::sync(cx)),
+            cx.observe_window_appearance(window, |_, window, cx| theme::sync_window(window, cx)),
             // Drafts created or archived by the CLI while the app was in the
             // background.
             cx.observe_window_activation(window, |this, window, cx| {
@@ -568,8 +580,8 @@ impl Chrome {
                     window.titlebar_double_click();
                 }
             })
-            // Traffic lights sit over this segment.
-            .child(sidebar_column(&palette))
+            // macOS traffic lights sit over this segment.
+            .child(sidebar_column(&palette).children(crate::platform::toolbar_items(&palette)))
             .child(
                 div()
                     .flex_1()

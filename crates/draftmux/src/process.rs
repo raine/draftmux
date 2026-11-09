@@ -249,8 +249,31 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
+        // A killed descendant can remain a zombie until its new parent
+        // reaps it, especially under a container's PID 1. Check execution,
+        // not whether the kernel still reserves its PID.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while process_running(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !process_running(pid),
+            "the background sleep was killed with the group"
+        );
+    }
+
+    fn process_running(pid: libc::pid_t) -> bool {
         // SAFETY: signal 0 only checks whether the process exists.
-        let alive = unsafe { libc::kill(pid, 0) } == 0;
-        assert!(!alive, "the background sleep was killed with the group");
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        if let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat"))
+            && let Some((_, state)) = stat.rsplit_once(") ")
+            && state.starts_with('Z')
+        {
+            return false;
+        }
+        true
     }
 }

@@ -47,6 +47,14 @@ install-app *ARGS:
 dev-app:
     scripts/dev-app
 
+# Build a Linux debug binary and relocatable tarball (run on Linux)
+linux-app:
+    scripts/bundle-linux
+
+# Build and install the Linux app for this user (run on Linux)
+linux-install:
+    scripts/bundle-linux --install
+
 # Build a signed, notarized release disk image (needs Apple credentials)
 release-macos:
     scripts/release-macos
@@ -61,6 +69,7 @@ dmg-layout:
 
 # Test the build, install and release scripts without cargo or credentials
 test-scripts:
+    scripts/test-linux-install
     scripts/test-assemble-macos-app
     scripts/test-install
     scripts/test-create-macos-dmg

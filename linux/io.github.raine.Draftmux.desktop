@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Draftmux
+Comment=Draft GitHub, Slack, rich-text and plain-text messages
+Exec=draftmux
+Icon=io.github.raine.Draftmux
+Terminal=false
+Categories=Office;TextEditor;
+StartupWMClass=io.github.raine.Draftmux

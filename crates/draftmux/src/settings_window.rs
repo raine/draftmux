@@ -39,8 +39,8 @@ const HEADER_HEIGHT: f32 = 52.;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-w", CloseSettings, Some("Settings")),
+        KeyBinding::new(editor::secondary!(","), OpenSettings, None),
+        KeyBinding::new(editor::secondary!("w"), CloseSettings, Some("Settings")),
     ]);
     cx.on_action(|_: &OpenSettings, cx| open(cx));
 }
@@ -70,7 +70,7 @@ pub fn open(cx: &mut App) {
         app_owns_titlebar_drag: true,
         ..Default::default()
     };
-    match cx.open_window(options, |window, cx| {
+    match cx.open_window(crate::platform::window_options(options), |window, cx| {
         cx.new(|cx| SettingsWindow::new(window, cx))
     }) {
         Ok(handle) => cx.set_global(OpenWindow(handle)),
@@ -714,7 +714,7 @@ fn model_ref(model: &ModelOverride) -> ModelRef {
 
 fn instructions_style(palette: &Palette) -> EditorStyle {
     EditorStyle {
-        font: font(".SystemUIFont"),
+        font: font(editor::platform::ui_font()),
         font_size: px(13.),
         line_height: px(13. * 1.45),
         padding_x: px(8.),
@@ -1585,7 +1585,7 @@ impl SettingsWindow {
                     shell
                         .as_ref()
                         .and_then(|env| env.oxfmt().map(Path::to_owned)),
-                    "used by Format (⌘⇧F)",
+                    editor::by_platform!("used by Format (⌘⇧F)", "used by Format (Ctrl+Shift+F)"),
                 ),
             ])
             .into_any_element(),
@@ -1677,7 +1677,7 @@ impl SettingsWindow {
 }
 
 impl Render for SettingsWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = &Colors::get(cx);
         let error = AppSettings::global(cx)
             .read(cx)
@@ -1719,8 +1719,9 @@ impl Render for SettingsWindow {
                 form
             }
         });
-        div()
+        let content = div()
             .size_full()
+            .font_family(editor::platform::ui_font())
             .flex()
             .text_size(px(13.))
             .text_color(c.text)
@@ -1764,6 +1765,13 @@ impl Render for SettingsWindow {
                                     .children(body),
                             ),
                     ),
-            )
+            );
+        crate::platform::frame(
+            content.into_any_element(),
+            window,
+            cx,
+            Box::new(CloseSettings),
+            "Settings",
+        )
     }
 }

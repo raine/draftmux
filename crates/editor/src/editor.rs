@@ -59,10 +59,15 @@ actions!(
 
 const KEY_CONTEXT: &str = "Editor";
 
-/// Binds the editor's macOS keys. Call once at startup.
+/// Binds the platform text-editing shortcuts. Call once at startup.
 pub fn init(cx: &mut App) {
+    cx.bind_keys(bindings());
+}
+
+#[cfg(target_os = "macos")]
+fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("backspace", Backspace, ctx),
         KeyBinding::new("shift-backspace", Backspace, ctx),
         KeyBinding::new("ctrl-h", Backspace, ctx),
@@ -112,7 +117,50 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-z", Undo, ctx),
         KeyBinding::new("cmd-shift-z", Redo, ctx),
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, ctx),
-    ]);
+    ]
+}
+
+#[cfg(target_os = "linux")]
+fn bindings() -> Vec<KeyBinding> {
+    let ctx = Some(KEY_CONTEXT);
+    vec![
+        KeyBinding::new("backspace", Backspace, ctx),
+        KeyBinding::new("shift-backspace", Backspace, ctx),
+        KeyBinding::new("delete", Delete, ctx),
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, ctx),
+        KeyBinding::new("ctrl-delete", DeleteWordRight, ctx),
+        KeyBinding::new("enter", Newline, ctx),
+        KeyBinding::new("shift-enter", Newline, ctx),
+        KeyBinding::new("left", Left, ctx),
+        KeyBinding::new("right", Right, ctx),
+        KeyBinding::new("up", Up, ctx),
+        KeyBinding::new("down", Down, ctx),
+        KeyBinding::new("shift-left", SelectLeft, ctx),
+        KeyBinding::new("shift-right", SelectRight, ctx),
+        KeyBinding::new("shift-up", SelectUp, ctx),
+        KeyBinding::new("shift-down", SelectDown, ctx),
+        KeyBinding::new("ctrl-left", WordLeft, ctx),
+        KeyBinding::new("ctrl-right", WordRight, ctx),
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, ctx),
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, ctx),
+        KeyBinding::new("home", LineStart, ctx),
+        KeyBinding::new("end", LineEnd, ctx),
+        KeyBinding::new("shift-home", SelectLineStart, ctx),
+        KeyBinding::new("shift-end", SelectLineEnd, ctx),
+        KeyBinding::new("ctrl-home", DocumentStart, ctx),
+        KeyBinding::new("ctrl-end", DocumentEnd, ctx),
+        KeyBinding::new("ctrl-shift-home", SelectDocumentStart, ctx),
+        KeyBinding::new("ctrl-shift-end", SelectDocumentEnd, ctx),
+        KeyBinding::new("pageup", PageUp, ctx),
+        KeyBinding::new("pagedown", PageDown, ctx),
+        KeyBinding::new("ctrl-a", SelectAll, ctx),
+        KeyBinding::new("ctrl-c", Copy, ctx),
+        KeyBinding::new("ctrl-x", Cut, ctx),
+        KeyBinding::new("ctrl-v", Paste, ctx),
+        KeyBinding::new("ctrl-z", Undo, ctx),
+        KeyBinding::new("ctrl-shift-z", Redo, ctx),
+        KeyBinding::new("ctrl-y", Redo, ctx),
+    ]
 }
 
 /// Emitted after the change it describes has been applied.
@@ -148,7 +196,7 @@ impl Default for EditorStyle {
     fn default() -> Self {
         Self {
             // gpui doesn't resolve "SF Mono" on macOS.
-            font: font("Menlo"),
+            font: font(crate::platform::MONO),
             font_size: px(12.5),
             line_height: px(12.5 * 1.65),
             padding_x: px(24.),
@@ -768,5 +816,32 @@ impl Render for Editor {
             .child(EditorElement {
                 editor: cx.entity(),
             })
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod keymap_tests {
+    use super::*;
+    use gpui::Action;
+    #[test]
+    fn linux_keys_are_unique_and_do_not_use_super() {
+        let bindings = bindings();
+        let mut keys = std::collections::HashSet::new();
+        for binding in &bindings {
+            let key = format!("{:?}", binding.keystrokes());
+            assert!(keys.insert(key.clone()), "duplicate binding: {key}");
+            assert!(
+                !binding
+                    .keystrokes()
+                    .iter()
+                    .any(|key| key.modifiers().platform)
+            );
+        }
+        let select_all = bindings
+            .iter()
+            .find(|binding| binding.action().name() == SelectAll.name())
+            .unwrap();
+        assert!(select_all.keystrokes()[0].modifiers().control);
+        assert_eq!(select_all.keystrokes()[0].key(), "a");
     }
 }

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Install a packaged tree for the current user, without touching draft data.
+set -euo pipefail
+if [[ $# -gt 1 ]]; then
+  echo "usage: install-linux-app [BUNDLE]" >&2
+  exit 2
+fi
+bundle=${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
+prefix="${DRAFTMUX_INSTALL_PREFIX:-$HOME/.local}"
+data="${XDG_DATA_HOME:-$prefix/share}"
+app="$prefix/lib/draftmux"
+link="$prefix/bin/draftmux"
+desktop="$data/applications/io.github.raine.Draftmux.desktop"
+for path in "$prefix" "$data"; do
+  if [[ $path != /* || $path == *$'\n'* || $path == *$'\r'* ]]; then
+    echo "install paths must be absolute and contain no newlines" >&2
+    exit 2
+  fi
+done
+if [[ ! -f $bundle/.draftmux-bundle || ! -x $bundle/bin/draftmux ||
+      ! -f $bundle/share/draftmux/pi-extension/draftmux.ts ]]; then
+  echo "not a complete Draftmux bundle: $bundle" >&2
+  exit 2
+fi
+if [[ -L $app || ( -e $app && ! -f $app/.draftmux-bundle ) ]]; then
+  echo "refusing to replace an unowned app: $app" >&2
+  exit 1
+fi
+if [[ ( -e $link || -L $link ) && ( ! -L $link || $(readlink "$link") != "$app/bin/draftmux" ) ]]; then
+  echo "refusing to replace an unrelated command: $link" >&2
+  exit 1
+fi
+if [[ -e $desktop ]] && ! grep -qx 'X-Draftmux-Managed=true' "$desktop"; then
+  echo "refusing to replace an unrelated desktop entry: $desktop" >&2
+  exit 1
+fi
+mkdir -p "$prefix/lib" "$prefix/bin" "$data/applications" "$data/icons/hicolor/1024x1024/apps"
+stage=$(mktemp -d "$prefix/lib/.draftmux-install.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+cp -R "$bundle/." "$stage/app"
+# Stage the complete tree before replacing an existing installation.
+if [[ -d $app ]]; then mv "$app" "$stage/previous"; fi
+if ! mv "$stage/app" "$app"; then
+  [[ ! -d $stage/previous ]] || mv "$stage/previous" "$app"
+  exit 1
+fi
+ln -sfn "$app/bin/draftmux" "$link"
+# Desktop Exec has its own escaping rules, including literal percent signs.
+exec_path="$app/bin/draftmux"
+exec_path=${exec_path//\\/\\\\}
+exec_path=${exec_path//\"/\\\"}
+exec_path=${exec_path//\$/\\\$}
+exec_path=${exec_path//\`/\\\`}
+# General desktop-entry string escaping is decoded before Exec quoting.
+exec_path=${exec_path//\\/\\\\}
+exec_path=${exec_path//%/%%}
+{
+  while IFS= read -r line; do
+    case "$line" in Exec=*) printf 'Exec="%s"\n' "$exec_path" ;; *) printf '%s\n' "$line" ;; esac
+  done < "$app/share/applications/io.github.raine.Draftmux.desktop"
+  printf 'X-Draftmux-Managed=true\n'
+} >| "$desktop"
+install -m644 "$app/share/icons/hicolor/1024x1024/apps/io.github.raine.Draftmux.png" \
+  "$data/icons/hicolor/1024x1024/apps/io.github.raine.Draftmux.png"
+if command -v update-desktop-database >/dev/null; then
+  update-desktop-database "$data/applications" || true
+fi
+printf 'Installed %s\nAdd %s/bin to PATH if needed.\n' "$app" "$prefix"

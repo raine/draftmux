@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Assemble a relocatable Linux app tree from an already-built binary.
+set -euo pipefail
+if [[ $# -ne 2 || ! -f $1 || ! -d $2 ]]; then
+  echo "usage: assemble-linux-app BINARY OUTPUT_DIR" >&2
+  exit 2
+fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app="$2/draftmux-linux"
+if [[ -e $app || -L $app ]]; then
+  echo "refusing to replace $app" >&2
+  exit 1
+fi
+mkdir -p "$app/bin" "$app/share/draftmux/pi-extension" "$app/share/applications" \
+  "$app/share/icons/hicolor/1024x1024/apps"
+install -m755 "$1" "$app/bin/draftmux"
+install -m644 "$root/pi-extension/draftmux.ts" "$app/share/draftmux/pi-extension/"
+install -m644 "$root/linux/io.github.raine.Draftmux.desktop" "$app/share/applications/"
+install -m644 "$root/macos/app-icon.png" "$app/share/icons/hicolor/1024x1024/apps/io.github.raine.Draftmux.png"
+install -m755 "$root/scripts/install-linux-app" "$app/install"
+printf 'draftmux\n' > "$app/.draftmux-bundle"
+printf '%s\n' "$app"

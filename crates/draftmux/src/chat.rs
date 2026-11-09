@@ -873,7 +873,7 @@ fn message_style(dark: bool) -> MarkupStyle {
 /// The composer's input: the UI font at chat size.
 fn composer_style(palette: &Palette) -> EditorStyle {
     EditorStyle {
-        font: font(".SystemUIFont"),
+        font: font(editor::platform::ui_font()),
         font_size: px(13.),
         line_height: px(13. * 1.45),
         padding_x: px(11.),

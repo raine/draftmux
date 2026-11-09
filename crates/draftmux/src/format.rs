@@ -27,7 +27,7 @@ actions!(format, [Format]);
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-shift-f", Format, None)]);
+    cx.bind_keys([KeyBinding::new(editor::secondary!("shift-f"), Format, None)]);
 }
 
 /// Runs Format for one editor and renders its button and last message.
@@ -183,7 +183,11 @@ impl Render for Formatter {
                         .text_color(palette.text)
                         .font_weight(FontWeight::MEDIUM)
                         .child("Format")
-                        .child(div().text_color(palette.muted).child("⌘⇧F"))
+                        .child(
+                            div()
+                                .text_color(palette.muted)
+                                .child(editor::by_platform!("⌘⇧F", "Ctrl+Shift+F")),
+                        )
                         .map(|button| {
                             if available {
                                 button

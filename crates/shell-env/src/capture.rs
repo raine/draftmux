@@ -22,7 +22,10 @@ const SHELL_LOCAL_VARS: &[&str] = &["SHLVL", "_", "PWD", "OLDPWD"];
 
 /// Directories appended to `PATH` when the login shell can't be read, so
 /// common install locations still resolve.
+#[cfg(target_os = "macos")]
 const FALLBACK_PATH_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"];
+#[cfg(not(target_os = "macos"))]
+const FALLBACK_PATH_DIRS: &[&str] = &["/usr/local/bin", "~/.local/bin", "/usr/bin", "/bin"];
 
 pub(crate) struct CaptureOptions {
     pub shell: PathBuf,
@@ -37,7 +40,13 @@ impl CaptureOptions {
             .filter(|shell| !shell.is_empty())
             .map(PathBuf::from)
             .or_else(passwd_shell)
-            .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
+            .unwrap_or_else(|| {
+                PathBuf::from(if cfg!(target_os = "macos") {
+                    "/bin/zsh"
+                } else {
+                    "/bin/sh"
+                })
+            });
         Self {
             shell,
             base_env: std::env::vars_os().collect(),

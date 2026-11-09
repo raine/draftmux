@@ -25,9 +25,8 @@ use draftmux_storage::Draft;
 use editor::{Editor, EditorEvent, EditorStyle};
 use gpui::{
     Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, Focusable, KeyBinding,
-    Pixels, SharedString, Size, Subscription, Task, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, canvas, div, point, prelude::*,
-    px, size,
+    Pixels, SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, actions, canvas, div, point, prelude::*, px, size,
 };
 use shell_env::ShellEnv;
 
@@ -650,7 +649,7 @@ impl SelectionPopover {
             is_resizable: false,
             is_minimizable: false,
             display_id: window.display(cx).map(|display| display.id()),
-            window_background: WindowBackgroundAppearance::Blurred,
+            window_background: crate::platform::popup_background(),
             ..Default::default()
         };
         self.opening = true;
@@ -851,13 +850,13 @@ impl Render for PopoverPanel {
         let popover = self.popover.clone();
         let content = popover.read(cx).content(&popover, cx);
         let palette = theme::palette(cx);
-        let (background, text) = (palette.menu_tint, palette.text);
+        let (background, text) = (crate::platform::menu_color(palette), palette.text);
         div()
             .size_full()
             .bg(background)
             .text_color(text)
             .text_size(px(13.))
-            .font_family(".SystemUIFont")
+            .font_family(editor::platform::ui_font())
             .key_context(INSTRUCTION_CONTEXT)
             .on_action({
                 let popover = popover.clone();
@@ -913,7 +912,7 @@ impl Render for PopoverPanel {
 /// The instruction field: the UI font with small padding.
 fn input_style(palette: &Palette) -> EditorStyle {
     EditorStyle {
-        font: gpui::font(".SystemUIFont"),
+        font: gpui::font(editor::platform::ui_font()),
         font_size: px(13.),
         line_height: px(18.),
         padding_x: px(8.),

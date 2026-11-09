@@ -87,7 +87,11 @@ fn fallback_env_appends_common_install_dirs() {
     let path = get(&env, "PATH").unwrap();
     assert_eq!(
         path,
-        "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:/Users/someone/.local/bin"
+        if cfg!(target_os = "macos") {
+            "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:/Users/someone/.local/bin"
+        } else {
+            "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/Users/someone/.local/bin"
+        }
     );
 }
 
@@ -121,7 +125,7 @@ fn hanging_shell_falls_back_within_timeout() {
             .contains("didn't finish")
     );
     let path = var(&env, "PATH").unwrap().to_str().unwrap();
-    assert!(path.contains("/opt/homebrew/bin"), "{path}");
+    assert!(path.contains("/usr/local/bin"), "{path}");
 }
 
 #[test]

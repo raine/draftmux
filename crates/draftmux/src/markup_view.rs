@@ -236,7 +236,7 @@ impl MarkupStyle {
         };
         Self {
             background: c(0xffffffff, 0x0d1117ff),
-            font_family: ".SystemUIFont".into(),
+            font_family: editor::platform::ui_font(),
             mono_family: crate::theme::MONO.into(),
             text_size: px(14.),
             line_height: 1.5,
@@ -334,8 +334,8 @@ impl MarkupStyle {
         let github = Self::github(dark);
         Self {
             background: c(0xffffffff, 0x000000ff),
-            font_family: "Helvetica".into(),
-            mono_family: "Menlo".into(),
+            font_family: editor::platform::RICH_SANS.into(),
+            mono_family: editor::platform::MONO.into(),
             text_size: px(13.),
             // Helvetica's normal line height, 15px at 13px.
             line_height: 15. / 13.,
@@ -642,7 +642,7 @@ pub fn render_preview(
                         .px(px(3.))
                         .py(px(2.))
                         .rounded(px(4.))
-                        .font_family(".SystemUIFont")
+                        .font_family(editor::platform::ui_font())
                         .text_size(px(10.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .line_height(relative(1.))
@@ -693,7 +693,7 @@ pub fn render_preview(
             .pt(px(10.))
             .border_t_1()
             .border_color(colors.rule)
-            .font_family(".SystemUIFont")
+            .font_family(editor::platform::ui_font())
             .text_size(px(12.))
             .line_height(relative(1.5))
             .text_color(colors.text)

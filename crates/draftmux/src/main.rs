@@ -13,6 +13,8 @@ mod ipc;
 mod markup_view;
 mod model_picker;
 mod open;
+#[cfg_attr(target_os = "linux", path = "platform_linux.rs")]
+mod platform;
 mod process;
 mod profiles;
 mod resources;
@@ -111,7 +113,7 @@ fn run_app() -> Result<()> {
             selection_popover::init(cx);
             settings_window::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            cx.bind_keys([KeyBinding::new(editor::secondary!("q"), Quit, None)]);
             cx.set_menus([Menu::new("Draftmux").items([
                 MenuItem::action("Settings…", settings_window::OpenSettings),
                 MenuItem::separator(),
@@ -131,7 +133,7 @@ fn run_app() -> Result<()> {
                 ..Default::default()
             };
             let window = cx
-                .open_window(options, |window, cx| {
+                .open_window(platform::window_options(options), |window, cx| {
                     cx.new(|cx| chrome::Chrome::new(store, window, cx))
                 })
                 .expect("failed to open the main window");
