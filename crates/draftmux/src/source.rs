@@ -106,16 +106,22 @@ pub fn resolve_profile(
     {
         return Ok(profile.to_owned());
     }
+    Ok(settings_profile(settings, home))
+}
+
+/// The profile the directory settings give (`settings`) if it is a folder,
+/// else the default profile.
+pub fn settings_profile(settings: Option<&Path>, home: &Path) -> PathBuf {
     if let Some(dir) = settings {
         if dir.is_dir() {
-            return Ok(dir.to_owned());
+            return dir.to_owned();
         }
         eprintln!(
             "draftmux: profile {} from settings is not a directory; using the default",
             dir.display()
         );
     }
-    Ok(draftmux_settings::default_profile(home))
+    draftmux_settings::default_profile(home)
 }
 
 #[cfg(test)]

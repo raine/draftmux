@@ -21,6 +21,7 @@ use gpui::{
 };
 use markup::Document;
 
+use crate::app_settings::AppSettings;
 use crate::assets::PREVIEW_ICON;
 use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
@@ -104,7 +105,10 @@ impl Render for Chrome {
                     )
                 })
         } else {
-            div().flex_1().min_w_0().child(empty_state(&palette))
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(self.empty_state(&palette, cx))
         };
 
         div()
@@ -209,10 +213,72 @@ impl Chrome {
             _clock: clock,
             _subscriptions: subscriptions,
         };
+        if let Some(home) = std::env::home_dir() {
+            let settings = AppSettings::global(cx).read(cx).settings.clone();
+            if let Err(err) = chrome.drafts.first_launch_sample(&settings, &home) {
+                eprintln!("draftmux: creating the sample draft: {err:#}");
+            }
+        }
         if let Some(id) = chrome.drafts.rows().first().map(|row| row.draft.id.clone()) {
             chrome.select(&id, window, cx).ok();
         }
         chrome
+    }
+
+    /// Creates a fresh sample draft and selects it.
+    fn open_sample(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = AppSettings::global(cx).read(cx).settings.clone();
+        let created = std::env::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("no home directory"))
+            .and_then(|home| self.drafts.create_sample(&settings, &home));
+        match created {
+            Ok(id) => {
+                self.select(&id, window, cx).ok();
+            }
+            Err(err) => self.show_toast(
+                format!("Couldn't create the sample draft: {err:#}"),
+                None,
+                cx,
+            ),
+        }
+    }
+
+    fn empty_state(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        pane(palette.pane, palette)
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.muted)
+                    .child("No drafts"),
+            )
+            .child(div().text_size(px(12.)).text_color(palette.faint).child(
+                "Run /draftmux in Claude Code or /skill:draftmux in pi to hand a message off.",
+            ))
+            .child(
+                div()
+                    .id("open-sample")
+                    .mt_3()
+                    .h(px(24.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(palette.line_strong)
+                    .bg(palette.control)
+                    .hover(|style| style.bg(palette.control_hover))
+                    .text_size(px(12.5))
+                    .text_color(palette.text)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_sample(window, cx)))
+                    .child("Open sample draft"),
+            )
     }
 
     /// Selects `id`, as `draftmux open` asks once it has created the draft.
@@ -628,28 +694,6 @@ pub(crate) fn shadow(color: Hsla, y: f32, blur: f32, spread: f32) -> BoxShadow {
         spread_radius: px(spread),
         inset: false,
     }
-}
-
-fn empty_state(palette: &Palette) -> impl IntoElement {
-    pane(palette.pane, palette)
-        .size_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_1()
-        .child(
-            div()
-                .text_size(px(13.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(palette.muted)
-                .child("No drafts"),
-        )
-        .child(
-            div().text_size(px(12.)).text_color(palette.faint).child(
-                "Run /draftmux in Claude Code or /skill:draftmux in pi to hand a message off.",
-            ),
-        )
 }
 
 /// The sidebar strip, shared by the toolbar and the body so the two read as

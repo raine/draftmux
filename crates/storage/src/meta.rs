@@ -11,7 +11,9 @@ pub struct Meta {
     pub status: Status,
     #[serde(default)]
     pub title: String,
-    pub source: Source,
+    /// The session the draft was handed off from; none for the sample draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     /// Working directory pi runs in.
     pub cwd: PathBuf,
     /// The draft's pi session file, known once the session has been created.
@@ -30,6 +32,13 @@ pub struct Meta {
     pub created_at: DateTime<Utc>,
     /// Last activity; the drafts list is sorted by this, newest first.
     pub updated_at: DateTime<Utc>,
+}
+
+impl Meta {
+    /// The sample draft is the only draft without a source session.
+    pub fn is_sample(&self) -> bool {
+        self.source.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +152,7 @@ mod tests {
         let meta: Meta = serde_json::from_str(FIXTURE).unwrap();
         assert_eq!(meta.target, Target::Slack);
         assert_eq!(meta.status, Status::Archived);
-        assert_eq!(meta.source.kind, SourceKind::Claude);
+        assert_eq!(meta.source.as_ref().unwrap().kind, SourceKind::Claude);
         assert_eq!(meta.updated_at.to_rfc3339(), "2026-11-08T11:30:00+00:00");
 
         let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -164,6 +173,16 @@ mod tests {
         assert_eq!(meta.note, None);
         assert_eq!(meta.settings, DraftSettings::default());
         assert!(meta.settings.context_files);
+    }
+
+    #[test]
+    fn sample_draft_has_no_source_key() {
+        let mut meta: Meta = serde_json::from_str(FIXTURE).unwrap();
+        meta.source = None;
+        let json = serde_json::to_value(&meta).unwrap();
+        assert!(json.get("source").is_none());
+        let back: Meta = serde_json::from_value(json).unwrap();
+        assert!(back.is_sample());
     }
 
     #[test]

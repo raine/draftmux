@@ -95,10 +95,20 @@ impl Chrome {
                         )
                         .child(
                             div()
-                                .truncate()
-                                .text_size(px(12.))
-                                .text_color(palette.muted)
-                                .child(tilde(&row.draft.meta.cwd, home.as_deref())),
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .when(row.draft.meta.is_sample(), |line| {
+                                    line.child(sample_badge(&palette))
+                                })
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(12.))
+                                        .text_color(palette.muted)
+                                        .child(tilde(&row.draft.meta.cwd, home.as_deref())),
+                                ),
                         ),
                 )
                 .child(
@@ -274,6 +284,21 @@ impl Chrome {
                 })),
         )
     }
+}
+
+/// "Sample" before the sample draft's meta line.
+fn sample_badge(palette: &theme::Palette) -> impl IntoElement {
+    div()
+        .flex_none()
+        .px(px(5.))
+        .py(px(1.))
+        .rounded(px(4.))
+        .bg(palette.accent_soft)
+        .text_color(palette.accent)
+        .text_size(px(10.))
+        .line_height(px(13.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child("Sample")
 }
 
 /// The target's mark: GitHub's and the email envelope take the text colour,

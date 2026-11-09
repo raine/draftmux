@@ -10,6 +10,9 @@ use crate::meta::{DraftSettings, Meta, Source, Status, Target};
 const DRAFT_FILE: &str = "draft.md";
 const META_FILE: &str = "meta.json";
 const SESSION_DIR: &str = "session";
+/// Records that the sample draft was created. A dot name and a file, so
+/// [`Store::scan`] never takes it for a draft.
+const SAMPLE_MARKER: &str = ".sample-created";
 
 /// The drafts directory. Stateless: every call reads or writes the files
 /// directly, so the app and the CLI can share it.
@@ -24,7 +27,7 @@ pub struct Store {
 pub struct NewDraft {
     pub target: Target,
     pub title: String,
-    pub source: Source,
+    pub source: Option<Source>,
     pub cwd: PathBuf,
     pub pi_agent_dir: PathBuf,
     pub note: Option<String>,
@@ -227,6 +230,19 @@ impl Store {
         Ok(scan)
     }
 
+    /// Whether the sample draft was ever created in this store.
+    pub fn sample_created(&self) -> Result<bool> {
+        let path = self.root.join(SAMPLE_MARKER);
+        path.try_exists()
+            .with_context(|| format!("checking {}", path.display()))
+    }
+
+    pub fn mark_sample_created(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.root)
+            .with_context(|| format!("creating {}", self.root.display()))?;
+        atomic::write(&self.root.join(SAMPLE_MARKER), b"")
+    }
+
     fn draft_dir(&self, id: &str) -> Result<PathBuf> {
         validate_id(id)?;
         Ok(self.root.join(id))
@@ -290,10 +306,10 @@ mod tests {
         NewDraft {
             target: Target::Github,
             title: title.to_owned(),
-            source: Source {
+            source: Some(Source {
                 kind: SourceKind::Pi,
                 path: "/tmp/source session.jsonl".into(),
-            },
+            }),
             cwd: "/tmp/repo".into(),
             pi_agent_dir: "/tmp/.pi/agent".into(),
             note: None,
@@ -423,6 +439,18 @@ mod tests {
         assert_eq!(ids(scan.drafts.iter()), [&good]);
         assert_eq!(scan.errors.len(), 1);
         assert_eq!(scan.errors[0].0, bad.dir);
+    }
+
+    #[test]
+    fn sample_marker_persists_and_is_not_a_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path().join("drafts"));
+        assert!(!store.sample_created().unwrap());
+        store.mark_sample_created().unwrap();
+        assert!(store.sample_created().unwrap());
+
+        let scan = store.scan().unwrap();
+        assert!(scan.drafts.is_empty() && scan.errors.is_empty());
     }
 
     #[test]

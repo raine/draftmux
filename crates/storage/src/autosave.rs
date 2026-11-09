@@ -101,10 +101,10 @@ mod tests {
             .create(NewDraft {
                 target: Target::Slack,
                 title: String::new(),
-                source: Source {
+                source: Some(Source {
                     kind: SourceKind::Claude,
                     path: "/tmp/s.jsonl".into(),
-                },
+                }),
                 cwd: "/tmp".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
                 note: None,

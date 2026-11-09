@@ -97,6 +97,18 @@ pub fn convert(transcript: impl BufRead, cwd: &Path, model: &ModelSelection) -> 
     ))
 }
 
+/// A session with no conversation, continuing on `model`, for a draft that
+/// wasn't handed off from Claude Code.
+pub fn empty(cwd: &Path, model: &ModelSelection) -> Session {
+    emit(
+        &[],
+        cwd,
+        model,
+        uuid::Uuid::now_v7().to_string(),
+        Utc::now(),
+    )
+}
+
 enum Turn<'a> {
     User { text: String, line: &'a Line },
     Assistant { parts: Vec<Part>, line: &'a Line },

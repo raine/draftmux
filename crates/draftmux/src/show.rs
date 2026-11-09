@@ -1,7 +1,8 @@
 //! `draftmux show`: reads a draft back for the agent that started it.
 //!
 //! Reads the draft directory directly, so it works whether or not the app is
-//! running, and never modifies the draft.
+//! running, and never modifies the draft. The sample draft has no source
+//! session to read back for, so it is never shown.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -92,15 +93,17 @@ fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -
 fn resolve(args: &Args, store: &Store, err: &mut impl Write) -> Result<Draft> {
     let Some(source) = &args.source else {
         let id = args.id.as_deref().expect("clap requires an id or --source");
-        return store.load(id).map_err(|e| {
-            if e.downcast_ref::<io::Error>()
-                .is_some_and(|e| e.kind() == io::ErrorKind::NotFound)
+        return match store.load(id) {
+            Ok(draft) if draft.meta.is_sample() => Err(anyhow!("no draft with id {id}")),
+            Ok(draft) => Ok(draft),
+            Err(e)
+                if e.downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::NotFound) =>
             {
-                anyhow!("no draft with id {id}")
-            } else {
-                e
+                Err(anyhow!("no draft with id {id}"))
             }
-        });
+            Err(e) => Err(e),
+        };
     };
 
     // `open` records the source as an absolute path without resolving
@@ -113,10 +116,13 @@ fn resolve(args: &Args, store: &Store, err: &mut impl Write) -> Result<Draft> {
     }
     // The scan is sorted by activity, newest first, and includes archived
     // drafts.
-    let mut matches = scan
-        .drafts
-        .into_iter()
-        .filter(|draft| &draft.meta.source.path == source);
+    let mut matches = scan.drafts.into_iter().filter(|draft| {
+        draft
+            .meta
+            .source
+            .as_ref()
+            .is_some_and(|s| &s.path == source)
+    });
     let draft = matches
         .next()
         .ok_or_else(|| anyhow!("no draft from source {}", source.display()))?;
@@ -183,10 +189,10 @@ mod tests {
             .create(NewDraft {
                 target: Target::Github,
                 title: title.to_owned(),
-                source: Source {
+                source: Some(Source {
                     kind: SourceKind::Pi,
                     path: source.into(),
-                },
+                }),
                 cwd: "/tmp/repo".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
                 note: None,
@@ -318,6 +324,24 @@ mod tests {
         );
 
         assert!(show(&store, &["../x"]).result.is_err());
+    }
+
+    #[test]
+    fn sample_draft_is_never_shown() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let sample = create(&store, "Welcome", "/s/a.jsonl", "sample", 0);
+        store
+            .update_meta(&sample.id, |meta| meta.source = None)
+            .unwrap();
+
+        let output = show(&store, &[&sample.id]);
+        assert_eq!(
+            output.result.unwrap_err().to_string(),
+            format!("no draft with id {}", sample.id)
+        );
+        assert_eq!(output.out, "");
+        assert!(show(&store, &["--source", "/s/a.jsonl"]).result.is_err());
     }
 
     #[test]

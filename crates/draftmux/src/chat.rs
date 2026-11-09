@@ -19,8 +19,9 @@ use editor::{Editor, EditorStyle};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, FollowMode, FontWeight, Hsla, KeyBinding, ListAlignment, ListState, Task,
-    Transformation, Window, actions, div, font, list, percentage, prelude::*, px, relative, svg,
+    Focusable, FollowMode, FontWeight, HighlightStyle, Hsla, KeyBinding, ListAlignment, ListState,
+    StyledText, Task, Transformation, Window, actions, div, font, list, percentage, prelude::*, px,
+    relative, svg,
 };
 use shell_env::ShellEnv;
 
@@ -29,6 +30,7 @@ use crate::assets::{
     TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
 use crate::chat_model::ChatModel;
+use crate::chrome::shadow;
 use crate::markup_view::{self, MarkupStyle};
 use crate::profiles::ProfileCatalog;
 use crate::theme::{self, Palette, Theme};
@@ -305,8 +307,10 @@ impl Chat {
             }
         };
         let (mut items, earlier) = transcript::history(&messages);
-        if earlier > 0 {
-            let source = match session.draft.meta.source.kind {
+        if earlier > 0
+            && let Some(source) = &session.draft.meta.source
+        {
+            let source = match source.kind {
                 SourceKind::Pi => "pi",
                 SourceKind::Claude => "Claude Code",
             };
@@ -822,6 +826,9 @@ impl Render for Chat {
                     .min_h_0()
                     .flex()
                     .flex_col()
+                    .when(session.draft.meta.is_sample(), |log| {
+                        log.child(sample_card(&palette))
+                    })
                     .child(
                         list(
                             session.list.clone(),
@@ -849,6 +856,34 @@ impl Render for Chat {
             .child(log)
             .when(self.current.is_some(), |chat| chat.child(self.composer(cx)))
     }
+}
+
+/// Stands in for the session recap of a handed-off draft.
+fn sample_card(palette: &Palette) -> impl IntoElement {
+    const LEAD: &str = "Sample draft";
+    let text = format!(
+        "{LEAD} · no session attached. Handed-off drafts show the conversation they came from here."
+    );
+    let lead = HighlightStyle {
+        color: Some(palette.text),
+        font_weight: Some(FontWeight::SEMIBOLD),
+        ..Default::default()
+    };
+    div().px(px(12.)).pt(px(12.)).child(
+        div()
+            .px(px(12.))
+            .py(px(10.))
+            .rounded(px(10.))
+            .bg(palette.card)
+            .shadow(vec![
+                shadow(palette.card_ring, 0., 0., 0.5),
+                shadow(palette.card_drop, 1., 2., 0.),
+            ])
+            .text_size(px(12.))
+            .line_height(px(18.))
+            .text_color(palette.muted)
+            .child(StyledText::new(text).with_highlights([(0..LEAD.len(), lead)])),
+    )
 }
 
 /// Assistant messages: GitHub's markdown at chat size.

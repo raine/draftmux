@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Local, Utc};
+use draftmux_settings::Settings;
 use draftmux_storage::{Autosave, Draft, Store, Target};
+
+use crate::sample;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
 const TITLE_MAX_CHARS: usize = 80;
@@ -190,6 +193,26 @@ impl Drafts {
         self.refresh();
         Ok(())
     }
+
+    /// Creates a sample draft and returns its id.
+    pub fn create_sample(&mut self, settings: &Settings, home: &Path) -> Result<String> {
+        let draft = sample::create(&self.store, settings, home)?;
+        self.refresh();
+        Ok(draft.id)
+    }
+
+    /// Creates the sample draft if the store has never held a draft, and
+    /// returns its id.
+    pub fn first_launch_sample(
+        &mut self,
+        settings: &Settings,
+        home: &Path,
+    ) -> Result<Option<String>> {
+        if !sample::first_launch(&self.store) {
+            return Ok(None);
+        }
+        self.create_sample(settings, home).map(Some)
+    }
 }
 
 /// The stored title, else the first line of the text without markdown
@@ -285,10 +308,10 @@ mod tests {
             .create(NewDraft {
                 target: Target::Github,
                 title: String::new(),
-                source: Source {
+                source: Some(Source {
                     kind: SourceKind::Pi,
                     path: "/tmp/s.jsonl".into(),
-                },
+                }),
                 cwd: "/tmp".into(),
                 pi_agent_dir: "/tmp/.pi/agent".into(),
                 note: None,
@@ -446,6 +469,95 @@ mod tests {
         assert_eq!(meta.updated_at, before);
         assert_eq!(drafts.current().unwrap().meta.target, Target::Slack);
         assert_eq!(drafts.rows()[0].draft.meta.target, Target::Slack);
+    }
+
+    #[test]
+    fn first_launch_creates_the_sample_once() {
+        let (root, store) = store();
+        let home = root.path().join("home");
+        let settings = Settings::default();
+        let mut drafts = Drafts::new(store.clone());
+
+        let id = drafts
+            .first_launch_sample(&settings, &home)
+            .unwrap()
+            .unwrap();
+        let sample = store.load(&id).unwrap();
+        assert!(sample.meta.is_sample());
+        assert_eq!(sample.meta.title, sample::TITLE);
+        assert_eq!(sample.meta.target, Target::Github);
+        assert_eq!(sample.meta.cwd, home);
+        assert_eq!(store.read_text(&id).unwrap(), sample::TEXT);
+        let session = std::fs::read_to_string(sample.meta.pi_session_file.unwrap()).unwrap();
+        assert_eq!(session.lines().count(), 1);
+        assert!(session.contains(r#""type":"session""#) && session.contains(r#""version":3"#));
+        assert_eq!(order(&drafts), [id.as_str()]);
+
+        // Archived or deleted, it doesn't come back by itself.
+        drafts.archive(&id).unwrap();
+        let mut drafts = Drafts::new(store.clone());
+        assert_eq!(drafts.first_launch_sample(&settings, &home).unwrap(), None);
+        std::fs::remove_dir_all(&sample.dir).unwrap();
+        assert_eq!(drafts.first_launch_sample(&settings, &home).unwrap(), None);
+
+        // On request it does, as a new draft.
+        let again = drafts.create_sample(&settings, &home).unwrap();
+        assert_ne!(again, id);
+        assert_eq!(order(&drafts), [again.as_str()]);
+    }
+
+    #[test]
+    fn a_store_that_held_drafts_gets_no_sample() {
+        let settings = Settings::default();
+        let home = Path::new("/tmp");
+
+        let (_root, archived_store) = store();
+        let archived = create(&archived_store, "a", TimeDelta::zero());
+        archived_store.archive(&archived).unwrap();
+        assert_eq!(
+            Drafts::new(archived_store)
+                .first_launch_sample(&settings, home)
+                .unwrap(),
+            None
+        );
+
+        let (_root, unreadable_store) = store();
+        let unreadable = create(&unreadable_store, "a", TimeDelta::zero());
+        let meta = unreadable_store
+            .load(&unreadable)
+            .unwrap()
+            .dir
+            .join("meta.json");
+        std::fs::write(meta, "{").unwrap();
+        assert_eq!(
+            Drafts::new(unreadable_store)
+                .first_launch_sample(&settings, home)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn sample_session_continues_on_the_drafting_model() {
+        let (root, store) = store();
+        let mut settings = Settings::default();
+        settings.defaults.drafting_model = Some(draftmux_settings::DraftingModel::Model(
+            draftmux_pi_rpc::ModelOverride {
+                provider: "anthropic".into(),
+                model_id: "claude-sonnet-5-5".into(),
+                thinking: draftmux_pi_rpc::ThinkingLevel::Low,
+            },
+        ));
+        let mut drafts = Drafts::new(store.clone());
+        let id = drafts.create_sample(&settings, root.path()).unwrap();
+
+        let file = store.load(&id).unwrap().meta.pi_session_file.unwrap();
+        let session = std::fs::read_to_string(file).unwrap();
+        assert!(
+            session.contains(r#""modelId":"claude-sonnet-5-5""#),
+            "{session}"
+        );
+        assert!(session.contains(r#""thinkingLevel":"low""#), "{session}");
     }
 
     #[test]

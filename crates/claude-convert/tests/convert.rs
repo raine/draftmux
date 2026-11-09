@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use claude_convert::{Model, ModelSelection, Session, convert};
+use claude_convert::{Model, ModelSelection, Session, convert, empty};
 use serde_json::Value;
 
 const COMPACTED: &[u8] = include_bytes!("fixtures/compacted.jsonl");
@@ -119,6 +119,28 @@ fn writes_a_v3_session_chained_by_parent_id() {
     assert_eq!(tail[0]["modelId"], "claude-sonnet-5-5");
     assert_eq!(tail[1]["type"], "thinking_level_change");
     assert_eq!(tail[1]["thinkingLevel"], "high");
+}
+
+#[test]
+fn empty_session_is_a_header_and_the_model() {
+    let types = |session: &Session| -> Vec<String> {
+        entries(session)
+            .iter()
+            .map(|e| e["type"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let session = empty(Path::new("/home"), &sonnet());
+    let all = entries(&session);
+    assert_eq!(all[0]["version"], 3);
+    assert_eq!(all[0]["cwd"], "/home");
+    assert_eq!(
+        types(&session),
+        ["session", "model_change", "thinking_level_change"]
+    );
+    assert_eq!(
+        types(&empty(Path::new("/home"), &ModelSelection::default())),
+        ["session"]
+    );
 }
 
 #[test]

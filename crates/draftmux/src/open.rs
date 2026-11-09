@@ -119,10 +119,10 @@ fn create(
     let new = |path, cwd, pi_agent_dir| NewDraft {
         target,
         title: String::new(),
-        source: Source {
+        source: Some(Source {
             kind: info.kind,
             path,
-        },
+        }),
         cwd,
         pi_agent_dir,
         note: args.note.clone(),
@@ -138,10 +138,10 @@ fn create(
                 );
             }
             let extension = resources::pi_extension()?;
-            store.create_with_session(new(path, info.cwd, pi_agent_dir), |draft| {
+            store.create_with_session(new(path.clone(), info.cwd, pi_agent_dir), |draft| {
                 let meta = &draft.meta;
                 let spec = ForkSpec {
-                    source: meta.source.path.clone(),
+                    source: path.clone(),
                     session_dir: draft.session_dir(),
                     extension,
                     cwd: meta.cwd.clone(),
@@ -152,7 +152,7 @@ fn create(
                     timeout: FORK_TIMEOUT,
                 };
                 let forked = draftmux_pi_rpc::fork(pi(), &spec)
-                    .map_err(|err| anyhow!("forking {}: {err}", meta.source.path.display()))?;
+                    .map_err(|err| anyhow!("forking {}: {err}", path.display()))?;
                 if let Some(warning) = forked.warning {
                     eprintln!("draftmux: {warning}");
                 }
@@ -180,15 +180,7 @@ fn convert_claude(
     model: Option<ModelOverride>,
 ) -> Result<claude_convert::Session> {
     let model = match model {
-        Some(model) => ModelSelection {
-            model: Some(claude_convert::Model {
-                provider: model.provider,
-                id: model.model_id,
-            }),
-            thinking_level: serde_json::to_value(model.thinking)?
-                .as_str()
-                .map(str::to_owned),
-        },
+        Some(model) => model_selection(model),
         None => ModelSelection::profile_default(pi_agent_dir).unwrap_or_else(|err| {
             eprintln!("draftmux: ignoring the profile's default model: {err:#}");
             ModelSelection::default()
@@ -198,6 +190,17 @@ fn convert_claude(
         .with_context(|| format!("opening {}", transcript.display()))?;
     claude_convert::convert(std::io::BufReader::new(file), cwd, &model)
         .with_context(|| format!("converting {}", transcript.display()))
+}
+
+/// `model` as the model a new pi session continues on.
+pub fn model_selection(model: ModelOverride) -> ModelSelection {
+    ModelSelection {
+        model: Some(claude_convert::Model {
+            provider: model.provider,
+            id: model.model_id,
+        }),
+        thinking_level: Some(model.thinking.as_str().to_owned()),
+    }
 }
 
 #[cfg(test)]
@@ -290,8 +293,8 @@ cat > /dev/null
         let draft = create(&args, &store, &fake_pi(&args_file), &Settings::default()).unwrap();
 
         let meta = store.load(&draft.id).unwrap().meta;
-        assert_eq!(meta.source.kind, SourceKind::Pi);
-        assert_eq!(meta.source.path, session);
+        assert_eq!(meta.source.as_ref().unwrap().kind, SourceKind::Pi);
+        assert_eq!(meta.source.as_ref().unwrap().path, session);
         assert_eq!(meta.cwd, cwd);
         assert_eq!(meta.pi_agent_dir, profile);
         assert_eq!(meta.target, Target::Slack);
@@ -497,7 +500,7 @@ cat > /dev/null
         let (store, draft) = claude_draft(tmp.path(), &profile);
 
         let meta = store.load(&draft.id).unwrap().meta;
-        assert_eq!(meta.source.kind, SourceKind::Claude);
+        assert_eq!(meta.source.as_ref().unwrap().kind, SourceKind::Claude);
         let file = meta.pi_session_file.unwrap();
         assert_eq!(file.parent().unwrap(), draft.session_dir());
 

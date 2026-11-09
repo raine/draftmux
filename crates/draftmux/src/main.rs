@@ -16,6 +16,7 @@ mod open;
 mod process;
 mod profiles;
 mod resources;
+mod sample;
 mod scrollbar;
 mod selection;
 mod selection_popover;
