@@ -573,7 +573,7 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
                 push_span(out, url, style, Some(url));
                 url.len()
             }),
-            ':' => shortcode(rest).map(|(len, emoji)| {
+            ':' => crate::emoji::shortcode(rest).map(|(len, emoji)| {
                 flush(out);
                 push_span(out, emoji, style, None);
                 len
@@ -626,18 +626,6 @@ fn code_span(text: &str) -> Option<(usize, &str)> {
     }
     let end = rest.find(['`', '\n'])?;
     (rest[end..].starts_with('`') && end > 0).then(|| (end + 2, &rest[..end]))
-}
-
-/// Length and emoji of a `:shortcode:` Slack knows at the start of `text`,
-/// in any case. A `:skin-tone-N:` right after one is its own shortcode, the
-/// modifier that combines with it.
-fn shortcode(text: &str) -> Option<(usize, &'static str)> {
-    let rest = text.strip_prefix(':')?;
-    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || "_+-'".contains(c)))?;
-    if end == 0 || !rest[end..].starts_with(':') {
-        return None;
-    }
-    crate::emoji::lookup(&rest[..end].to_ascii_lowercase()).map(|emoji| (end + 2, emoji))
 }
 
 /// Length, user ID and label of a `<@U123>` or `<@U123|name>` user mention

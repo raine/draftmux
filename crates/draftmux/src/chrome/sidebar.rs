@@ -200,7 +200,7 @@ impl Chrome {
                                         .text_size(px(13.))
                                         .line_height(px(18.))
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child(row.title.clone()),
+                                        .child(markup::replace_shortcodes(&row.title)),
                                 )
                                 // Wide enough that the title stops short of the
                                 // archive button, which replaces the time on hover.
@@ -233,7 +233,10 @@ impl Chrome {
                                                 .truncate()
                                                 .text_size(px(12.))
                                                 .text_color(palette.muted)
-                                                .child(tilde(&row.draft.meta.cwd, home.as_deref())),
+                                                .child(markup::replace_shortcodes(&tilde(
+                                                    &row.draft.meta.cwd,
+                                                    home.as_deref(),
+                                                ))),
                                         )
                                     }
                                 }),

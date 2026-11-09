@@ -2,6 +2,36 @@
 //! Cal Henderson), the set Slack uses. Generated from its `emoji.json`: every
 //! `short_names` entry mapped to the `unified` code points, sorted by name.
 
+/// Replaces known Slack emoji shortcodes in plain display text, ignoring case.
+/// Unknown shortcodes and all other text (including markup) stay literal.
+pub fn replace_shortcodes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        if let Some((len, emoji)) = shortcode(rest) {
+            out.push_str(emoji);
+            rest = &rest[len..];
+        } else {
+            let c = rest.chars().next().unwrap();
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Length and emoji of a `:shortcode:` Slack knows at the start of `text`,
+/// in any case. A `:skin-tone-N:` right after one is its own shortcode, the
+/// modifier that combines with it.
+pub(crate) fn shortcode(text: &str) -> Option<(usize, &'static str)> {
+    let rest = text.strip_prefix(':')?;
+    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || "_+-'".contains(c)))?;
+    if end == 0 || !rest[end..].starts_with(':') {
+        return None;
+    }
+    lookup(&rest[..end].to_ascii_lowercase()).map(|emoji| (end + 2, emoji))
+}
+
 /// The emoji for `:name:`, if Slack knows the shortcode.
 pub fn lookup(name: &str) -> Option<&'static str> {
     EMOJI
