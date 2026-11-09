@@ -29,6 +29,7 @@ expect 'version "1.2.3"'
 expect "sha256 \"$sha\""
 expect "url \"$url\""
 expect "homepage \"$homepage\""
+expect 'auto_updates true'
 expect 'depends_on arch: :arm64'
 expect 'app "Draftmux.app"'
 expect 'binary "#{appdir}/Draftmux.app/Contents/MacOS/draftmux"'

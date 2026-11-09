@@ -117,6 +117,24 @@ Alternatives remains available. Manage the list in Settings → Selection
 actions. For anything else, keep the text selected and ask the draft's agent in
 the chat: the selection is attached to your next message.
 
+### Updates
+
+A release installed from the disk image or Homebrew checks GitHub for a
+newer release once a day. It downloads the new version in the background,
+verifies its checksum and Developer ID signature, and replaces
+`Draftmux.app` in place. A Restart to Update button then appears in the
+toolbar. If Draftmux can't write to the folder holding the app, the toolbar
+shows Update Available instead, which opens the release page. Draftmux >
+Check for Updates… checks right away and reports the result.
+
+Turn automatic checks off under Settings → General → Updates
+(`"check_for_updates": false` in `settings.json`), or set
+`DRAFTMUX_NO_UPDATE_CHECK=1`. Check for Updates still works either way.
+Builds made from source, including `just install-app` and the Linux install,
+never check on their own; Check for Updates tells them a newer release
+exists. Checks contact `api.github.com` and GitHub's download hosts and send
+nothing but the request.
+
 ### Draft fields
 
 Drafts can start with YAML frontmatter for fields separate from the message:
@@ -236,9 +254,13 @@ cargo test -j 2 -p draftmux --bin draftmux performance::typing -- --ignored --no
 `just release-macos` builds a release on an Apple silicon Mac into
 `target/macos-release/<version>/`: `Draftmux.app` signed with a Developer ID
 certificate, notarized and stapled, inside a disk image that is itself
-signed, notarized and stapled, plus the image's `.sha256`. It checks
-credentials before building. It submits the app and disk image to Apple's
-notary service but publishes nothing. It needs:
+signed, notarized and stapled, plus the image's `.sha256`. The stapled app
+is also archived as `Draftmux-<version>-arm64-app.tar.gz` with its own
+`.sha256`, which automatic updates install. It checks credentials before
+building. It submits the app and disk image to Apple's notary service but
+publishes nothing. Publish all four files on a `v<version>` GitHub release
+of `raine/draftmux`. Updates read the latest non-draft, non-prerelease
+release; one without the app archive fails the check. It needs:
 
 | Variable                           | Value                                              |
 | ---------------------------------- | -------------------------------------------------- |
@@ -260,7 +282,8 @@ Print the Homebrew cask for a release with
 the disk image is published and may use `#{version}`.
 
 The bundle ID is `CFBundleIdentifier` in `macos/Info.plist`, which every
-script reads. It is part of the signature's designated requirement, so
+script reads; the updater's `BUNDLE_ID` in `crates/draftmux/src/update.rs`
+must match it. It is part of the signature's designated requirement, so
 changing it after a release loses macOS permissions and preferences tied to
 the old one. The disk image window comes from `macos/dmg/`; after editing
 `background.svg`, regenerate it with `just dmg-layout` (needs `rsvg-convert`

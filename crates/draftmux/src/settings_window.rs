@@ -1611,7 +1611,8 @@ impl SettingsWindow {
             )
             .into_any_element()
         };
-        vec![
+        let check_updates = self.settings(cx).check_for_updates.unwrap_or(true);
+        let mut page = vec![
             group_title(c, "Tools").into_any_element(),
             group(c, vec![
                 tool(
@@ -1647,55 +1648,106 @@ impl SettingsWindow {
                  Draftmux never writes pi's files."
             ))
             .into_any_element(),
+        ];
+        if cfg!(target_os = "macos") {
+            page.extend([
+                group_title(c, "Updates").into_any_element(),
+                group(
+                    c,
+                    vec![
+                        row(
+                            "Check for updates automatically",
+                            vec![description(
+                                c,
+                                "Once a day, from GitHub. A new version installs in the background \
+                             and runs when you restart Draftmux",
+                            )],
+                            switch(
+                                c,
+                                "check-for-updates",
+                                check_updates,
+                                false,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.update(
+                                        |settings| {
+                                            settings.check_for_updates = Some(!check_updates)
+                                        },
+                                        cx,
+                                    )
+                                }),
+                            ),
+                        )
+                        .into_any_element(),
+                        row(
+                            format!("Draftmux {}", crate::update::CURRENT_VERSION),
+                            Vec::new(),
+                            push_button(c, "check-now", "Check Now", |_, window, cx| {
+                                window.dispatch_action(Box::new(crate::update::CheckForUpdates), cx)
+                            }),
+                        )
+                        .into_any_element(),
+                    ],
+                )
+                .into_any_element(),
+            ]);
+        }
+        page.extend([
             group_title(c, "Files").into_any_element(),
-            group(c, vec![
-                row(
-                    "Settings",
-                    config_dir
-                        .iter()
-                        .map(|dir| description(c, self.tilde(&Settings::path(dir))))
-                        .collect(),
-                    push_button(c,
-                        "show-config",
-                        crate::platform::REVEAL_LABEL,
-                        cx.listener(|_, _, _, cx| {
-                            if let Ok(dir) = draftmux_storage::config_dir() {
-                                let file = Settings::path(&dir);
-                                if file.exists() {
-                                    cx.reveal_path(&file);
-                                } else if std::fs::create_dir_all(&dir).is_ok() {
+            group(
+                c,
+                vec![
+                    row(
+                        "Settings",
+                        config_dir
+                            .iter()
+                            .map(|dir| description(c, self.tilde(&Settings::path(dir))))
+                            .collect(),
+                        push_button(
+                            c,
+                            "show-config",
+                            crate::platform::REVEAL_LABEL,
+                            cx.listener(|_, _, _, cx| {
+                                if let Ok(dir) = draftmux_storage::config_dir() {
+                                    let file = Settings::path(&dir);
+                                    if file.exists() {
+                                        cx.reveal_path(&file);
+                                    } else if std::fs::create_dir_all(&dir).is_ok() {
+                                        cx.reveal_path(&dir);
+                                    }
+                                }
+                            }),
+                        ),
+                    )
+                    .into_any_element(),
+                    row(
+                        "Drafts",
+                        data_dir
+                            .iter()
+                            .map(|dir| description(c, self.tilde(dir)))
+                            .collect(),
+                        push_button(
+                            c,
+                            "show-data",
+                            crate::platform::REVEAL_LABEL,
+                            cx.listener(|_, _, _, cx| {
+                                if let Ok(dir) = draftmux_storage::data_dir() {
                                     cx.reveal_path(&dir);
                                 }
-                            }
-                        }),
-                    ),
-                )
-                .into_any_element(),
-                row(
-                    "Drafts",
-                    data_dir
-                        .iter()
-                        .map(|dir| description(c, self.tilde(dir)))
-                        .collect(),
-                    push_button(c,
-                        "show-data",
-                        crate::platform::REVEAL_LABEL,
-                        cx.listener(|_, _, _, cx| {
-                            if let Ok(dir) = draftmux_storage::data_dir() {
-                                cx.reveal_path(&dir);
-                            }
-                        }),
-                    ),
-                )
-                .into_any_element(),
-            ])
+                            }),
+                        ),
+                    )
+                    .into_any_element(),
+                ],
+            )
             .into_any_element(),
-            note(c,
+            note(
+                c,
                 "Everything here is saved in settings.json and profiles.json, which you can \
                  also edit by hand. Draftmux applies saved edits right away.",
             )
             .into_any_element(),
-        ]
+        ]);
+        page
     }
 
     fn actions_page(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

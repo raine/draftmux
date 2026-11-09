@@ -51,6 +51,8 @@ cask "draftmux" do
   desc "Draft GitHub, Slack and email messages with an agent"
   homepage "${homepage}"
 
+  # The app replaces itself with new releases.
+  auto_updates true
   depends_on arch: :arm64
 
   app "Draftmux.app"

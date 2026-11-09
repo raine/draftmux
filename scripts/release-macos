@@ -2,9 +2,12 @@
 # Builds a distributable Draftmux release on this Mac into
 # target/macos-release/VERSION: the app signed with Developer ID, notarized
 # and stapled, inside a disk image that is itself signed, notarized and
-# stapled, plus the image's .sha256. Submits both to Apple's notary service
-# but publishes nothing; generate the Homebrew cask from the .sha256 with
-# scripts/homebrew-cask.
+# stapled, plus the image's .sha256. The stapled app is also archived as
+# Draftmux-VERSION-arm64-app.tar.gz with its .sha256, which the app's
+# automatic updates install. Submits both to Apple's notary service but
+# publishes nothing; publish all four files on the vVERSION GitHub release
+# of raine/draftmux, and generate the Homebrew cask from the image's .sha256
+# with scripts/homebrew-cask.
 #
 # Needs the signing variables of scripts/sign-macos-release and the App Store
 # Connect variables of scripts/notarize-macos-release. Builds are arm64 only.
@@ -62,4 +65,9 @@ dmg="$out/Draftmux-$version-arm64.dmg"
 "$scripts/notarize-macos-release" "$dmg"
 "$scripts/check-macos-dmg" "$dmg" "$app"
 (cd "$out" && shasum -a 256 "$(basename "$dmg")" >"$(basename "$dmg" .dmg).sha256")
-echo "Released $dmg"
+
+# Updates check the archive's checksum, then the app's Developer ID signature.
+archive="Draftmux-$version-arm64-app"
+tar --no-mac-metadata -C "$out" -czf "$out/$archive.tar.gz" Draftmux.app
+(cd "$out" && shasum -a 256 "$archive.tar.gz" >"$archive.sha256")
+echo "Released $dmg and $out/$archive.tar.gz"

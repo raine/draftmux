@@ -20,9 +20,11 @@ gpui.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
 libc = "0.2"
 markup = { path = "../markup" }
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 shell-env = { path = "../shell-env" }
+sha2 = "0.10.9"
 similar = "2.7.0"
 tempfile = "3.27.0"
 

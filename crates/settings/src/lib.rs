@@ -49,6 +49,9 @@ pub struct Settings {
         deserialize_with = "deserialize_actions"
     )]
     pub selection_actions: Option<Vec<SelectionAction>>,
+    /// Unset checks; `DRAFTMUX_NO_UPDATE_CHECK` turns checks off regardless.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_for_updates: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

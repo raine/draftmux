@@ -37,6 +37,7 @@ mod source;
 mod source_map;
 mod theme;
 mod tooltip;
+mod update;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -137,9 +138,11 @@ fn run_app() -> Result<()> {
             chrome::init(cx);
             selection_popover::init(cx);
             settings_window::init(cx);
+            update::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new(editor::secondary!("q"), Quit, None)]);
             cx.set_menus([Menu::new("Draftmux").items([
+                MenuItem::action("Check for Updates…", update::CheckForUpdates),
                 MenuItem::action("Settings…", settings_window::OpenSettings),
                 MenuItem::separator(),
                 MenuItem::action("Quit Draftmux", Quit),

@@ -39,6 +39,7 @@ use crate::selectable::{Scroller, SelectionChanged, TextSelection};
 use crate::selection_popover::SelectionPopover;
 use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
+use crate::update::{self, Updater};
 
 actions!(chrome, [ToggleEditor, TogglePreview, ToggleSidebar]);
 
@@ -289,6 +290,17 @@ impl Chrome {
                 this.flush().ok();
                 async {}
             }),
+            cx.observe(&Updater::global(cx), |_, _, cx| cx.notify()),
+            cx.subscribe(
+                &Updater::global(cx),
+                |this, _, notice: &update::Notice, cx| {
+                    if notice.error {
+                        this.show_error(notice.text.clone(), cx);
+                    } else {
+                        this.show_toast(notice.text.clone(), cx);
+                    }
+                },
+            ),
         ];
         // Closing the window releases this view before the app-quit hook
         // runs, so save while it still exists.
@@ -919,10 +931,55 @@ impl Chrome {
                             .child(text)
                     }))
                     .child(div().flex_1())
+                    .children(self.update_button(&palette, cx))
                     .when_some(current.map(|draft| draft.meta.target), |bar, target| {
                         bar.child(self.toolbar_actions(target, &palette, cx))
                     }),
             )
+    }
+
+    /// Restarts into an installed update, or opens the page of one this copy
+    /// can't install itself.
+    fn update_button(&self, palette: &Palette, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let (label, tooltip, ready): (SharedString, SharedString, bool) =
+            match &Updater::global(cx).read(cx).status {
+                update::Status::Ready(version) => (
+                    "Restart to Update".into(),
+                    format!("Draftmux {version} is installed").into(),
+                    true,
+                ),
+                update::Status::Blocked { reason, .. } => {
+                    ("Update Available".into(), reason.clone().into(), false)
+                }
+                _ => return None,
+            };
+        Some(
+            div()
+                .id("update")
+                .flex_none()
+                .h(px(22.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .bg(palette.accent_soft)
+                .text_color(palette.accent)
+                .hover(|style| style.opacity(0.85))
+                .active(|style| style.opacity(0.7))
+                .tooltip(crate::tooltip::text(tooltip))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if !ready {
+                        Updater::global(cx).read(cx).open_release_page(cx);
+                    } else if this.flush_before_exit(cx) {
+                        cx.restart();
+                    }
+                }))
+                .child(label),
+        )
     }
 
     /// Draft actions at the toolbar's right end. Their mouse-downs don't reach
