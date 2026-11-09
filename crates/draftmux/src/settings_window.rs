@@ -1726,10 +1726,10 @@ impl SettingsWindow {
             .into_any_element(),
             note(
                 c,
-                "Selecting text in the editor offers Alternatives, your actions and an \
-                 instruction of your own. Each runs as a one-off pi call on the draft's session \
-                 that leaves no session behind, with the Selection model setting of the \
-                 draft's directory.",
+                "Selecting text in the editor offers Alternatives and your actions. Each runs \
+                 as a one-off pi call on the draft's session that leaves no session behind, \
+                 with the Selection model setting of the draft's directory. For anything \
+                 else, ask in the chat: the selection is attached to your next message.",
             )
             .into_any_element(),
             group_title(c, "Actions").into_any_element(),

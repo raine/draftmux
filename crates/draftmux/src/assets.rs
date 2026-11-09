@@ -24,6 +24,8 @@ pub const SPINNER_ARC_ICON: &str = "icons/spinner-arc.svg";
 pub const CHEVRON_ICON: &str = "icons/chevron.svg";
 pub const SEND_ICON: &str = "icons/send.svg";
 pub const STOP_ICON: &str = "icons/stop.svg";
+pub const QUOTE_ICON: &str = "icons/quote.svg";
+pub const CLOSE_ICON: &str = "icons/close.svg";
 pub const GEAR_ICON: &str = "icons/gear.svg";
 pub const SPARK_ICON: &str = "icons/spark.svg";
 pub const GLOBE_ICON: &str = "icons/globe.svg";
@@ -109,6 +111,8 @@ const ASSETS: &[(&str, &[u8])] = &[
     (CHEVRON_ICON, include_bytes!("../assets/icons/chevron.svg")),
     (SEND_ICON, include_bytes!("../assets/icons/send.svg")),
     (STOP_ICON, include_bytes!("../assets/icons/stop.svg")),
+    (QUOTE_ICON, include_bytes!("../assets/icons/quote.svg")),
+    (CLOSE_ICON, include_bytes!("../assets/icons/close.svg")),
     (GEAR_ICON, include_bytes!("../assets/icons/gear.svg")),
     (SPARK_ICON, include_bytes!("../assets/icons/spark.svg")),
     (GLOBE_ICON, include_bytes!("../assets/icons/globe.svg")),

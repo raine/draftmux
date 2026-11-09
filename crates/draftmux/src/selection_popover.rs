@@ -11,8 +11,8 @@
 //!
 //! The main window keeps keyboard focus, so the editor keeps its selection
 //! highlight; the popover's keys are bound in key contexts around the editor
-//! (see [`SelectionPopover::wrap`]). Only the instruction field makes the
-//! panel the key window.
+//! (see [`SelectionPopover::wrap`]). A click makes the panel key only until
+//! the mouse button is released.
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -22,10 +22,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use draftmux_storage::Draft;
-use editor::{Editor, EditorEvent, EditorStyle};
+use editor::{Editor, EditorEvent};
 use gpui::{
-    Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, Focusable, KeyBinding,
-    Pixels, SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
+    Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, KeyBinding, Pixels,
+    SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, canvas, div, point, prelude::*, px, size,
 };
 use shell_env::ShellEnv;
@@ -42,11 +42,9 @@ actions!(selection_popover, [Dismiss, Confirm, Next, Previous]);
 #[action(namespace = selection_popover, no_json)]
 pub struct Pick(pub usize);
 
-/// Key contexts around the editor while the popover is shown, and in the
-/// panel while the instruction field has focus.
+/// Key contexts around the editor while the popover is shown.
 const POPOVER_CONTEXT: &str = "SelectionPopover";
 const RESULTS_CONTEXT: &str = "SelectionResults";
-const INSTRUCTION_CONTEXT: &str = "SelectionInstruction";
 
 /// How long the selection must stay put before the popover appears, so
 /// shift-arrow selections don't flash it on every step.
@@ -60,14 +58,10 @@ const PADDING: Pixels = px(5.);
 /// them, inset by the padding.
 const ITEM_RADIUS: Pixels = px(crate::platform::POPUP_RADIUS - 5.);
 const RESULTS_WIDTH: Pixels = px(380.);
-const INSTRUCTION_WIDTH: Pixels = px(320.);
-
-const INSTRUCTION_PLACEHOLDER: &str = "e.g. less formal, mention the timeout";
 
 pub fn init(cx: &mut App) {
     let popover = Some(format!("{POPOVER_CONTEXT} > Editor"));
     let results = Some(format!("{RESULTS_CONTEXT} > Editor"));
-    let instruction = Some(format!("{INSTRUCTION_CONTEXT} > Editor"));
     let mut bindings = vec![
         KeyBinding::new("escape", Dismiss, popover.as_deref()),
         KeyBinding::new("up", Previous, popover.as_deref()),
@@ -76,8 +70,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("up", Previous, results.as_deref()),
         KeyBinding::new("down", Next, results.as_deref()),
         KeyBinding::new("enter", Confirm, results.as_deref()),
-        KeyBinding::new("escape", Dismiss, instruction.as_deref()),
-        KeyBinding::new("enter", Confirm, instruction.as_deref()),
     ];
     for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
         .into_iter()
@@ -119,7 +111,6 @@ struct Open {
 
 enum Mode {
     Actions(Vec<draftmux_settings::SelectionAction>),
-    Instruction(Entity<Editor>),
     /// Dropping it cancels the call and kills pi.
     Running {
         _cancel: CancelOnDrop,
@@ -140,8 +131,8 @@ impl Drop for CancelOnDrop {
 struct Panel {
     handle: WindowHandle<PopoverPanel>,
     bounds: Bounds<Pixels>,
-    /// Dismisses the popover when the panel, key for the instruction field,
-    /// loses focus to another app.
+    /// Dismisses the popover when the panel, key after a click on it, loses
+    /// focus to another app.
     _activation: Subscription,
 }
 
@@ -346,7 +337,7 @@ impl SelectionPopover {
     }
 
     /// The app lost focus: hide the popover, unless the focus went to the
-    /// popover's own panel (the instruction field, or a click on it).
+    /// popover's own panel (a click on it).
     fn dismiss_unless_panel_active(&mut self, cx: &mut Context<Self>) {
         if self.panel.is_none() && !self.opening {
             return self.dismiss(cx);
@@ -397,7 +388,7 @@ impl SelectionPopover {
 
     fn item_count(&self) -> usize {
         match self.open.as_ref().map(|open| &open.mode) {
-            Some(Mode::Actions(actions)) => actions.len() + 2,
+            Some(Mode::Actions(actions)) => actions.len() + 1,
             Some(Mode::Results(options)) => options.len(),
             _ => 0,
         }
@@ -444,13 +435,6 @@ impl SelectionPopover {
                     self.apply(index, cx);
                 }
             }
-            Mode::Instruction(input) => {
-                let instruction = input.read(cx).text().trim().to_string();
-                if !instruction.is_empty() {
-                    self.focus_main(cx);
-                    self.run(SelectionAction::Instruction(instruction), cx);
-                }
-            }
             Mode::Actions(_) => {
                 if let Some(index) = open.highlighted {
                     self.pick_action(index, cx);
@@ -472,44 +456,7 @@ impl SelectionPopover {
             self.run(SelectionAction::Alternatives, cx);
         } else if let Some(action) = actions.get(index - 1) {
             self.run(SelectionAction::Instruction(action.prompt.clone()), cx);
-        } else if index == actions.len() + 1 {
-            self.start_instruction(cx);
         }
-    }
-
-    fn start_instruction(&mut self, cx: &mut Context<Self>) {
-        let input = theme::editor(input_style, cx);
-        self.set_mode(Mode::Instruction(input), None, cx);
-        self.focus_panel(cx);
-    }
-
-    /// Makes the panel the key window with the instruction field focused,
-    /// once it has been placed.
-    fn focus_panel(&self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            this.update(cx, |this, cx| {
-                let (
-                    Some(panel),
-                    Some(Open {
-                        mode: Mode::Instruction(input),
-                        ..
-                    }),
-                ) = (&this.panel, &this.open)
-                else {
-                    return;
-                };
-                let focus = input.focus_handle(cx);
-                panel
-                    .handle
-                    .update(cx, |_, window, cx| {
-                        window.activate_window();
-                        window.focus(&focus, cx);
-                    })
-                    .ok();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     fn focus_main(&self, cx: &mut Context<Self>) {
@@ -688,7 +635,6 @@ impl SelectionPopover {
                 )
             }
             Some(Mode::Results(_)) => size(RESULTS_WIDTH, px(120.)),
-            Some(Mode::Instruction(_)) => size(INSTRUCTION_WIDTH + PADDING * 2., px(64.)),
             _ => size(px(330.), px(36.)),
         }
     }
@@ -738,7 +684,6 @@ impl SelectionPopover {
                         if this.open.is_none() {
                             return this.close_panel(cx);
                         }
-                        this.focus_panel(cx);
                         // The state may have changed while it opened.
                         this.schedule_reconcile(cx);
                     }
@@ -780,26 +725,17 @@ impl SelectionPopover {
                 })
         };
         match &open.mode {
-            Mode::Actions(actions) => div()
-                .flex()
-                .gap(px(2.))
-                .max_w(px(600.))
-                .flex_wrap()
-                .children(
-                    std::iter::once(("Alternatives", Some("✦")))
-                        .chain(actions.iter().map(|action| (action.name.as_str(), None)))
-                        .chain(std::iter::once(("Instruction…", None)))
-                        .enumerate()
-                        .map(|(index, (label, icon))| {
-                            let separator = (index == actions.len() + 1).then(|| {
-                                div()
-                                    .w(px(1.))
-                                    .my(px(4.))
-                                    .mx(px(2.))
-                                    .bg(palette.menu_line)
-                                    .into_any_element()
-                            });
-                            let button =
+            Mode::Actions(actions) => {
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .max_w(px(600.))
+                    .flex_wrap()
+                    .children(
+                        std::iter::once(("Alternatives", Some("✦")))
+                            .chain(actions.iter().map(|action| (action.name.as_str(), None)))
+                            .enumerate()
+                            .map(|(index, (label, icon))| {
                                 item(index)
                                     .flex()
                                     .items_center()
@@ -817,39 +753,8 @@ impl SelectionPopover {
                                             this.update(cx, |this, cx| this.pick_action(index, cx))
                                         }
                                     })
-                                    .into_any_element();
-                            match separator {
-                                Some(separator) => div()
-                                    .flex()
-                                    .child(separator)
-                                    .child(button)
-                                    .into_any_element(),
-                                None => button,
-                            }
-                        }),
-                )
-                .into_any_element(),
-            Mode::Instruction(input) => {
-                let empty = input.read(cx).text().is_empty();
-                div()
-                    .w(INSTRUCTION_WIDTH)
-                    .child(
-                        div()
-                            .relative()
-                            .h(px(30.))
-                            .child(input.clone())
-                            .when(empty, |field| {
-                                field.child(
-                                    div()
-                                        .absolute()
-                                        .top(px(6.))
-                                        .left(px(8.))
-                                        .text_color(palette.faint)
-                                        .child(INSTRUCTION_PLACEHOLDER),
-                                )
                             }),
                     )
-                    .child(footer(&["↵ run", "esc cancel"], &palette))
                     .into_any_element()
             }
             Mode::Running { .. } => div()
@@ -939,34 +844,11 @@ impl Render for PopoverPanel {
             .text_color(text)
             .text_size(px(13.))
             .font_family(editor::platform::ui_font())
-            .key_context(INSTRUCTION_CONTEXT)
-            .on_action({
-                let popover = popover.clone();
-                move |_: &Dismiss, _, cx| {
-                    popover.update(cx, |this, cx| {
-                        this.focus_main(cx);
-                        this.dismiss(cx);
-                    })
-                }
-            })
-            .on_action({
-                let popover = popover.clone();
-                move |_: &Confirm, _, cx| popover.update(cx, |this, cx| this.confirm(cx))
-            })
             // A click makes the panel key; give the keyboard back to the
-            // editor unless the instruction field needs it.
+            // editor.
             .on_mouse_up(gpui::MouseButton::Left, {
                 let popover = popover.clone();
-                move |_, _, cx| {
-                    popover.update(cx, |this, cx| {
-                        if !matches!(
-                            this.open.as_ref().map(|open| &open.mode),
-                            Some(Mode::Instruction(_))
-                        ) {
-                            this.focus_main(cx);
-                        }
-                    })
-                }
+                move |_, _, cx| popover.update(cx, |this, cx| this.focus_main(cx))
             })
             .child(
                 // Laid out at its natural size, then measured to size the
@@ -988,18 +870,5 @@ impl Render for PopoverPanel {
                         .size_full(),
                     ),
             )
-    }
-}
-
-/// The instruction field: the UI font with small padding.
-fn input_style(palette: &Palette) -> EditorStyle {
-    EditorStyle {
-        font: gpui::font(editor::platform::ui_font()),
-        font_size: px(13.),
-        line_height: px(18.),
-        padding_x: px(8.),
-        padding_top: px(6.),
-        padding_bottom: px(6.),
-        ..palette.editor_style()
     }
 }

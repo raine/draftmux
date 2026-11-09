@@ -69,7 +69,7 @@ impl SelectionConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Alternatives,
-    /// The user's own instruction.
+    /// The prompt of one of the user's selection actions.
     Instruction(String),
 }
 

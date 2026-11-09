@@ -6,18 +6,26 @@
 //! and stopped once it is idle or left. The chat reports to its owner
 //! through [`ChatEvent`]: the owner saves the draft before a prompt, reloads
 //! it after the agent writes it, and locks the editor while the agent runs.
+//!
+//! A non-empty selection in the draft editor is attached to the next
+//! message: a chip above the message field shows it, and sending puts it in the
+//! prompt ([`quote`]). It stays attached while the composer has focus, since
+//! the editor keeps its selection when it loses focus. Sending or the chip's
+//! × detaches it, and selecting something else attaches that.
 
+mod quote;
 mod transcript;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use draftmux_pi_rpc::{Agent, AgentEvent, Disposition, LaunchSpec};
 use draftmux_storage::{Draft, SourceKind};
-use editor::{Editor, EditorStyle};
+use editor::{Editor, EditorEvent, EditorStyle};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
@@ -28,8 +36,8 @@ use gpui::{
 use shell_env::ShellEnv;
 
 use crate::assets::{
-    CHEVRON_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON, TOOL_BASH_ICON,
-    TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
+    CHEVRON_ICON, CLOSE_ICON, QUOTE_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON,
+    STOP_ICON, TOOL_BASH_ICON, TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
 use crate::bounce::{Bounce, ListBounce};
 use crate::chat_model::ChatModel;
@@ -38,6 +46,7 @@ use crate::markup_view::{self, MarkupStyle};
 use crate::profiles::ProfileCatalog;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme::{self, MONO, Palette, Theme};
+use quote::Quote;
 use transcript::{DiffLine, Item, Tool, Transcript};
 
 actions!(chat, [Send, Stop]);
@@ -56,8 +65,8 @@ pub fn init(cx: &mut App) {
 }
 
 pub enum ChatEvent {
-    /// The user sent `text`. Save the draft, then pass both to
-    /// [`Chat::prompt`].
+    /// The user sent `text`, the prompt with any attached selection. Save
+    /// the draft, then pass both to [`Chat::prompt`].
     Send(String),
     /// The agent wrote the selected draft; this is its new text.
     DraftWritten(String),
@@ -75,6 +84,11 @@ pub struct Chat {
     sessions: HashMap<String, Session>,
     current: Option<String>,
     composer: Entity<Editor>,
+    /// The draft editor, whose selection is attached to the next message.
+    draft_editor: Entity<Editor>,
+    /// The selection the user detached; the selection follows text edits,
+    /// so this does too.
+    detached: Option<Range<usize>>,
     style: MarkupStyle,
     /// Wakes up when the selected draft's idle pi should stop.
     idle: Task<()>,
@@ -122,15 +136,33 @@ impl Focusable for Chat {
 }
 
 impl Chat {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(draft_editor: Entity<Editor>, cx: &mut Context<Self>) -> Self {
         let composer = theme::editor(composer_style, cx);
         cx.observe(&composer, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&draft_editor, |this, editor, event, cx| {
+            match event {
+                EditorEvent::Edited => {
+                    if this.detached.is_some() {
+                        this.detached = Some(editor.read(cx).selected_range());
+                    }
+                }
+                EditorEvent::SelectionChanged(range) => {
+                    if this.detached.as_ref() != Some(range) {
+                        this.detached = None;
+                    }
+                }
+            }
+            cx.notify();
+        })
+        .detach();
         cx.observe_global::<Theme>(|this, cx| this.style = message_style(theme::get(cx).dark))
             .detach();
         Self {
             sessions: HashMap::new(),
             current: None,
             composer,
+            draft_editor,
+            detached: None,
             style: message_style(theme::get(cx).dark),
             idle: Task::ready(()),
         }
@@ -416,6 +448,22 @@ impl Chat {
         self.after_change(&id, cx);
     }
 
+    /// The draft editor's selection, unless the user detached it.
+    fn attached(&self, cx: &App) -> Option<Quote> {
+        self.session()?;
+        let editor = self.draft_editor.read(cx);
+        let range = editor.selected_range();
+        if self.detached.as_ref() == Some(&range) {
+            return None;
+        }
+        Quote::new(editor.text(), range)
+    }
+
+    fn detach(&mut self, cx: &mut Context<Self>) {
+        self.detached = Some(self.draft_editor.read(cx).selected_range());
+        cx.notify();
+    }
+
     fn send(&mut self, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text().trim().to_owned();
         if text.is_empty() || self.busy() || self.session().is_none() {
@@ -423,7 +471,12 @@ impl Chat {
         }
         self.composer
             .update(cx, |editor, cx| editor.set_text("", cx));
-        cx.emit(ChatEvent::Send(text));
+        // The message took the selection; the editor keeps it selected.
+        let quote = self.attached(cx);
+        if quote.is_some() {
+            self.detach(cx);
+        }
+        cx.emit(ChatEvent::Send(quote::prompt(&text, quote.as_ref())));
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
@@ -581,7 +634,7 @@ impl Chat {
             return activity_row(session, &palette, window);
         }
         let bubble = match self.session().and_then(|s| s.transcript.items.get(index)) {
-            Some(Item::User { text }) => {
+            Some(Item::User { text, .. }) => {
                 let text = text.clone();
                 self.bubble(index, &text, cx)
             }
@@ -598,12 +651,13 @@ impl Chat {
         let stacked =
             matches!(item, Item::Tool(_)) && index > 0 && matches!(items[index - 1], Item::Tool(_));
         let body = match item {
-            Item::User { text } => div()
+            Item::User { text, quote } => div()
                 .flex()
                 .justify_end()
                 .child(
                     div()
                         .max_w(relative(0.86))
+                        .min_w_0()
                         .px(px(11.))
                         .py(px(7.))
                         .rounded_tl(px(12.))
@@ -614,6 +668,12 @@ impl Chat {
                         .text_color(palette.on_accent)
                         .text_size(px(13.))
                         .line_height(px(19.5))
+                        .when_some(quote.as_ref(), |bubble_div, quote| {
+                            bubble_div.child(
+                                quote_label(quote, palette.on_accent_muted, palette.on_accent)
+                                    .mb(px(3.)),
+                            )
+                        })
                         .map(|bubble_div| match bubble {
                             Some(editor) => bubble_div.child(editor),
                             None => bubble_div.child(text.clone()),
@@ -825,6 +885,12 @@ impl Chat {
         let empty = self.composer.read(cx).text().trim().is_empty();
         let can_send = !busy && !empty && session.is_some();
         let model = session.and_then(|session| session.model.clone());
+        let quote = self.attached(cx);
+        let placeholder = if quote.is_some() {
+            "Ask pi to change the selection, or ask about it…"
+        } else {
+            "Ask pi to change the draft, or ask about the session…"
+        };
         div().flex_none().px(px(12.)).pt(px(8.)).pb(px(12.)).child(
             div()
                 .key_context(KEY_CONTEXT)
@@ -834,6 +900,45 @@ impl Chat {
                 .border_1()
                 .border_color(palette.line_strong)
                 .bg(palette.control)
+                .when_some(quote, |composer, quote| {
+                    composer.child(
+                        div().flex().pt(px(6.)).px(px(6.)).child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(2.))
+                                .h(px(22.))
+                                .pl(px(7.))
+                                .pr(px(2.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(palette.hairline)
+                                .bg(palette.hover)
+                                .child(quote_label(&quote, palette.faint, palette.text))
+                                .child(
+                                    div()
+                                        .id("detach-selection")
+                                        .size(px(18.))
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.))
+                                        .hover(|style| style.bg(palette.control_hover))
+                                        .active(|style| style.opacity(0.8))
+                                        .tooltip(crate::tooltip::text("Don't attach the selection"))
+                                        .on_click(cx.listener(|this, _, _, cx| this.detach(cx)))
+                                        .child(
+                                            svg()
+                                                .path(CLOSE_ICON)
+                                                .size(px(10.))
+                                                .text_color(palette.muted),
+                                        ),
+                                ),
+                        ),
+                    )
+                })
                 .child(
                     div()
                         .h(px(58.))
@@ -847,7 +952,7 @@ impl Chat {
                                     .left(px(11.))
                                     .text_size(px(13.))
                                     .text_color(palette.faint)
-                                    .child("Ask pi to change the draft, or ask about the session…"),
+                                    .child(placeholder),
                             )
                         }),
                 )
@@ -1076,6 +1181,38 @@ fn bubble_style(palette: &Palette) -> EditorStyle {
         fit_content: true,
         ..palette.editor_style()
     }
+}
+
+/// The quote icon, the start of the selected text and its lines, on one
+/// line: `faint` for the icon and lines, `text` for the excerpt.
+fn quote_label(quote: &Quote, faint: Hsla, text: Hsla) -> gpui::Div {
+    div()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .text_size(px(11.5))
+        .line_height(px(16.))
+        .child(
+            svg()
+                .path(QUOTE_ICON)
+                .size(px(12.))
+                .flex_none()
+                .text_color(faint),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(text)
+                .child(quote.excerpt()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_color(faint)
+                .child(quote.lines_label()),
+        )
 }
 
 fn tool_icon(name: &str) -> &'static str {

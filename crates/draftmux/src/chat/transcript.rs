@@ -8,6 +8,8 @@ use draftmux_pi_rpc::{AgentEvent, AssistantDelta, Event};
 use markup::Document;
 use serde_json::Value;
 
+use super::quote::{self, Quote};
+
 /// The extension's hidden context message, added after each Draftmux prompt
 /// whose context changed (pi-extension/README.md).
 const CONTEXT_TYPE: &str = "draftmux-context";
@@ -15,8 +17,10 @@ const CONTEXT_TYPE: &str = "draftmux-context";
 const MAX_OUTPUT_LINES: usize = 400;
 
 pub enum Item {
+    /// The user's message, and the selection sent with it.
     User {
         text: String,
+        quote: Option<Quote>,
     },
     Assistant {
         doc: Document,
@@ -122,12 +126,12 @@ impl Transcript {
         self.touch(0);
     }
 
-    /// The user sent `text`; `draft_text` is the draft as saved for pi.
-    pub fn sent(&mut self, text: String, draft_text: String) {
+    /// The user sent `prompt`; `draft_text` is the draft as saved for pi.
+    pub fn sent(&mut self, prompt: String, draft_text: String) {
         self.busy = true;
-        self.last_prompt = Some(text.clone());
         self.draft_text = Some(draft_text);
-        self.push(Item::User { text });
+        self.push(Item::user(&prompt));
+        self.last_prompt = Some(prompt);
     }
 
     /// pi didn't take the prompt.
@@ -204,15 +208,15 @@ impl Transcript {
             }
             Event::MessageStart { message } => match role(message) {
                 "user" => {
-                    let text = content_text(&message["content"], "\n");
+                    let prompt = content_text(&message["content"], "\n");
                     let echoed = matches!(
                         self.items.last(),
-                        Some(Item::User { text: last }) if *last == text
+                        Some(Item::User { .. }) if self.last_prompt.as_ref() == Some(&prompt)
                     );
                     if !echoed {
                         // A run an extension started, or history from elsewhere.
-                        self.last_prompt = Some(text.clone());
-                        self.push(Item::User { text });
+                        self.push(Item::user(&prompt));
+                        self.last_prompt = Some(prompt);
                     }
                 }
                 "assistant" => {
@@ -354,6 +358,15 @@ impl Item {
             doc: markup::github::parse(text),
         }
     }
+
+    /// The user's `prompt`, split into the message and its quote.
+    fn user(prompt: &str) -> Self {
+        let (quote, text) = quote::parse(prompt);
+        Item::User {
+            text: text.to_owned(),
+            quote,
+        }
+    }
 }
 
 impl Tool {
@@ -483,9 +496,9 @@ pub fn history(messages: &[Value]) -> (Vec<Item>, usize) {
     for message in &messages[start..] {
         match role(message) {
             "user" => {
-                let text = content_text(&message["content"], "\n");
-                transcript.last_prompt = Some(text.clone());
-                transcript.push(Item::User { text });
+                let prompt = content_text(&message["content"], "\n");
+                transcript.push(Item::user(&prompt));
+                transcript.last_prompt = Some(prompt);
             }
             "assistant" => {
                 let content = message["content"]
@@ -694,7 +707,7 @@ mod tests {
 
         assert!(!transcript.busy);
         // The echoed prompt isn't shown twice.
-        assert!(matches!(&transcript.items[0], Item::User { text } if text == prompt));
+        assert!(matches!(&transcript.items[0], Item::User { text, quote: None } if text == prompt));
         let users = transcript
             .items
             .iter()
@@ -901,7 +914,7 @@ mod tests {
         .unwrap();
         let (items, earlier) = history(&messages);
         assert_eq!(earlier, 2);
-        assert!(matches!(&items[0], Item::User { text } if text == "shorter"));
+        assert!(matches!(&items[0], Item::User { text, quote: None } if text == "shorter"));
         let Item::Tool(edit) = &items[1] else {
             panic!()
         };
@@ -927,6 +940,37 @@ mod tests {
         let (items, earlier) = history(&messages[..2]);
         assert!(items.is_empty());
         assert_eq!(earlier, 2);
+    }
+
+    #[test]
+    fn quoted_prompts_show_the_message_and_retry_the_whole_prompt() {
+        let draft = "one\ntwo\nthree";
+        let quote = Quote::new(draft, 4..7).unwrap();
+        let prompt = quote::prompt("shorter", Some(&quote));
+        let is_quoted = |item: &Item| matches!(item, Item::User { text, quote: Some(q) } if text == "shorter" && *q == quote);
+
+        let mut transcript = Transcript::default();
+        transcript.sent(prompt.clone(), draft.into());
+        let user =
+            serde_json::json!({"role": "user", "content": [{"type": "text", "text": prompt}]});
+        for event in [
+            Event::AgentStart,
+            Event::MessageStart {
+                message: user.clone(),
+            },
+            Event::AgentSettled { aborted: true },
+        ] {
+            transcript.apply(&AgentEvent::Pi(event), None, Instant::now());
+        }
+        // pi's echo of the prompt adds no second bubble.
+        assert!(matches!(&transcript.items[..], [user, Item::Failure { .. }] if is_quoted(user)));
+        assert_eq!(transcript.retry_at(1), Some(prompt.as_str()));
+
+        let (items, _) = history(&[
+            user,
+            serde_json::json!({"role": "custom", "customType": "draftmux-context", "content": "…"}),
+        ]);
+        assert!(matches!(&items[..], [user] if is_quoted(user)));
     }
 
     #[test]

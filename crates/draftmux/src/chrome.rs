@@ -170,7 +170,7 @@ impl Chrome {
     pub fn new(store: Store, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = theme::editor(Palette::editor_style, cx);
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
-        let chat = cx.new(Chat::new);
+        let chat = cx.new(|cx| Chat::new(editor.clone(), cx));
         let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
         let subscriptions = vec![
             cx.subscribe(&chat, |this, _, event, cx| this.chat_event(event, cx)),

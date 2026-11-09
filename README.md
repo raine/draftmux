@@ -110,8 +110,9 @@ objects with `name` and `prompt` strings, for example:
 
 Omit the key to use Shorter and Tighten, or set it to `[]` for no custom
 actions. Invalid entries, including blank names or prompts, are skipped.
-Alternatives and Instruction remain available. Manage the list in Settings →
-Selection actions.
+Alternatives remains available. Manage the list in Settings → Selection
+actions. For anything else, keep the text selected and ask the draft's agent in
+the chat: the selection is attached to your next message.
 
 ### Draftmux skill
 
