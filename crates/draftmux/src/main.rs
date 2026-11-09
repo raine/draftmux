@@ -17,6 +17,8 @@ mod markup_view;
 mod menu;
 mod model_picker;
 mod open;
+#[cfg(test)]
+mod performance;
 #[cfg_attr(target_os = "linux", path = "platform_linux.rs")]
 mod platform;
 mod process;

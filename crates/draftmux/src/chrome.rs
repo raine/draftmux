@@ -107,6 +107,7 @@ pub struct Chrome {
 
 impl Render for Chrome {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timing = editor::timing::span("chrome-render");
         let palette = *theme::palette(cx);
         let [sidebar_bar, editor_bar, preview_bar] = &self.scrollbars;
         let content = if self.drafts.current().is_some() {
@@ -565,6 +566,7 @@ impl Chrome {
     }
 
     fn edited(&mut self, text: String, cx: &mut Context<Self>) {
+        let _timing = editor::timing::span("edit-subscribers");
         let Some(target) = self.drafts.current().map(|draft| draft.meta.target) else {
             return;
         };
@@ -690,6 +692,7 @@ impl Chrome {
     }
 
     fn preview_body(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let _timing = editor::timing::span("preview-elements");
         let theme = theme::get(cx);
         let target = self.drafts.current().map(|draft| draft.meta.target);
         let (body, background) = match (&self.preview, target) {

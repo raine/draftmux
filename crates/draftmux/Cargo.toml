@@ -26,6 +26,13 @@ shell-env = { path = "../shell-env" }
 similar = "2.7.0"
 tempfile = "3.27.0"
 
+# The performance test includes the editor highlighter by path.
+[package.metadata.cargo-machete]
+ignored = ["comrak"]
+
+[dev-dependencies]
+comrak = { version = "0.59", default-features = false }
+
 [features]
 # `draftmux capture`: renders fixture drafts to PNGs (history/docs/design.md, Testing).
 capture = ["dep:image", "gpui/test-support", "gpui_platform/test-support"]

@@ -1460,6 +1460,7 @@ dependencies = [
  "chrono",
  "clap",
  "claude-convert",
+ "comrak",
  "draftmux-pi-profiles",
  "draftmux-pi-rpc",
  "draftmux-settings",

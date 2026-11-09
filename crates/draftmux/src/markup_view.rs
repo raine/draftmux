@@ -818,6 +818,7 @@ fn root(style: &MarkupStyle) -> Div {
 /// Parses `text` for previewing it on `target`. With [`style`], the one
 /// place a target chooses its parser and style.
 pub fn preview(target: Target, text: &str) -> Document {
+    let _timing = editor::timing::span("preview-parse");
     match target {
         Target::Github => markup::github::parse(text),
         Target::Slack => markup::slack::parse(text),

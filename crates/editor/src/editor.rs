@@ -497,6 +497,7 @@ impl Editor {
     }
 
     fn rehighlight(&mut self) {
+        let _timing = crate::timing::span("editor-highlight");
         self.highlights = if self.markdown {
             highlight(self.buffer.text())
         } else {
@@ -912,6 +913,8 @@ impl EntityInputHandler for Editor {
         if self.read_only {
             return;
         }
+        crate::timing::input(cx.entity_id());
+        let _timing = crate::timing::span("input-handler");
         let range = range_utf16.map(|r| self.range_from_utf16(&r));
         self.buffer.insert_in(range, text);
         self.after_change(Some(window), true, cx);

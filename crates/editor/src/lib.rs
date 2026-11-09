@@ -8,6 +8,7 @@ mod editor;
 mod element;
 mod highlight;
 mod movement;
+pub mod timing;
 
 pub use editor::{
     ContextMenuItem, ContextMenuRenderer, DismissMenu, Editor, EditorEvent, EditorStyle, init,

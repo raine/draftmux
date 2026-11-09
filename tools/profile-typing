@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Launch an isolated typing fixture with CPU timings on stderr.
+
+Usage: tools/profile-typing [small|large] [path/to/draftmux]
+Type into the focused editor. DRAFTMUX_TIMING reports milliseconds; input-to-
+editor-paint excludes OS delivery, GPU presentation, and display scanout.
+The fixture directory is retained so saved text can be checked after quitting.
+"""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+size = sys.argv[1] if len(sys.argv) > 1 else "small"
+if size not in ("small", "large"):
+    raise SystemExit("expected small or large")
+binary = Path(sys.argv[2] if len(sys.argv) > 2 else "target/debug/draftmux").resolve()
+root = Path(tempfile.mkdtemp(prefix="draftmux-typing-"))
+draft = root / "drafts" / "typing-fixture"
+(draft / "session").mkdir(parents=True)
+section = """## Release readiness
+
+We reviewed the **deployment plan** with the platform team. The next step is to validate *rollback safety* and [service health](https://example.com/health) before enabling traffic.
+
+- [x] Verify the staging configuration
+- [ ] Confirm ownership and update the runbook
+
+> Keep the previous version available until validation completes.
+
+```rust
+fn ready(count: usize) -> bool { count > 0 }
+```
+
+| Service | Status |
+| --- | --- |
+| API | Ready |
+| Worker | Pending |
+
+"""
+text = section * (2 if size == "small" else 200) + "A final update"
+(draft / "draft.md").write_text(text)
+(draft / "meta.json").write_text(json.dumps({
+    "target": "github", "status": "active", "title": f"Typing benchmark ({size})",
+    "cwd": str(root), "pi_agent_dir": str(root / "pi"),
+    "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+}))
+print(f"Fixture: {draft} ({len(text.encode())} bytes)", file=sys.stderr, flush=True)
+result = subprocess.run([str(binary), "app"], env={
+    **os.environ, "DRAFTMUX_DATA_DIR": str(root), "DRAFTMUX_CONFIG_DIR": str(root),
+    "DRAFTMUX_TIMING": "1",
+})
+sys.exit(result.returncode)

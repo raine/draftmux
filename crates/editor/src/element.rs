@@ -203,6 +203,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Rc<Layout> {
+        let _timing = crate::timing::span("editor-layout");
         let editor = self.editor.read(cx);
         let style = editor.style.clone();
         let wrap_width = (bounds.size.width - style.padding_x * 2.).max(px(1.));
@@ -351,6 +352,7 @@ impl Element for EditorElement {
                 ));
             }
         });
+        crate::timing::painted(self.editor.entity_id());
         if focused {
             self.editor
                 .update(cx, |editor, cx| editor.painted_focused(cx));
