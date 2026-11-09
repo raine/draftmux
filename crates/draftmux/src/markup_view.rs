@@ -1452,17 +1452,40 @@ enum Run {
 }
 
 /// How a mention run shows: Slack's bracketed forms as `@name`, `#channel`
-/// or `@here`, preferring the label after `|`.
+/// or `@here`, preferring the label after `|`. Unlabeled users get fictional
+/// preview names; the document and clipboard retain the Slack IDs.
 fn mention_label(run: &str) -> String {
     let Some(inner) = run.strip_prefix('<').and_then(|r| r.strip_suffix('>')) else {
         return run.to_owned();
     };
     let (sigil, rest) = inner.split_at(1);
     let (id, label) = rest.split_once('|').unwrap_or((rest, ""));
+    if sigil == "@" && label.is_empty() {
+        return preview_user_name(id);
+    }
     let name = if label.is_empty() { id } else { label };
     let sigil = if sigil == "#" { "#" } else { "@" };
     // `<!subteam^S123|@team>` labels already carry the sigil.
     format!("{sigil}{}", name.strip_prefix(sigil).unwrap_or(name))
+}
+
+/// Stable fictional names with a nod to drafting and writing.
+fn preview_user_name(id: &str) -> String {
+    const FIRST: [&str; 16] = [
+        "Ada", "Alex", "Amir", "Clara", "Elliot", "Felix", "Iris", "Jamie", "Jules", "Leo", "Maya",
+        "Nora", "Oscar", "Robin", "Sam", "Zoe",
+    ];
+    const LAST: [&str; 16] = [
+        "Archer", "Blake", "Booker", "Byron", "Ellis", "Folio", "Gray", "Hart", "Lane", "Page",
+        "Parker", "Penn", "Quill", "Reed", "Wilde", "Wren",
+    ];
+    // FNV-1a fixes the mapping across processes, platforms and Rust versions.
+    let hash = id.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    let first = FIRST[(hash % FIRST.len() as u64) as usize];
+    let last = LAST[(hash / FIRST.len() as u64 % LAST.len() as u64) as usize];
+    format!("@{first} {last}")
 }
 
 /// Length of a Slack mention in angle brackets at the start of `text`.
@@ -1736,13 +1759,33 @@ mod tests {
                 (" <@ x> <a>", Run::Text),
             ]
         );
-        assert_eq!(mention_label("<@W010J2WH545>"), "@W010J2WH545");
+        assert_eq!(mention_label("<@W010J2WH545>"), "@Jules Penn");
         assert_eq!(mention_label("<@U1|raine>"), "@raine");
         assert_eq!(mention_label("<#C1|dev team>"), "#dev team");
         assert_eq!(mention_label("<#C1>"), "#C1");
         assert_eq!(mention_label("<!here>"), "@here");
         assert_eq!(mention_label("<!subteam^S1|@eng>"), "@eng");
         assert_eq!(mention_label("@raine"), "@raine");
+    }
+
+    #[test]
+    fn preview_user_names_are_stable_and_display_only() {
+        let source = "Thanks <@W010J2WH545> and <@U066F0DKH7G>, <@W010J2WH545>!";
+        let parts = runs(source, true);
+        let names: Vec<_> = parts
+            .iter()
+            .filter(|(_, kind)| *kind == Run::Mention)
+            .map(|(run, _)| mention_label(run))
+            .collect();
+        assert_eq!(names, ["@Jules Penn", "@Zoe Lane", "@Jules Penn"]);
+        assert_eq!(
+            parts.iter().map(|(run, _)| *run).collect::<String>(),
+            source
+        );
+        assert_eq!(mention_label("<@W010J2WH545|>"), "@Jules Penn");
+        assert_eq!(mention_label("<@W010J2WH545|Real Name>"), "@Real Name");
+        assert_eq!(mention_label("<@U1|@raine>"), "@raine");
+        assert_eq!(runs(source, false), [(source, Run::Text)]);
     }
 
     #[test]
