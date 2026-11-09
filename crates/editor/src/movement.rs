@@ -64,7 +64,7 @@ pub fn next_grapheme(text: &str, offset: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-fn is_word(segment: &str) -> bool {
+pub fn is_word(segment: &str) -> bool {
     segment.chars().any(char::is_alphanumeric)
 }
 
@@ -105,6 +105,56 @@ pub fn line_range(text: &str, offset: usize) -> Range<usize> {
         .find('\n')
         .map_or(text.len(), |ix| offset + ix + 1);
     start..end
+}
+
+/// What a mouse drag selects by: characters after a single click, whole
+/// words after a double click and whole lines after a triple click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Granularity {
+    Char,
+    Word,
+    Line,
+}
+
+impl Granularity {
+    pub fn from_click_count(count: usize) -> Self {
+        match count {
+            0 | 1 => Self::Char,
+            2 => Self::Word,
+            _ => Self::Line,
+        }
+    }
+
+    /// The unit containing `offset`; a bare caret for `Char`.
+    pub fn unit(self, text: &str, offset: usize) -> Range<usize> {
+        match self {
+            Self::Char => offset..offset,
+            Self::Word => word_range(text, offset),
+            Self::Line => line_range(text, offset),
+        }
+    }
+}
+
+/// The selection a drag makes from the unit `origin` it started on to the
+/// unit at `offset`: both whole, with the head on the pointer's side so the
+/// caret follows it.
+pub fn drag_selection(
+    text: &str,
+    origin: Range<usize>,
+    offset: usize,
+    granularity: Granularity,
+) -> Selection {
+    let unit = granularity.unit(text, offset);
+    let (anchor, head) = if unit.start < origin.start {
+        (origin.end, unit.start)
+    } else {
+        (origin.start, unit.end.max(origin.end))
+    };
+    Selection {
+        anchor,
+        head,
+        affinity: Affinity::Downstream,
+    }
 }
 
 impl Buffer {
@@ -259,6 +309,20 @@ impl Buffer {
         self.delete(start..head, EditKind::Atomic);
     }
 
+    /// Deletes forward to the end of the caret's visual row, or the next
+    /// character, such as the line break, when already there.
+    pub fn delete_to_row_end(&mut self, rows: &impl RowGeometry) {
+        let head = self.selection().head;
+        let (row, _) = self.caret_row(rows);
+        let end = rows.row_range(row).end;
+        let end = if end == head {
+            next_grapheme(self.text(), head)
+        } else {
+            end
+        };
+        self.delete(head..end, EditKind::Atomic);
+    }
+
     pub fn paste(&mut self, text: &str) {
         let range = self.selection().range();
         self.replace_range(range, text);
@@ -403,6 +467,24 @@ mod tests {
     }
 
     #[test]
+    fn drags_extend_by_whole_units() {
+        let text = "one two three\nfour";
+        let range = |s: Selection| (s.anchor, s.head);
+        let word = Granularity::Word;
+        // Double click on "two", drag into "three": both words, head at the end.
+        assert_eq!(range(drag_selection(text, 4..7, 10, word)), (4, 13));
+        // Drag back into "one": both words, head at the start.
+        assert_eq!(range(drag_selection(text, 4..7, 1, word)), (7, 0));
+        // Still inside the first word: just that word.
+        assert_eq!(range(drag_selection(text, 4..7, 5, word)), (4, 7));
+        let line = Granularity::Line;
+        assert_eq!(range(drag_selection(text, 0..14, 16, line)), (0, 18));
+        let char = Granularity::Char;
+        assert_eq!(range(drag_selection(text, 4..4, 9, char)), (4, 9));
+        assert_eq!(range(drag_selection(text, 4..4, 1, char)), (4, 1));
+    }
+
+    #[test]
     fn word_deletion() {
         let mut b = Buffer::new("one two three");
         caret(&mut b, 7);
@@ -514,6 +596,19 @@ mod tests {
         let rows = FixedRows::new(b.text(), 4);
         b.delete_to_row_start(&rows);
         assert_eq!(b.text(), "abcgh");
+    }
+
+    #[test]
+    fn delete_to_row_end() {
+        let text = "abcdefgh\nij";
+        let rows = FixedRows::new(text, 4);
+        let mut b = Buffer::new(text);
+        caret(&mut b, 5);
+        b.delete_to_row_end(&rows);
+        assert_eq!(b.text(), "abcde\nij");
+        let rows = FixedRows::new(b.text(), 4);
+        b.delete_to_row_end(&rows);
+        assert_eq!(b.text(), "abcdeij");
     }
 
     #[test]

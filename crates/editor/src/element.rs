@@ -4,10 +4,10 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    App, AvailableSpace, Bounds, ContentMask, ElementId, ElementInputHandler, Entity, Font,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Pixels, Point,
-    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WrappedLine, fill, point,
-    prelude::*, px, relative, size,
+    App, AvailableSpace, Bounds, ContentMask, DispatchPhase, ElementId, ElementInputHandler,
+    Entity, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId,
+    MouseMoveEvent, Pixels, Point, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window,
+    WrappedLine, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::buffer::Affinity;
@@ -354,6 +354,14 @@ impl Element for EditorElement {
         if focused {
             self.editor
                 .update(cx, |editor, cx| editor.painted_focused(cx));
+        }
+        if self.editor.read(cx).is_selecting() {
+            let editor = self.editor.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    editor.update(cx, |editor, cx| editor.on_mouse_move(event, window, cx));
+                }
+            });
         }
     }
 }

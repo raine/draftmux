@@ -241,6 +241,7 @@ impl Chrome {
         let item = |label: &str, action| MenuItem {
             label: SharedString::from(label.to_owned()),
             checked: false,
+            enabled: true,
             action: Some(action),
         };
         let items = [
@@ -249,6 +250,7 @@ impl Chrome {
             MenuItem {
                 label: SharedString::default(),
                 checked: false,
+                enabled: false,
                 action: None,
             },
             item("Archive", RowAction::Archive),

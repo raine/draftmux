@@ -9,4 +9,4 @@ mod element;
 mod highlight;
 mod movement;
 
-pub use editor::{Editor, EditorEvent, EditorStyle, init};
+pub use editor::{ContextMenuItem, ContextMenuRenderer, Editor, EditorEvent, EditorStyle, init};

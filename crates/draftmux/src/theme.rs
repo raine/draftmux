@@ -9,11 +9,14 @@
 //! surfaces that would show it paint [`Palette::sidebar`] and
 //! [`Palette::menu_tint`], which turn opaque and cover it.
 
+use std::rc::Rc;
+
+use crate::menu::{MenuItem, menu_panel};
 use crate::platform;
 /// The monospaced font for code, paths and model names.
 pub use editor::platform::MONO;
-use editor::{Editor, EditorStyle};
-use gpui::{App, AppContext, Entity, Global, Hsla, rgba};
+use editor::{ContextMenuItem, Editor, EditorStyle};
+use gpui::{AnyElement, App, AppContext, Entity, Global, Hsla, IntoElement, Window, rgba};
 
 pub struct Theme {
     pub dark: bool,
@@ -76,6 +79,7 @@ pub fn editor(style: fn(&Palette) -> EditorStyle, cx: &mut App) -> Entity<Editor
     cx.new(|cx| {
         let mut editor = Editor::new("", cx);
         editor.set_style(style(palette(cx)), cx);
+        editor.set_context_menu(Rc::new(context_menu));
         cx.observe_global::<Theme>(move |editor: &mut Editor, cx| {
             let style = style(palette(cx));
             editor.set_style(style, cx);
@@ -83,6 +87,30 @@ pub fn editor(style: fn(&Palette) -> EditorStyle, cx: &mut App) -> Entity<Editor
         .detach();
         editor
     })
+}
+
+/// The editor's right-click menu, drawn like the app's other menus.
+fn context_menu(items: Vec<ContextMenuItem>, _: &mut Window, cx: &mut App) -> AnyElement {
+    let (items, actions): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .enumerate()
+        .map(|(ix, item)| {
+            let menu_item = MenuItem {
+                label: item.label,
+                checked: false,
+                enabled: item.enabled,
+                action: item.action.is_some().then_some(ix),
+            };
+            (menu_item, item.action)
+        })
+        .unzip();
+    let actions = Rc::new(actions);
+    menu_panel(palette(cx), &items, move |ix, window, cx| {
+        if let Some(action) = &actions[ix] {
+            window.dispatch_action(action.boxed_clone(), cx);
+        }
+    })
+    .into_any_element()
 }
 
 /// Colours of the "Native" prototype variant (history/docs/prototype/index.html):

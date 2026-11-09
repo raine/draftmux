@@ -6,16 +6,16 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, EventEmitter,
-    FocusHandle, Focusable, Font, Hsla, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, ScrollEvent, UTF16Selection, Window, actions, div, font,
-    prelude::*, px, rgb, rgba,
+    Action, AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
+    EventEmitter, FocusHandle, Focusable, Font, Hsla, KeyBinding, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollEvent, SharedString, UTF16Selection, Window,
+    actions, anchored, deferred, div, font, prelude::*, px, rgb, rgba,
 };
 
 use crate::buffer::{Affinity, Buffer, Selection, offset_from_utf16, offset_to_utf16};
 use crate::element::{EditorElement, Layout};
 use crate::highlight::{Styles, highlight};
-use crate::movement::{line_range, word_range};
+use crate::movement::{Granularity, drag_selection, is_word};
 
 actions!(
     editor,
@@ -25,6 +25,7 @@ actions!(
         DeleteWordLeft,
         DeleteWordRight,
         DeleteToLineStart,
+        DeleteToLineEnd,
         Newline,
         Left,
         Right,
@@ -55,6 +56,7 @@ actions!(
         Undo,
         Redo,
         ShowCharacterPalette,
+        DismissMenu,
     ]
 );
 
@@ -77,6 +79,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-backspace", DeleteWordLeft, ctx),
         KeyBinding::new("alt-delete", DeleteWordRight, ctx),
         KeyBinding::new("cmd-backspace", DeleteToLineStart, ctx),
+        KeyBinding::new("cmd-delete", DeleteToLineEnd, ctx),
+        KeyBinding::new("ctrl-k", DeleteToLineEnd, ctx),
         KeyBinding::new("enter", Newline, ctx),
         KeyBinding::new("shift-enter", Newline, ctx),
         KeyBinding::new("left", Left, ctx),
@@ -101,6 +105,8 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-right", LineEnd, ctx),
         KeyBinding::new("end", LineEnd, ctx),
         KeyBinding::new("ctrl-e", LineEnd, ctx),
+        KeyBinding::new("ctrl-shift-a", SelectLineStart, ctx),
+        KeyBinding::new("ctrl-shift-e", SelectLineEnd, ctx),
         KeyBinding::new("cmd-shift-left", SelectLineStart, ctx),
         KeyBinding::new("shift-home", SelectLineStart, ctx),
         KeyBinding::new("cmd-shift-right", SelectLineEnd, ctx),
@@ -118,6 +124,7 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-z", Undo, ctx),
         KeyBinding::new("cmd-shift-z", Redo, ctx),
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, ctx),
+        KeyBinding::new("escape", DismissMenu, ctx),
     ]
 }
 
@@ -161,8 +168,21 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-z", Undo, ctx),
         KeyBinding::new("ctrl-shift-z", Redo, ctx),
         KeyBinding::new("ctrl-y", Redo, ctx),
+        KeyBinding::new("escape", DismissMenu, ctx),
     ]
 }
+
+/// One item of the editor's context menu; `action: None` is a separator.
+pub struct ContextMenuItem {
+    pub label: SharedString,
+    pub action: Option<Box<dyn Action>>,
+    pub enabled: bool,
+}
+
+/// Draws the context menu's panel from its items. Picking an item should
+/// dispatch its action, which reaches the editor since it has focus.
+pub type ContextMenuRenderer =
+    Rc<dyn Fn(Vec<ContextMenuItem>, &mut Window, &mut App) -> AnyElement>;
 
 /// Emitted after the change it describes has been applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,6 +257,13 @@ pub struct Editor {
     markdown: bool,
     /// A mouse drag selection is in progress.
     selecting: bool,
+    /// What the drag selects by, and the unit it started on.
+    drag: (Granularity, Range<usize>),
+    /// Where the dragging pointer last was, in window coordinates.
+    drag_pointer: Point<Pixels>,
+    /// Set while a drag is held above or below the visible text, which
+    /// keeps scrolling and selecting toward the pointer.
+    drag_scrolling: bool,
     /// What the last events reported, to emit only real changes.
     reported_revision: u64,
     reported_selection: Range<usize>,
@@ -249,10 +276,15 @@ pub struct Editor {
     /// Bumped when the caret moves or the text changes, which ends the
     /// running blink so the caret stays solid while the user types.
     blink_epoch: u64,
+    /// Where the open context menu was requested, in window coordinates.
+    context_menu: Option<Point<Pixels>>,
+    menu_renderer: Option<ContextMenuRenderer>,
 }
 
 /// How long the caret stays on, and then off, while blinking.
 const BLINK_PERIOD: Duration = Duration::from_millis(530);
+/// How often a drag held outside the text scrolls it by a row.
+const DRAG_SCROLL_PERIOD: Duration = Duration::from_millis(50);
 
 impl EventEmitter<EditorEvent> for Editor {}
 
@@ -277,6 +309,11 @@ impl Editor {
             autoscroll: false,
             layout: None,
             selecting: false,
+            drag: (Granularity::Char, 0..0),
+            drag_pointer: Point::default(),
+            drag_scrolling: false,
+            context_menu: None,
+            menu_renderer: None,
             reported_selection: 0..0,
             caret_on: true,
             painted_focused: false,
@@ -333,6 +370,12 @@ impl Editor {
 
     pub fn text(&self) -> &str {
         self.buffer.text()
+    }
+
+    /// Enables the right-click menu (Cut, Copy, Paste, Select All), drawn by
+    /// `renderer`.
+    pub fn set_context_menu(&mut self, renderer: ContextMenuRenderer) {
+        self.menu_renderer = Some(renderer);
     }
 
     pub fn set_style(&mut self, style: EditorStyle, cx: &mut Context<Self>) {
@@ -401,6 +444,10 @@ impl Editor {
     /// A mouse drag selection is in progress; the selection isn't final.
     pub fn is_selecting(&self) -> bool {
         self.selecting
+    }
+
+    pub fn is_context_menu_open(&self) -> bool {
+        self.context_menu.is_some()
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -542,7 +589,11 @@ impl Editor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        if let Some(text) = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .filter(|text| !text.is_empty())
+        {
             self.user_edit(window, cx, |b| b.paste(&text));
         }
     }
@@ -570,28 +621,139 @@ impl Editor {
         let Some((offset, affinity)) = self.hit(event.position) else {
             return;
         };
-        let text = self.buffer.text();
-        match event.click_count {
-            2 => self.buffer.select_range(word_range(text, offset), false),
-            n if n >= 3 => self.buffer.select_range(line_range(text, offset), false),
-            _ => {
-                let anchor = if event.modifiers.shift {
-                    self.buffer.selection().anchor
-                } else {
-                    offset
-                };
-                self.buffer.set_selection(Selection {
-                    anchor,
-                    head: offset,
-                    affinity,
-                });
-            }
+        let granularity = Granularity::from_click_count(event.click_count);
+        if granularity == Granularity::Char {
+            let anchor = if event.modifiers.shift {
+                self.buffer.selection().anchor
+            } else {
+                offset
+            };
+            self.buffer.set_selection(Selection {
+                anchor,
+                head: offset,
+                affinity,
+            });
+            self.drag = (granularity, anchor..anchor);
+        } else {
+            let unit = granularity.unit(self.buffer.text(), offset);
+            self.buffer.select_range(unit.clone(), false);
+            self.drag = (granularity, unit);
         }
         self.selecting = true;
         self.after_change(Some(window), false, cx);
     }
 
-    fn on_mouse_move(
+    /// Opens the context menu. As in AppKit, a right-click outside the
+    /// selection first selects the word under the pointer, or places the
+    /// caret there when it isn't on a word.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.menu_renderer.is_none() {
+            return;
+        }
+        window.focus(&self.focus_handle, cx);
+        if let Some((offset, affinity)) = self.hit(event.position) {
+            let selection = self.buffer.selection().range();
+            if selection.is_empty() || !(selection.start..=selection.end).contains(&offset) {
+                let text = self.buffer.text();
+                let word = Granularity::Word.unit(text, offset);
+                if is_word(&text[word.clone()]) {
+                    self.buffer.select_range(word, false);
+                } else {
+                    self.buffer.set_selection(Selection {
+                        anchor: offset,
+                        head: offset,
+                        affinity,
+                    });
+                }
+            }
+        }
+        self.context_menu = Some(event.position);
+        cx.stop_propagation();
+        self.after_change(Some(window), false, cx);
+    }
+
+    fn context_menu_items(&self, cx: &App) -> Vec<ContextMenuItem> {
+        let selected = !self.buffer.selection().is_empty();
+        let item = |label: &'static str, action: Box<dyn Action>, enabled| ContextMenuItem {
+            label: label.into(),
+            action: Some(action),
+            enabled,
+        };
+        let mut items = Vec::new();
+        if !self.read_only {
+            items.push(item("Cut", Box::new(Cut), selected));
+        }
+        items.push(item("Copy", Box::new(Copy), selected));
+        if !self.read_only {
+            let can_paste = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .is_some_and(|text| !text.is_empty());
+            items.push(item("Paste", Box::new(Paste), can_paste));
+        }
+        items.push(ContextMenuItem {
+            label: SharedString::default(),
+            action: None,
+            enabled: false,
+        });
+        items.push(item("Select All", Box::new(SelectAll), true));
+        items
+    }
+
+    fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn dismiss_menu(&mut self, _: &DismissMenu, _: &mut Window, cx: &mut Context<Self>) {
+        if self.context_menu.is_some() {
+            self.close_context_menu(cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn render_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let position = self.context_menu?;
+        let renderer = self.menu_renderer.clone()?;
+        let panel = renderer(self.context_menu_items(cx), window, cx);
+        Some(
+            deferred(
+                anchored()
+                    .position(position)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .occlude()
+                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                this.close_context_menu(cx);
+                            }))
+                            // Items handle the click first, then the menu closes.
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| this.close_context_menu(cx)),
+                            )
+                            .child(panel),
+                    ),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    /// Extends a drag selection. Called for every mouse move in the window,
+    /// so the drag keeps going when the pointer leaves the editor.
+    pub(crate) fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         window: &mut Window,
@@ -600,15 +762,59 @@ impl Editor {
         if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
-        let Some((head, affinity)) = self.hit(event.position) else {
+        self.drag_pointer = event.position;
+        self.extend_drag(window, cx);
+        if self.drag_outside() && !self.drag_scrolling {
+            self.drag_scrolling = true;
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(DRAG_SCROLL_PERIOD).await;
+                    let go = this
+                        .update_in(cx, |this, window, cx| {
+                            if !this.selecting || !this.drag_outside() {
+                                return false;
+                            }
+                            this.extend_drag(window, cx);
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !go {
+                        break;
+                    }
+                }
+                this.update(cx, |this, _| this.drag_scrolling = false).ok();
+            })
+            .detach();
+        }
+    }
+
+    /// Whether the dragging pointer is above or below the visible text of a
+    /// scrolling editor.
+    fn drag_outside(&self) -> bool {
+        let Some(layout) = &self.layout else {
+            return false;
+        };
+        let y = self.drag_pointer.y;
+        !self.style.fit_content && (y < layout.bounds.top() || y > layout.bounds.bottom())
+    }
+
+    /// Selects from the drag's origin to the pointer, scrolling the head into
+    /// view; held outside the text, each call reaches one row further.
+    fn extend_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((head, affinity)) = self.hit(self.drag_pointer) else {
             return;
         };
-        let anchor = self.buffer.selection().anchor;
-        self.buffer.set_selection(Selection {
-            anchor,
-            head,
-            affinity,
-        });
+        let selection = match &self.drag {
+            (Granularity::Char, origin) => Selection {
+                anchor: origin.start,
+                head,
+                affinity,
+            },
+            (granularity, origin) => {
+                drag_selection(self.buffer.text(), origin.clone(), head, *granularity)
+            }
+        };
+        self.buffer.set_selection(selection);
         self.after_change(Some(window), true, cx);
     }
 
@@ -769,7 +975,8 @@ impl EntityInputHandler for Editor {
 }
 
 impl Render for Editor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let context_menu = self.render_context_menu(window, cx);
         div()
             .id("editor")
             .size_full()
@@ -804,6 +1011,11 @@ impl Render for Editor {
             .on_action(cx.listener(|this, _: &DeleteToLineStart, window, cx| {
                 if !this.read_only {
                     this.row_movement(window, cx, |b, rows| b.delete_to_row_start(rows));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DeleteToLineEnd, window, cx| {
+                if !this.read_only {
+                    this.row_movement(window, cx, |b, rows| b.delete_to_row_end(rows));
                 }
             }))
             .on_action(cx.listener(|this, _: &Left, window, cx| {
@@ -880,7 +1092,8 @@ impl Render for Editor {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::show_character_palette))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
+            .on_action(cx.listener(Self::dismiss_menu))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .when(!self.style.fit_content, |editor| {
@@ -889,6 +1102,7 @@ impl Render for Editor {
             .child(EditorElement {
                 editor: cx.entity(),
             })
+            .children(context_menu)
     }
 }
 

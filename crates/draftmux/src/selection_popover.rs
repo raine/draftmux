@@ -273,14 +273,16 @@ impl SelectionPopover {
         }
     }
 
-    /// Shows the actions once the selection has settled and the mouse
-    /// button is up.
+    /// Shows the actions once the selection has settled, the mouse button
+    /// is up and the editor's context menu is closed.
     fn schedule_show(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.pending_show = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SHOW_DELAY).await;
-                let Ok(selecting) = this.update(cx, |this, cx| this.editor.read(cx).is_selecting())
-                else {
+                let Ok(selecting) = this.update(cx, |this, cx| {
+                    let editor = this.editor.read(cx);
+                    editor.is_selecting() || editor.is_context_menu_open()
+                }) else {
                     return;
                 };
                 if !selecting {

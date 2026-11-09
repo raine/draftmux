@@ -379,11 +379,13 @@ impl SettingsWindow {
         let item = |label: SharedString, checked: bool, choice: Choice| MenuItem {
             label,
             checked,
+            enabled: true,
             action: Some(choice),
         };
         let separator = || MenuItem {
             label: SharedString::default(),
             checked: false,
+            enabled: false,
             action: None,
         };
         let own = scope(self.settings(cx), self.page)

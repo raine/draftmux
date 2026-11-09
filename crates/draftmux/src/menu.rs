@@ -9,6 +9,8 @@ use crate::theme::{Palette, hex};
 pub struct MenuItem<A> {
     pub label: SharedString,
     pub checked: bool,
+    /// Disabled items are drawn dimmed and can't be picked.
+    pub enabled: bool,
     /// `None` draws a separator.
     pub action: Option<A>,
 }
@@ -42,6 +44,15 @@ pub fn menu_panel<A: Clone + 'static>(
                 .mx(px(8.))
                 .h(px(0.5))
                 .bg(c.menu_line)
+                .into_any_element(),
+            Some(_) if !item.enabled => div()
+                .flex()
+                .items_center()
+                .h(px(22.))
+                .pr(px(10.))
+                .text_color(c.faint)
+                .child(div().w(px(20.)).flex_none())
+                .child(div().truncate().child(item.label.clone()))
                 .into_any_element(),
             Some(action) => {
                 let action = action.clone();
