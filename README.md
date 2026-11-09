@@ -111,6 +111,11 @@ the draft back. Install it with:
 draftmux skill install
 ```
 
+`draftmux show` finds the draft from the agent's session file, so the agent
+doesn't need the ID. When it can't, for example after the session was resumed
+under a new file, `draftmux list` prints the drafts, newest first (`--cwd DIR`
+for one project's, `--all` to include archived ones, `--json` for scripts).
+
 This writes a small `SKILL.md` to `~/.claude/skills/draftmux` (or
 `$CLAUDE_CONFIG_DIR/skills/draftmux`) and links each pi profile's
 `skills/draftmux` (`~/.pi/agent`, `~/.pi-*/agent` and profiles added in

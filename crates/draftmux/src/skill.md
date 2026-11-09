@@ -94,5 +94,13 @@ If several drafts came from this session, `show` uses the most recently active
 one and lists the others on stderr; mention them to the user. If it finds no
 draft (for example the session was resumed under a new file) and you still
 have the ID from `open`, use `draftmux show <id>` or
-`draftmux show <id> --path` instead. Otherwise ask the user. Never run `open`
-to recover a draft.
+`draftmux show <id> --path` instead. Without the ID, list the drafts from
+this directory, newest first:
+
+```sh
+draftmux list --cwd "$PWD"
+```
+
+Each line is the ID, last edit time, target, directory and title. Show the
+user the drafts that could be this one and ask which to use, then read it
+with `draftmux show <id>`. Never run `open` to recover a draft.

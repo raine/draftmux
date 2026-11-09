@@ -11,6 +11,7 @@ mod file_watch;
 mod format;
 mod inline_text;
 mod ipc;
+mod list;
 mod markup_view;
 mod model_picker;
 mod open;
@@ -55,6 +56,7 @@ struct Cli {
 enum Command {
     Open(open::Args),
     Show(show::Args),
+    List(list::Args),
     Skill(skill::Args),
     #[cfg(feature = "capture")]
     #[command(hide = true)]
@@ -65,6 +67,7 @@ fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Some(Command::Open(args)) => open::main(args),
         Some(Command::Show(args)) => show::main(args).map(|()| 0),
+        Some(Command::List(args)) => list::main(args).map(|()| 0),
         Some(Command::Skill(args)) => skill::main(args),
         #[cfg(feature = "capture")]
         Some(Command::Capture(args)) => Ok(capture::main(args)),
