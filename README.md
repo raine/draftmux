@@ -33,30 +33,33 @@ notarized for distribution.
 
 ### Draftmux skill
 
-Agents hand messages off to Draftmux with the `draftmux` skill in
-[skills/draftmux/](skills/draftmux/SKILL.md): it opens the conversation in a
-new draft with `draftmux open`, and reads the polished draft back with
-`draftmux show`. It only runs when you invoke it: `/draftmux PR description`
-in Claude Code or `/skill:draftmux` in pi to hand off, and `/draftmux done`
-plus what to do with it (for example "open the PR") to read the draft back.
-Link it into `~/.claude/skills`, after checking that
-`~/.claude/skills/draftmux` doesn't already exist:
+Agents hand messages off to Draftmux with the `draftmux` skill: it opens the
+conversation in a new draft with `draftmux open`, and reads the polished draft
+back with `draftmux show`. It only runs when you invoke it: `/draftmux PR
+description` in Claude Code or `/skill:draftmux` in pi to hand off, and
+`/draftmux done` plus what to do with it (for example "open the PR") to read
+the draft back. Install it with:
 
 ```sh
-ls -la ~/.claude/skills/draftmux   # should report "No such file or directory"
-mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/draftmux" ~/.claude/skills/draftmux
+draftmux skill install
 ```
 
-Claude Code loads it from there. pi doesn't read `~/.claude/skills` by default:
-add it to `"skills"` in each pi profile's `settings.json`
-(`~/.pi/agent/settings.json`), or link the skill into
-`~/.agents/skills/draftmux` instead, which every profile loads. Don't do both,
-or pi sees two `draftmux` skills.
+This writes a small `SKILL.md` to `~/.claude/skills/draftmux` (or
+`$CLAUDE_CONFIG_DIR/skills/draftmux`) and links each pi profile's
+`skills/draftmux` (`~/.pi/agent`, `~/.pi-*/agent` and profiles added in
+Draftmux) to it. The skill only runs `draftmux skill`, which prints the
+instructions built into the binary, so updating Draftmux updates the skill
+without reinstalling it. pi sees one `draftmux` skill even if a profile also
+lists `~/.claude/skills` in its `"skills"` setting, because both paths lead to
+the same file. If `~/.agents/skills/draftmux` exists, which every pi profile
+loads, install leaves pi alone and links Claude Code's skill to it instead.
 
-```json
-{ "skills": ["~/.claude/skills"] }
-```
+Running install again updates the skills it installed earlier. It never
+replaces anything else at those paths, such as a link to a checkout's
+`skills/draftmux` from an earlier manual install: it reports the path and
+skips it. That link keeps working, since
+[skills/draftmux/SKILL.md](skills/draftmux/SKILL.md) is the same stub; remove
+it and run install again to switch.
 
 In pi, the skill finds the session file through `$PI_SESSION_FILE`, which pi's
 bash tool sets. pi extensions that replace the bash tool must pass the tool's
@@ -135,7 +138,7 @@ crates/storage/      draft directories, meta.json, atomic writes, autosave
 pi-extension/        pi extension the app passes to pi; bundled as a resource
 macos/               Info.plist, app icon master (1024 px) and disk image layout
 scripts/             build, install and release scripts and their tests
-skills/draftmux/     the `draftmux` agent skill for Claude Code and pi
+skills/draftmux/     agent skill stub; its instructions are crates/draftmux/src/skill.md
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has

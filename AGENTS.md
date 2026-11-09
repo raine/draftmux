@@ -21,3 +21,7 @@ explicitly asked:
 
 - Don't run `cargo fmt` manually; the pre-commit hook formats staged Rust.
 - Install the hooks once per clone with `just install-hooks`.
+- The `draftmux` agent skill's instructions are in
+  `crates/draftmux/src/skill.md`, printed by `draftmux skill`.
+  `skills/draftmux/SKILL.md` is only the stub that loads them; the binary
+  embeds it for `draftmux skill install`.

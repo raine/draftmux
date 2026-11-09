@@ -22,6 +22,7 @@ mod selection;
 mod selection_popover;
 mod settings_window;
 mod show;
+mod skill;
 mod source;
 mod theme;
 
@@ -47,6 +48,7 @@ struct Cli {
 enum Command {
     Open(open::Args),
     Show(show::Args),
+    Skill(skill::Args),
     #[cfg(feature = "capture")]
     #[command(hide = true)]
     Capture(capture::Args),
@@ -57,6 +59,7 @@ fn main() {
         std::process::exit(match command {
             Command::Open(args) => open::main(args),
             Command::Show(args) => show::main(args),
+            Command::Skill(args) => skill::main(args),
             #[cfg(feature = "capture")]
             Command::Capture(args) => capture::main(args),
         });
