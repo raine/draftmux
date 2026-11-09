@@ -45,7 +45,7 @@ use crate::chrome::shadow;
 use crate::markup_view::{self, MarkupStyle, SelectBody};
 use crate::profiles::ProfileCatalog;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
-use crate::selectable::{self, TextSelection};
+use crate::selectable::{self, Scroller, TextSelection};
 use crate::theme::{self, MONO, Palette, Theme};
 use quote::Quote;
 use transcript::{DiffLine, Item, Tool, Transcript};
@@ -232,6 +232,11 @@ impl Chat {
                 }
             }
         }
+        let scroller = self
+            .session()
+            .map(|session| Scroller::List(session.list.clone()));
+        self.text_selection
+            .update(cx, |selection, _| selection.set_scroller(scroller));
         cx.emit(ChatEvent::Running(self.busy()));
         cx.notify();
     }

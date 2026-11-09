@@ -29,7 +29,7 @@ use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
 use crate::markup_view::{self, SelectBody};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
-use crate::selectable::{self, SelectionChanged, TextSelection};
+use crate::selectable::{self, Scroller, SelectionChanged, TextSelection};
 use crate::selection_popover::SelectionPopover;
 use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
@@ -207,7 +207,12 @@ impl Chrome {
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         let chat = cx.new(|cx| Chat::new(editor.clone(), cx));
         let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
-        let preview_selection = cx.new(TextSelection::new);
+        let preview_scroll = ScrollHandle::new();
+        let preview_selection = cx.new(|cx| {
+            let mut selection = TextSelection::new(cx);
+            selection.set_scroller(Some(Scroller::Handle(preview_scroll.clone())));
+            selection
+        });
         let subscriptions = vec![
             cx.observe(&preview_selection, |_, _, cx| cx.notify()),
             cx.subscribe(&preview_selection, |this, _, _: &SelectionChanged, cx| {
@@ -272,7 +277,7 @@ impl Chrome {
             row_menu: None,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_focus: cx.focus_handle(),
-            preview_scroll: ScrollHandle::new(),
+            preview_scroll,
             scrollbars: Default::default(),
             autosave: Task::ready(()),
             _clock: clock,

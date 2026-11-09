@@ -7,22 +7,29 @@
 //! while it prepaints. [`area`] wraps the surface: a press starts a selection
 //! at the nearest text, dragging extends it across
 //! paragraphs, a double click selects a word and a triple click a paragraph.
-//! ⌘C copies the selected text and ⌘A selects everything. Pressing outside the
+//! Dragging past the top or bottom of the surface scrolls it, faster the
+//! farther the pointer is. ⌘C copies the selected text and ⌘A selects
+//! everything. Pressing outside the
 //! surface clears the selection.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, Div, Entity, EventEmitter, FocusHandle, Hsla, KeyBinding,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Window,
-    actions, canvas, div, prelude::*,
+    ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollHandle, SharedString, Window, actions, canvas, div, point, prelude::*, px,
 };
 
 actions!(selectable, [CopySelection, SelectAllText]);
 
 const KEY_CONTEXT: &str = "SelectableText";
+/// How often a drag past the edge scrolls.
+const AUTOSCROLL_TICK: Duration = Duration::from_millis(16);
+/// The most a drag past the edge scrolls in one tick.
+const AUTOSCROLL_MAX_STEP: Pixels = px(40.);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -51,6 +58,37 @@ pub struct Select {
     pub color: Hsla,
 }
 
+/// What scrolls the surface, so a drag past its edge can.
+#[derive(Clone)]
+pub enum Scroller {
+    Handle(ScrollHandle),
+    List(ListState),
+}
+
+impl Scroller {
+    fn viewport(&self) -> Bounds<Pixels> {
+        match self {
+            Scroller::Handle(handle) => handle.bounds(),
+            Scroller::List(list) => list.viewport_bounds(),
+        }
+    }
+
+    /// Moves the view `distance` toward the top, or toward the bottom when
+    /// negative.
+    fn scroll_by(&self, distance: Pixels) {
+        match self {
+            // The offset is zero at the top and negative below it.
+            Scroller::Handle(handle) => {
+                let offset = handle.offset();
+                let y = (offset.y + distance).clamp(-handle.max_offset().y, px(0.));
+                handle.set_offset(point(offset.x, y));
+            }
+            // The list scrolls down by a positive distance.
+            Scroller::List(list) => list.scroll_by(-distance),
+        }
+    }
+}
+
 /// The selection changed; the range is in each end's paragraph.
 pub struct SelectionChanged;
 
@@ -66,6 +104,11 @@ pub struct TextSelection {
     /// While the button is down: what the drag extends by and the unit it
     /// started on, which stays selected whichever way it goes.
     dragging: Option<(Unit, Pos, Pos)>,
+    scroller: Option<Scroller>,
+    /// Where the pointer last was during a drag.
+    pointer: Point<Pixels>,
+    /// Whether a drag past the edge is scrolling.
+    autoscrolling: bool,
 }
 
 struct Painted {
@@ -92,7 +135,15 @@ impl TextSelection {
             anchor: None,
             head: None,
             dragging: None,
+            scroller: None,
+            pointer: Point::default(),
+            autoscrolling: false,
         }
+    }
+
+    /// Lets a drag past the surface's edge scroll it with `scroller`.
+    pub fn set_scroller(&mut self, scroller: Option<Scroller>) {
+        self.scroller = scroller;
     }
 
     /// Forgets the paragraphs and the selection, for new content whose
@@ -233,6 +284,20 @@ impl TextSelection {
         let Some((unit, start, end)) = self.dragging else {
             return;
         };
+        self.pointer = point;
+        if !self.autoscrolling && self.autoscroll_step() != px(0.) {
+            self.autoscrolling = true;
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(AUTOSCROLL_TICK).await;
+                    let more = this.update(cx, |this, cx| this.autoscroll(cx));
+                    if !matches!(more, Ok(true)) {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
         let Some(pos) = self.pos_at(point) else {
             return;
         };
@@ -247,6 +312,44 @@ impl TextSelection {
             cx.emit(SelectionChanged);
             cx.notify();
         }
+    }
+
+    /// How far to scroll this tick: up (positive) with the pointer above the
+    /// viewport, down below it, nothing inside it.
+    fn autoscroll_step(&self) -> Pixels {
+        let Some(viewport) = self.scroller.as_ref().map(Scroller::viewport) else {
+            return px(0.);
+        };
+        let y = self.pointer.y;
+        let past = if y < viewport.top() {
+            viewport.top() - y
+        } else if y > viewport.bottom() {
+            viewport.bottom() - y
+        } else {
+            return px(0.);
+        };
+        // A quarter of the distance past the edge, so the speed follows the
+        // pointer.
+        (past / 4.).clamp(-AUTOSCROLL_MAX_STEP, AUTOSCROLL_MAX_STEP)
+    }
+
+    /// Scrolls one tick and extends the selection to the text now under the
+    /// pointer. Returns whether to keep going.
+    fn autoscroll(&mut self, cx: &mut Context<Self>) -> bool {
+        let step = self.autoscroll_step();
+        let scroller = match (&self.scroller, self.dragging) {
+            (Some(scroller), Some(_)) if step != px(0.) => scroller.clone(),
+            _ => {
+                self.autoscrolling = false;
+                return false;
+            }
+        };
+        scroller.scroll_by(step);
+        // The paragraphs are where the last frame painted them; the next
+        // tick sees them moved.
+        self.mouse_drag(self.pointer, cx);
+        cx.notify();
+        true
     }
 
     /// The word or paragraph around `pos`, or `pos` itself.
