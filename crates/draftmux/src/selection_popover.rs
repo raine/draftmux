@@ -137,6 +137,9 @@ impl Drop for CancelOnDrop {
 struct Panel {
     handle: WindowHandle<PopoverPanel>,
     bounds: Bounds<Pixels>,
+    /// Dismisses the popover when the panel, key for the instruction field,
+    /// loses focus to another app.
+    _activation: Subscription,
 }
 
 const ACTIONS: [(&str, Option<&str>); 4] = [
@@ -310,7 +313,20 @@ impl SelectionPopover {
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.pending_show = None;
         if self.open.take().is_some() {
+            // Closed now rather than after the main window's next draw: a
+            // window covered by another app may not draw until it's shown
+            // again, which would leave the empty panel on screen meanwhile.
+            self.close_panel(cx);
             self.changed(cx);
+        }
+    }
+
+    fn close_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(panel) = self.panel.take() {
+            panel
+                .handle
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
         }
     }
 
@@ -593,12 +609,7 @@ impl SelectionPopover {
                     .ok();
             }
             (_, target) => {
-                if let Some(panel) = self.panel.take() {
-                    panel
-                        .handle
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
-                }
+                self.close_panel(cx);
                 if let Some(bounds) = target {
                     self.open_panel(bounds, window, cx);
                 }
@@ -662,7 +673,15 @@ impl SelectionPopover {
         // The panel renders this entity as it opens, so it opens after the
         // current update.
         cx.defer(move |cx| {
-            let opened = cx.open_window(options, |_, cx| {
+            let mut activation = None;
+            let opened = cx.open_window(options, |window, cx| {
+                activation = Some(popover.update(cx, |_, cx| {
+                    cx.observe_window_activation(window, |this, window, cx| {
+                        if !window.is_window_active() {
+                            this.dismiss_unless_panel_active(cx);
+                        }
+                    })
+                }));
                 cx.new(|_| PopoverPanel {
                     popover: popover.clone(),
                 })
@@ -671,7 +690,15 @@ impl SelectionPopover {
                 this.opening = false;
                 match opened {
                     Ok(handle) => {
-                        this.panel = Some(Panel { handle, bounds });
+                        this.panel = Some(Panel {
+                            handle,
+                            bounds,
+                            _activation: activation.expect("set when the window opens"),
+                        });
+                        // Dismissed while it opened.
+                        if this.open.is_none() {
+                            return this.close_panel(cx);
+                        }
                         this.focus_panel(cx);
                         // The state may have changed while it opened.
                         this.schedule_reconcile(cx);
