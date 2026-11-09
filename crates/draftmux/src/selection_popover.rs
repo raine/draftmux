@@ -279,13 +279,11 @@ impl SelectionPopover {
                     && popover.content_size.is_none()
                     && popover.in_preview(cx) == preview,
                 |pane| {
-                    let mut copy = div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
+                    // Style the measured element itself: an auto-sized wrapper
+                    // with only an absolute child has no intrinsic width.
+                    let mut copy = measured_content(this.clone(), popover.content(this, cx))
                         .text_size(px(13.))
-                        .font_family(editor::platform::ui_font())
-                        .child(measured_content(this.clone(), popover.content(this, cx)));
+                        .font_family(editor::platform::ui_font());
                     copy.style().visibility = Some(gpui::Visibility::Hidden);
                     pane.child(copy)
                 },
@@ -777,14 +775,14 @@ impl SelectionPopover {
                 div()
                     .flex()
                     .gap(px(2.))
-                    .max_w(px(600.))
-                    .flex_wrap()
+                    .flex_nowrap()
                     .children(
                         std::iter::once(("Alternatives", Some("✦")))
                             .chain(actions.iter().map(|action| (action.name.as_str(), None)))
                             .enumerate()
                             .map(|(index, (label, icon))| {
                                 item(index)
+                                    .flex_none()
                                     .flex()
                                     .items_center()
                                     .gap(px(6.))
