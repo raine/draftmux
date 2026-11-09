@@ -1,13 +1,24 @@
 ---
-name: draft
-description: Hand a GitHub, Slack or email message off to the Draftmux app for polishing, and read the polished draft back. Use when the user asks to draft, write or polish a message (PR description, issue or PR comment, commit message, Slack message, email) in Draftmux, or runs /draft. Also use when the user says a Draftmux draft is done, ready, or should be used or posted, including after the conversation was compacted.
+name: draftmux
+description: Hand a GitHub, Slack or email message off to the Draftmux app for polishing, or read the polished draft back. Run /draftmux with what to write (a PR description, issue or PR comment, commit message, Slack message or email), or with "done" and what to do with the finished draft.
+disable-model-invocation: true
+argument-hint: "[what to write | done, what to do with it]"
 ---
 
-# Draftmux draft
+# Draftmux
 
 Draftmux opens the message in its own window, with this conversation as
 context, so the user can polish it there. Later, when the user says the draft
 is done, read it back and use it.
+
+The user runs this skill explicitly, both to hand a message off and to use the
+finished draft:
+
+- **Hand off** when they ask for a message to be written, or give no
+  instructions. Follow "Hand off" below.
+- **Read back** when they say the draft is done or ready, or ask to use, post
+  or send it, including after the conversation was compacted. Follow "Read it
+  back" below.
 
 ## Locate this session
 
@@ -17,7 +28,7 @@ between commands, so repeat them each time; never reuse a path from memory.
 ```sh
 f=
 if [ -n "${DRAFTMUX_DRAFT_PATH:-}" ]; then
-  echo "draft: this session is already a Draftmux draft; edit $DRAFTMUX_DRAFT_PATH directly" >&2
+  echo "draftmux: this session is already a Draftmux draft; edit $DRAFTMUX_DRAFT_PATH directly" >&2
   exit 1
 elif [ -n "${PI_SESSION_ID:-}" ]; then
   f=${PI_SESSION_FILE:-}
@@ -25,9 +36,9 @@ elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   f=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -mindepth 2 -maxdepth 2 \
     -name "$CLAUDE_CODE_SESSION_ID.jsonl" -print -quit)
 elif [ "${PI_CODING_AGENT:-}" = true ]; then
-  echo "draft: pi didn't set PI_SESSION_ID for bash; a pi extension that replaces the bash tool may not pass it through" >&2
+  echo "draftmux: pi didn't set PI_SESSION_ID for bash; a pi extension that replaces the bash tool may not pass it through" >&2
 fi
-[ -f "$f" ] || { echo "draft: can't find this session's file" >&2; exit 1; }
+[ -f "$f" ] || { echo "draftmux: can't find this session's file" >&2; exit 1; }
 ```
 
 If it fails, report the error to the user. Don't guess the session file by

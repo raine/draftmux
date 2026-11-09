@@ -646,10 +646,9 @@ fn empty_state(palette: &Palette) -> impl IntoElement {
                 .child("No drafts"),
         )
         .child(
-            div()
-                .text_size(px(12.))
-                .text_color(palette.faint)
-                .child("Hand a message off with the draft skill or draftmux open."),
+            div().text_size(px(12.)).text_color(palette.faint).child(
+                "Run /draftmux in Claude Code or /skill:draftmux in pi to hand a message off.",
+            ),
         )
 }
 

@@ -31,25 +31,28 @@ since the link points into it. To uninstall, delete `Draftmux.app` and the
 `target/debug/Draftmux.app`. Both are ad-hoc signed for running locally, not
 notarized for distribution.
 
-### Draft skill
+### Draftmux skill
 
-Agents hand messages off to Draftmux with the `draft` skill in
-[skills/draft/](skills/draft/SKILL.md): it opens the conversation in a new
-draft with `draftmux open`, and reads the polished draft back with
-`draftmux show`. Link it into `~/.claude/skills`, after checking that
-`~/.claude/skills/draft` doesn't already exist:
+Agents hand messages off to Draftmux with the `draftmux` skill in
+[skills/draftmux/](skills/draftmux/SKILL.md): it opens the conversation in a
+new draft with `draftmux open`, and reads the polished draft back with
+`draftmux show`. It only runs when you invoke it: `/draftmux PR description`
+in Claude Code or `/skill:draftmux` in pi to hand off, and `/draftmux done`
+plus what to do with it (for example "open the PR") to read the draft back.
+Link it into `~/.claude/skills`, after checking that
+`~/.claude/skills/draftmux` doesn't already exist:
 
 ```sh
-ls -la ~/.claude/skills/draft   # should report "No such file or directory"
+ls -la ~/.claude/skills/draftmux   # should report "No such file or directory"
 mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/draft" ~/.claude/skills/draft
+ln -s "$PWD/skills/draftmux" ~/.claude/skills/draftmux
 ```
 
 Claude Code loads it from there. pi doesn't read `~/.claude/skills` by default:
 add it to `"skills"` in each pi profile's `settings.json`
-(`~/.pi/agent/settings.json`), or link the skill into `~/.agents/skills/draft`
-instead, which every profile loads. Don't do both, or pi sees two `draft`
-skills.
+(`~/.pi/agent/settings.json`), or link the skill into
+`~/.agents/skills/draftmux` instead, which every profile loads. Don't do both,
+or pi sees two `draftmux` skills.
 
 ```json
 { "skills": ["~/.claude/skills"] }
@@ -132,7 +135,7 @@ crates/storage/      draft directories, meta.json, atomic writes, autosave
 pi-extension/        pi extension the app passes to pi; bundled as a resource
 macos/               Info.plist, app icon master (1024 px) and disk image layout
 scripts/             build, install and release scripts and their tests
-skills/draft/        the `draft` agent skill for Claude Code and pi
+skills/draftmux/     the `draftmux` agent skill for Claude Code and pi
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has
