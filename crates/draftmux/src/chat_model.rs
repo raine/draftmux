@@ -25,21 +25,25 @@ pub struct ChatModel {
     profile_name: SharedString,
     state: Option<State>,
     picker: Option<(Entity<ModelPicker>, Subscription)>,
-    /// Focus to restore when the picker closes.
-    previous_focus: Option<FocusHandle>,
+    /// The composer, focused again when the picker closes.
+    composer: FocusHandle,
     switching: bool,
     error: Option<SharedString>,
 }
 
 impl ChatModel {
     /// `profile_name` is the draft's pi profile, for the picker's messages.
-    pub fn new(agent: Arc<Agent>, profile_name: impl Into<SharedString>) -> Self {
+    pub fn new(
+        agent: Arc<Agent>,
+        profile_name: impl Into<SharedString>,
+        composer: FocusHandle,
+    ) -> Self {
         Self {
             agent,
             profile_name: profile_name.into(),
             state: None,
             picker: None,
-            previous_focus: None,
+            composer,
             switching: false,
             error: None,
         }
@@ -87,7 +91,6 @@ impl ChatModel {
                 PickerEvent::Dismissed => this.close(window, cx),
                 PickerEvent::Retry => this.load_models(cx),
             });
-        self.previous_focus = window.focused(cx);
         window.focus(&picker.focus_handle(cx), cx);
         self.picker = Some((picker, subscription));
         self.load_models(cx);
@@ -122,10 +125,13 @@ impl ChatModel {
         .detach();
     }
 
+    /// A click outside closes the picker after the click has moved focus,
+    /// so the composer gets it back only if the picker still has it.
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker = None;
-        if let Some(focus) = self.previous_focus.take() {
-            window.focus(&focus, cx);
+        if let Some((picker, _)) = self.picker.take()
+            && picker.focus_handle(cx).is_focused(window)
+        {
+            window.focus(&self.composer, cx);
         }
         cx.notify();
     }

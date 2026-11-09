@@ -8,17 +8,27 @@
 
 use draftmux_pi_profiles::{Availability, ModelRef, availability};
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton,
-    ScrollStrategy, SharedString, UniformListScrollHandle, Window, div, prelude::*, px,
-    uniform_list,
+    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent,
+    MouseButton, ScrollStrategy, SharedString, UniformListScrollHandle, Window, actions, div,
+    prelude::*, px, uniform_list,
 };
 
 use crate::profiles::ModelList;
 use crate::theme;
 
+actions!(model_picker, [Dismiss]);
+
+const KEY_CONTEXT: &str = "ModelPicker";
 const WIDTH: gpui::Pixels = px(320.);
 const ROW_HEIGHT: gpui::Pixels = px(24.);
 const VISIBLE_ROWS: usize = 14;
+
+/// Escape is an action rather than a key in [`ModelPicker::key_down`], so it
+/// beats Escape bindings of the views that host the picker, such as the
+/// composer's Stop.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new("escape", Dismiss, Some(KEY_CONTEXT))]);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickerEvent {
@@ -181,7 +191,6 @@ impl ModelPicker {
                     self.pick(ix, cx);
                 }
             }
-            "escape" => cx.emit(PickerEvent::Dismissed),
             "backspace" if mods.platform => self.edit_query(String::clear, cx),
             "backspace" if mods.alt => self.edit_query(
                 |query| {
@@ -297,8 +306,9 @@ impl Render for ModelPicker {
         let palette = *theme::palette(cx);
         div()
             .id("model-picker")
-            .key_context("ModelPicker")
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|_, _: &Dismiss, _, cx| cx.emit(PickerEvent::Dismissed)))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(PickerEvent::Dismissed)))
             .w(WIDTH)

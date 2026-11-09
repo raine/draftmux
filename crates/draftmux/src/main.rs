@@ -106,6 +106,7 @@ fn run_app() -> Result<()> {
             format::init(cx);
             copy::init(cx);
             chat::init(cx);
+            model_picker::init(cx);
             chrome::init(cx);
             selection_popover::init(cx);
             settings_window::init(cx);

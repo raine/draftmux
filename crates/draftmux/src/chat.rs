@@ -209,6 +209,7 @@ impl Chat {
         env: &Arc<ShellEnv>,
         cx: &mut Context<Self>,
     ) -> Option<futures::channel::mpsc::UnboundedReceiver<AgentEvent>> {
+        let composer = self.composer.focus_handle(cx);
         let session = self.sessions.get_mut(id)?;
         let draft = &session.draft;
         let spec = (|| {
@@ -247,7 +248,7 @@ impl Chat {
                 .map(|entry| entry.profile.name.clone())
                 .unwrap_or_else(|| dir.display().to_string());
             let agent = agent.clone();
-            cx.new(|_| ChatModel::new(agent, profile_name))
+            cx.new(|_| ChatModel::new(agent, profile_name, composer))
         });
         session.agent = Some(agent);
         if self.current.as_deref() == Some(id) {
