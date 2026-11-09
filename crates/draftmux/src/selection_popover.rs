@@ -28,7 +28,7 @@ use editor::{Editor, EditorEvent};
 use gpui::{
     Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, KeyBinding, Pixels,
     SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions, actions, canvas, div, point, prelude::*, px, size,
+    WindowOptions, actions, canvas, div, point, prelude::*, px,
 };
 use shell_env::ShellEnv;
 
@@ -271,6 +271,25 @@ impl SelectionPopover {
                 move |pick: &Pick, _, cx| this.update(cx, |this, cx| this.apply(pick.0, cx))
             })
             .child(child)
+            // Before the panel opens, a hidden copy of its content in the
+            // pane measures it, so the panel opens at its final size.
+            .when(
+                popover.open.is_some()
+                    && popover.panel.is_none()
+                    && popover.content_size.is_none()
+                    && popover.in_preview(cx) == preview,
+                |pane| {
+                    let mut copy = div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .text_size(px(13.))
+                        .font_family(editor::platform::ui_font())
+                        .child(measured_content(this.clone(), popover.content(this, cx)));
+                    copy.style().visibility = Some(gpui::Visibility::Hidden);
+                    pane.child(copy)
+                },
+            )
             .child(
                 canvas(
                     |_, _, _| {},
@@ -613,7 +632,9 @@ impl SelectionPopover {
     /// above the selection.
     fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reconcile_scheduled = false;
-        if self.opening {
+        // Wait for the content's size rather than show a guess and correct
+        // it, which reopens the panel wherever it moves.
+        if self.opening || (self.open.is_some() && self.content_size.is_none()) {
             return;
         }
         let target = self.placement(window, cx);
@@ -652,7 +673,7 @@ impl SelectionPopover {
             .filter(|row| row.bottom() > pane.top() && row.top() < pane.bottom())
             .collect();
         let (first, last) = (rows.first()?, rows.last()?);
-        let size = self.content_size.unwrap_or_else(|| self.estimated_size());
+        let size = self.content_size?;
 
         let above = first.top() - GAP - size.height;
         let y = if above >= pane.top() + MARGIN {
@@ -664,25 +685,6 @@ impl SelectionPopover {
         let x = (first.left() - px(6.)).clamp(pane.left() + MARGIN, max_x);
         let origin = window.bounds().origin + point(x, y);
         Some(Bounds::new(origin.map(|v| v.round()), size))
-    }
-
-    /// The size of the first frame, before the content has been measured.
-    fn estimated_size(&self) -> Size<Pixels> {
-        match self.open.as_ref().map(|open| &open.mode) {
-            Some(Mode::Actions(actions)) => {
-                let width = 220.
-                    + actions
-                        .iter()
-                        .map(|action| (action.name.chars().count() as f32 * 7.).min(140.) + 20.)
-                        .sum::<f32>();
-                size(
-                    px(width.min(600.) + 10.),
-                    px((width / 600.).ceil() * 28. + 10.),
-                )
-            }
-            Some(Mode::Results(_)) => size(RESULTS_WIDTH, px(120.)),
-            _ => size(px(330.), px(36.)),
-        }
     }
 
     fn open_panel(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
@@ -900,25 +902,25 @@ impl Render for PopoverPanel {
                 let popover = popover.clone();
                 move |_, _, cx| popover.update(cx, |this, cx| this.focus_main(cx))
             })
-            .child(
-                // Laid out at its natural size, then measured to size the
-                // panel.
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .p(PADDING)
-                    .child(content)
-                    .child(
-                        canvas(
-                            move |bounds, _, cx| {
-                                popover.update(cx, |this, cx| this.measured(bounds.size, cx))
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    ),
-            )
+            .child(measured_content(popover, content))
     }
+}
+
+/// `content` laid out at its natural size, then measured to size the
+/// panel.
+fn measured_content(popover: Entity<SelectionPopover>, content: AnyElement) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .p(PADDING)
+        .child(content)
+        .child(
+            canvas(
+                move |bounds, _, cx| popover.update(cx, |this, cx| this.measured(bounds.size, cx)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
 }
