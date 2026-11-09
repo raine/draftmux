@@ -11,13 +11,15 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>draftmux</string>
+	<string>fi.zendit.Draftmux</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>Draftmux</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>
