@@ -29,6 +29,7 @@ use crate::app_settings::AppSettings;
 use crate::assets::{FOLDER_ICON, GEAR_ICON, GLOBE_ICON, PLUS_ICON, SPARK_ICON};
 use crate::model_picker::{ModelPicker, PickerEvent};
 use crate::profiles::{ModelList, ProfileCatalog};
+use crate::scrollbar::{ScrollbarState, scrollbar};
 use crate::theme::{self, MONO, Palette};
 use widgets::*;
 
@@ -168,6 +169,8 @@ enum Choice {
 
 pub struct SettingsWindow {
     page: Page,
+    scroll: gpui::ScrollHandle,
+    scrollbar: ScrollbarState,
     home: PathBuf,
     focus_handle: FocusHandle,
     menu: Option<(Field, Vec<MenuItem<Choice>>)>,
@@ -213,6 +216,8 @@ impl SettingsWindow {
         window.focus(&focus_handle, cx);
         let mut this = Self {
             page: Page::Defaults,
+            scroll: gpui::ScrollHandle::new(),
+            scrollbar: ScrollbarState::default(),
             home: std::env::home_dir().unwrap_or_default(),
             focus_handle,
             menu: None,
@@ -232,6 +237,10 @@ impl SettingsWindow {
     }
 
     fn show(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page != page {
+            self.scroll = gpui::ScrollHandle::new();
+            self.scrollbar = ScrollbarState::default();
+        }
         self.page = page;
         self.menu = None;
         self.picker = None;
@@ -1805,19 +1814,29 @@ impl Render for SettingsWindow {
                     })
                     .child(
                         div()
-                            .id(("settings-scroll", page_key(self.page)))
+                            .relative()
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_col()
-                                    .px(px(22.))
-                                    .pt(px(2.))
-                                    .pb(px(28.))
-                                    .children(body),
-                            ),
+                                    .id(("settings-scroll", page_key(self.page)))
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.scroll)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .px(px(22.))
+                                            .pt(px(2.))
+                                            .pb(px(28.))
+                                            .children(body),
+                                    ),
+                            )
+                            .child(scrollbar(
+                                crate::scrollbar::Source::Handle(self.scroll.clone()),
+                                &self.scrollbar,
+                            )),
                     ),
             );
         crate::platform::frame(

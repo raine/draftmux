@@ -1,5 +1,6 @@
 mod app_settings;
 mod assets;
+mod bounce;
 #[cfg(feature = "capture")]
 mod capture;
 mod chat;

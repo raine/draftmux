@@ -9,7 +9,9 @@
 
 mod transcript;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,10 +31,12 @@ use crate::assets::{
     CHEVRON_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON, TOOL_BASH_ICON,
     TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
+use crate::bounce::{Bounce, ListBounce};
 use crate::chat_model::ChatModel;
 use crate::chrome::shadow;
 use crate::markup_view::{self, MarkupStyle};
 use crate::profiles::ProfileCatalog;
+use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme::{self, MONO, Palette, Theme};
 use transcript::{DiffLine, Item, Tool, Transcript};
 
@@ -82,6 +86,9 @@ struct Session {
     agent: Option<Result<Arc<Agent>, String>>,
     transcript: Transcript,
     list: ListState,
+    /// The transcript's rubber band at its ends.
+    bounce: Rc<RefCell<Bounce>>,
+    scrollbar: ScrollbarState,
     /// Shows and switches the model of the running agent.
     model: Option<Entity<ChatModel>>,
     history_loaded: bool,
@@ -156,8 +163,14 @@ impl Chat {
                     self.focus_agent(&id, cx);
                 }
                 None => {
-                    let list = ListState::new(0, ListAlignment::Bottom, px(600.));
+                    // Measured up front so the rubber band stretches at the
+                    // real ends, not where measuring has got to.
+                    let list = ListState::new(0, ListAlignment::Bottom, px(600.)).measure_all();
                     list.set_follow_mode(FollowMode::Tail);
+                    let chat = cx.entity().downgrade();
+                    list.set_scroll_handler(move |_, _, cx| {
+                        chat.update(cx, |_, cx| cx.notify()).ok();
+                    });
                     self.sessions.insert(
                         id.clone(),
                         Session {
@@ -165,6 +178,8 @@ impl Chat {
                             agent: None,
                             transcript: Transcript::default(),
                             list,
+                            bounce: Rc::default(),
+                            scrollbar: ScrollbarState::default(),
                             model: None,
                             history_loaded: false,
                             history_ready: false,
@@ -485,6 +500,8 @@ impl Chat {
             session
                 .list
                 .splice(from..old_len, items - from + usize::from(activity_row));
+            // Measures the new items; `measure_all` otherwise only runs once.
+            session.list.remeasure_items(from..from);
         }
         session.activity_row = activity_row;
         cx.notify();
@@ -905,14 +922,67 @@ impl Render for Chat {
                         log.child(sample_card(&palette))
                     })
                     .child(
-                        list(
-                            session.list.clone(),
-                            cx.processor(|this, index, window, cx| {
-                                this.render_item(index, window, cx)
-                            }),
-                        )
-                        .flex_1()
-                        .min_h_0(),
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .child(ListBounce::new(
+                                "transcript-bounce",
+                                session.bounce.clone(),
+                                session.list.clone(),
+                                list(
+                                    session.list.clone(),
+                                    cx.processor(|this, index, window, cx| {
+                                        this.render_item(index, window, cx)
+                                    }),
+                                )
+                                .size_full(),
+                            ))
+                            .child(scrollbar(
+                                Source::List(session.list.clone()),
+                                &session.scrollbar,
+                            ))
+                            .when(
+                                !session.list.is_following_tail()
+                                    && session.list.max_offset_for_scrollbar().y
+                                        + session.list.scroll_px_offset_for_scrollbar().y
+                                        > px(1.),
+                                |log| {
+                                    let list = session.list.clone();
+                                    log.child(
+                                        div()
+                                            .id("jump-to-latest")
+                                            .absolute()
+                                            .bottom(px(10.))
+                                            .right(px(20.))
+                                            .size(px(30.))
+                                            .rounded_full()
+                                            .bg(palette.card)
+                                            .text_color(palette.text)
+                                            .border_1()
+                                            .border_color(palette.card_ring)
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .hover(|style| style.bg(palette.control_hover))
+                                            .active(|style| style.opacity(0.8))
+                                            .tooltip(crate::tooltip::text("Jump to latest"))
+                                            .on_click(move |_, window, _| {
+                                                list.set_follow_mode(FollowMode::Tail);
+                                                window.refresh();
+                                            })
+                                            .child(
+                                                svg()
+                                                    .path(SEND_ICON)
+                                                    .size(px(16.))
+                                                    .text_color(palette.text)
+                                                    .with_transformation(Transformation::rotate(
+                                                        percentage(0.5),
+                                                    )),
+                                            ),
+                                    )
+                                },
+                            ),
                     )
                     .children(unavailable.map(|err| {
                         div()
