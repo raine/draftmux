@@ -506,29 +506,6 @@ impl Chrome {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::adjacent_row;
-
-    #[test]
-    fn sidebar_navigation_moves_without_wrapping() {
-        assert_eq!(adjacent_row(Some(1), 3, false), Some(0));
-        assert_eq!(adjacent_row(Some(1), 3, true), Some(2));
-        assert_eq!(adjacent_row(Some(0), 3, false), Some(0));
-        assert_eq!(adjacent_row(Some(2), 3, true), Some(2));
-        assert_eq!(adjacent_row(Some(0), 1, false), Some(0));
-        assert_eq!(adjacent_row(Some(0), 1, true), Some(0));
-    }
-
-    #[test]
-    fn sidebar_navigation_handles_empty_and_unselected_lists() {
-        assert_eq!(adjacent_row(None, 0, false), None);
-        assert_eq!(adjacent_row(None, 0, true), None);
-        assert_eq!(adjacent_row(None, 3, false), Some(2));
-        assert_eq!(adjacent_row(None, 3, true), Some(0));
-    }
-}
-
 /// "Sample" before the sample draft's meta line.
 fn sample_badge(palette: &theme::Palette) -> impl IntoElement {
     div()
@@ -559,5 +536,28 @@ fn platform_icon(target: Target, text: Hsla) -> AnyElement {
         Target::Slack => img(SLACK_ICON).size(px(15.)).into_any_element(),
         Target::Rich => tinted(RICH_TEXT_ICON),
         Target::Plain => tinted(PLAIN_TEXT_ICON),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjacent_row;
+
+    #[test]
+    fn sidebar_navigation_moves_without_wrapping() {
+        assert_eq!(adjacent_row(Some(1), 3, false), Some(0));
+        assert_eq!(adjacent_row(Some(1), 3, true), Some(2));
+        assert_eq!(adjacent_row(Some(0), 3, false), Some(0));
+        assert_eq!(adjacent_row(Some(2), 3, true), Some(2));
+        assert_eq!(adjacent_row(Some(0), 1, false), Some(0));
+        assert_eq!(adjacent_row(Some(0), 1, true), Some(0));
+    }
+
+    #[test]
+    fn sidebar_navigation_handles_empty_and_unselected_lists() {
+        assert_eq!(adjacent_row(None, 0, false), None);
+        assert_eq!(adjacent_row(None, 0, true), None);
+        assert_eq!(adjacent_row(None, 3, false), Some(2));
+        assert_eq!(adjacent_row(None, 3, true), Some(0));
     }
 }
