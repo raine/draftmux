@@ -634,6 +634,7 @@ impl Chat {
                                 .bg(palette.control)
                                 .text_color(palette.text)
                                 .hover(|style| style.bg(palette.control_hover))
+                                .active(|style| style.opacity(0.8))
                                 .on_click(cx.listener(move |this, _, _, cx| this.retry(index, cx)))
                                 .child("Retry"),
                         )
@@ -696,6 +697,7 @@ impl Chat {
             .mx(px(-2.))
             .rounded(px(6.))
             .hover(|style| style.bg(palette.hover))
+            .active(|style| style.opacity(0.8))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(index, cx)))
             .child(
                 div()
@@ -869,13 +871,15 @@ impl Chat {
                                         .text_color(palette.on_accent),
                                 )
                                 .when(busy || can_send, |button| {
-                                    button.on_click(cx.listener(move |this, _, _, cx| {
-                                        if busy {
-                                            this.stop(cx);
-                                        } else {
-                                            this.send(cx);
-                                        }
-                                    }))
+                                    button
+                                        .active(|style| style.opacity(0.8))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if busy {
+                                                this.stop(cx);
+                                            } else {
+                                                this.send(cx);
+                                            }
+                                        }))
                                 }),
                         ),
                 ),

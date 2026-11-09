@@ -22,7 +22,9 @@ pub(super) struct Toast {
     text: SharedString,
     /// Draft to unarchive when Undo is clicked.
     undo: Option<String>,
-    _dismiss: Task<()>,
+    /// Hides the toast when it ends; `None` while the pointer is over the
+    /// toast, so it stays until the pointer leaves.
+    dismiss: Option<Task<()>>,
 }
 
 /// A right-clicked draft row's menu, at the click.
@@ -173,6 +175,8 @@ impl Chrome {
                         .opacity(0.)
                         .group_hover(group, |style| style.opacity(1.))
                         .hover(|style| style.bg(palette.archive_button_hover))
+                        .active(|style| style.opacity(0.8))
+                        .tooltip(crate::tooltip::text("Archive"))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(
                             cx.listener(move |this, _, window, cx| this.archive(&id, window, cx)),
@@ -345,20 +349,35 @@ impl Chrome {
         undo: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let dismiss = cx.spawn(async move |this, cx| {
+        self.toast = Some(Toast {
+            text: text.into(),
+            undo,
+            dismiss: Some(Self::dismiss_toast_later(cx)),
+        });
+        cx.notify();
+    }
+
+    fn dismiss_toast_later(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TOAST_DURATION).await;
             this.update(cx, |this, cx| {
                 this.toast = None;
                 cx.notify();
             })
             .ok();
-        });
-        self.toast = Some(Toast {
-            text: text.into(),
-            undo,
-            _dismiss: dismiss,
-        });
-        cx.notify();
+        })
+    }
+
+    /// Pauses the toast's countdown while the pointer is over it, so it
+    /// doesn't vanish while the user reaches for Undo, and restarts it after.
+    fn toast_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.toast.is_none() {
+            return;
+        }
+        let dismiss = (!hovered).then(|| Self::dismiss_toast_later(cx));
+        if let Some(toast) = &mut self.toast {
+            toast.dismiss = dismiss;
+        }
     }
 
     pub(super) fn toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -368,6 +387,9 @@ impl Chrome {
             div()
                 .id("toast")
                 .occlude()
+                .on_hover(
+                    cx.listener(|this, hovered: &bool, _, cx| this.toast_hovered(*hovered, cx)),
+                )
                 .absolute()
                 .left(px(16.))
                 .bottom(px(16.))
@@ -393,6 +415,7 @@ impl Chrome {
                         .rounded(px(6.))
                         .bg(palette.toast_button)
                         .hover(|style| style.bg(palette.toast_button_hover))
+                        .active(|style| style.opacity(0.8))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.undo_archive(&id, window, cx)
                         }))

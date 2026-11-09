@@ -289,6 +289,7 @@ impl Chrome {
                     .border_color(palette.line_strong)
                     .bg(palette.control)
                     .hover(|style| style.bg(palette.control_hover))
+                    .active(|style| style.opacity(0.8))
                     .text_size(px(12.5))
                     .text_color(palette.text)
                     .on_click(cx.listener(|this, _, window, cx| this.open_sample(window, cx)))
@@ -663,6 +664,12 @@ impl Chrome {
                     .rounded(px(6.))
                     .group("toggle-preview")
                     .hover(|style| style.bg(palette.hover))
+                    .active(|style| style.opacity(0.8))
+                    .tooltip(crate::tooltip::text(if self.show_preview {
+                        editor::by_platform!("Hide Preview (⌥⌘P)", "Hide Preview (Ctrl+Alt+P)")
+                    } else {
+                        editor::by_platform!("Show Preview (⌥⌘P)", "Show Preview (Ctrl+Alt+P)")
+                    }))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx)))
                     .child(
                         svg()
@@ -710,7 +717,9 @@ fn target_switch(
                 ])
             })
             .when(!on, |segment| {
-                segment.on_click(cx.listener(move |this, _, _, cx| this.set_target(target, cx)))
+                segment
+                    .active(|style| style.opacity(0.8))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_target(target, cx)))
             })
             .child(label)
     };

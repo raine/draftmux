@@ -192,6 +192,7 @@ impl Render for Formatter {
                             if available {
                                 button
                                     .hover(|style| style.bg(palette.hover))
+                                    .active(|style| style.opacity(0.8))
                                     .on_click(cx.listener(|this, _, _, cx| this.format(cx)))
                             } else {
                                 button.opacity(0.4)

@@ -703,6 +703,7 @@ impl SelectionPopover {
             let highlighted = open.highlighted == Some(index);
             div()
                 .id(("item", index))
+                .active(|style| style.opacity(0.8))
                 .rounded(ITEM_RADIUS)
                 .when(highlighted, |item| {
                     item.bg(palette.accent).text_color(palette.on_accent)

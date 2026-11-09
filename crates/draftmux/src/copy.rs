@@ -113,6 +113,7 @@ pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl 
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(palette.on_accent)
+        .active(|style| style.opacity(0.8))
         .on_click(move |_, _, cx| on_click(cx))
         .child(
             svg()

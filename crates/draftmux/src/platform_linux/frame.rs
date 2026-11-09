@@ -53,6 +53,7 @@ pub fn frame(
                         .items_center()
                         .justify_center()
                         .hover(|s| s.bg(palette.hover))
+                        .active(|style| style.opacity(0.8))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(move |_, window, cx| match button {

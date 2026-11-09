@@ -66,6 +66,7 @@ pub fn menu_panel<A: Clone + 'static>(
                     .rounded(px(4.))
                     .text_color(c.text)
                     .hover(move |item| item.bg(accent).text_color(on_accent))
+                    .active(|style| style.opacity(0.8))
                     .child(
                         div()
                             .w(px(20.))

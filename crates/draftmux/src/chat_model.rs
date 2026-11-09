@@ -198,6 +198,9 @@ impl Render for ChatModel {
                     .truncate()
                     .cursor_pointer()
                     .when(self.switching, |label| label.opacity(0.5))
+                    .when(!self.switching, |label| {
+                        label.active(|style| style.opacity(0.8))
+                    })
                     .child(self.label())
                     .on_mouse_down(
                         MouseButton::Left,

@@ -30,6 +30,7 @@ mod show;
 mod skill;
 mod source;
 mod theme;
+mod tooltip;
 
 use std::io::{self, Write};
 use std::process::ExitCode;

@@ -82,6 +82,7 @@ pub fn toolbar_items(palette: &crate::theme::Palette) -> Option<gpui::AnyElement
             .text_size(px(12.))
             .rounded(px(5.))
             .hover(|s| s.bg(palette.hover))
+            .active(|style| style.opacity(0.8))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|_, _, cx| crate::settings_window::open(cx))
             .child("Settings")

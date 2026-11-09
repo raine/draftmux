@@ -794,6 +794,7 @@ impl SettingsWindow {
                             .child(n.to_string()),
                     )
                 })
+                .active(|style| style.opacity(0.8))
                 .on_click(cx.listener(move |this, _, window, cx| this.show(page, window, cx)))
         };
         let rules: Vec<(usize, SharedString, usize)> = settings
@@ -879,6 +880,7 @@ impl SettingsWindow {
                 .text_color(c.muted)
                 .child(svg().path(PLUS_ICON).size(px(15.)).text_color(c.muted))
                 .child("Add directory…")
+                .active(|style| style.opacity(0.8))
                 .on_click(cx.listener(|this, _, window, cx| this.add_directory(window, cx))),
         )
     }

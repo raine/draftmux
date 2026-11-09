@@ -223,6 +223,7 @@ pub fn popup_button(
     width: Option<f32>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let pressed = c.control_hover;
     div()
         .id(id)
         .flex()
@@ -233,6 +234,7 @@ pub fn popup_button(
         .gap(px(6.))
         .rounded(px(5.5))
         .bg(c.control)
+        .active(move |button| button.bg(pressed))
         .shadow(control_shadow(c))
         .text_color(if inherited { c.muted } else { c.text })
         .map(|button| match width {
@@ -290,6 +292,8 @@ pub fn reset_button(
         .rounded(px(5.))
         .text_color(c.muted)
         .hover(move |button| button.bg(hover).text_color(text))
+        .active(|style| style.opacity(0.8))
+        .tooltip(crate::tooltip::text("Reset"))
         .child(svg().path(RESET_ICON).size(px(12.)).text_color(c.muted))
         .on_click(on_click)
 }
@@ -311,6 +315,7 @@ pub fn switch(
         .rounded_full()
         .bg(if on { c.accent } else { c.switch_off })
         .when(inherited, |switch| switch.opacity(0.55))
+        .active(move |style| style.opacity(if inherited { 0.44 } else { 0.8 }))
         .flex()
         .when(on, |switch| switch.justify_end())
         .child(

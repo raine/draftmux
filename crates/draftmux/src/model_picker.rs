@@ -276,6 +276,7 @@ impl ModelPicker {
                 let highlighted = self.highlight == Some(ix);
                 let current = self.current.as_ref() == Some(model);
                 row.rounded(px(5.))
+                    .active(|style| style.opacity(0.8))
                     .text_size(px(13.))
                     .when(highlighted, |row| {
                         row.bg(palette.accent).text_color(palette.on_accent)
@@ -366,6 +367,7 @@ impl Render for ModelPicker {
                             row.child(
                                 div()
                                     .id("retry")
+                                    .active(|style| style.opacity(0.8))
                                     .text_color(palette.accent)
                                     .child("Retry")
                                     .on_mouse_down(
