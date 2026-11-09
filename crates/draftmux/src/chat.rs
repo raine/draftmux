@@ -26,8 +26,8 @@ use gpui::{
 use shell_env::ShellEnv;
 
 use crate::assets::{
-    CHEVRON_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON, TOOL_BASH_ICON,
-    TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
+    CHEVRON_ICON, SEND_ICON, SPARK_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON,
+    TOOL_BASH_ICON, TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
 use crate::chat_model::ChatModel;
 use crate::chrome::shadow;
@@ -88,6 +88,9 @@ struct Session {
     /// Read-only editors that make the user's messages selectable, by
     /// transcript index, with the text each was made for.
     bubbles: HashMap<usize, (String, Entity<Editor>)>,
+    /// Whether the list ends with the activity row, shown while the agent
+    /// runs.
+    activity_row: bool,
     _events: Task<()>,
 }
 
@@ -151,6 +154,7 @@ impl Chat {
                             model: None,
                             history_loaded: false,
                             bubbles: HashMap::new(),
+                            activity_row: false,
                             _events: Task::ready(()),
                         },
                     );
@@ -451,11 +455,20 @@ impl Chat {
             return;
         };
         let old_len = session.list.item_count();
-        if let Some(from) = session.transcript.take_change(old_len) {
+        let old_items = old_len - usize::from(session.activity_row);
+        let activity_row = session.transcript.busy;
+        let items = session.transcript.items.len();
+        let from = match session.transcript.take_change(old_items) {
+            Some(from) => Some(from),
+            None if activity_row != session.activity_row => Some(old_items),
+            None => None,
+        };
+        if let Some(from) = from {
             session
                 .list
-                .splice(from..old_len, session.transcript.items.len() - from);
+                .splice(from..old_len, items - from + usize::from(activity_row));
         }
+        session.activity_row = activity_row;
         cx.notify();
     }
 
@@ -520,8 +533,18 @@ impl Chat {
         Some(editor)
     }
 
-    fn render_item(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_item(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let palette = *theme::palette(cx);
+        if let Some(session) = self.session()
+            && index == session.transcript.items.len()
+        {
+            return activity_row(session, &palette, window);
+        }
         let bubble = match self.session().and_then(|s| s.transcript.items.get(index)) {
             Some(Item::User { text }) => {
                 let text = text.clone();
@@ -802,16 +825,8 @@ impl Chat {
                         .text_size(px(11.))
                         .text_color(palette.faint)
                         .child(div().flex_1().min_w_0().children(model))
-                        .child(if busy {
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1p5()
-                                .child(spinner(&palette))
-                                .child("Working…")
-                        } else {
-                            div().child("↵ send · ⇧↵ newline")
-                        })
+                        // While the agent runs, the transcript shows it.
+                        .when(!busy, |footer| footer.child("↵ send · ⇧↵ newline"))
                         .child(
                             div()
                                 .id("send")
@@ -870,7 +885,9 @@ impl Render for Chat {
                     .child(
                         list(
                             session.list.clone(),
-                            cx.processor(|this, index, _, cx| this.render_item(index, cx)),
+                            cx.processor(|this, index, window, cx| {
+                                this.render_item(index, window, cx)
+                            }),
                         )
                         .flex_1()
                         .min_h_0(),
@@ -977,6 +994,74 @@ fn tool_icon(name: &str) -> &'static str {
         "write" => TOOL_WRITE_ICON,
         _ => TOOL_OTHER_ICON,
     }
+}
+
+/// How long the brightness wave takes to cross the activity label.
+const WAVE_PERIOD: f32 = 1.4;
+/// How far behind its predecessor each letter of the label brightens.
+const WAVE_STAGGER: f32 = 0.045;
+
+/// The last row while the agent runs: "Thinking…", or "Writing…" once its
+/// reply streams in, with letters that brighten in a slow wave. Empty while
+/// a tool runs, since the tool's row shows its own spinner.
+fn activity_row(session: &Session, palette: &Palette, window: &mut Window) -> AnyElement {
+    let text = match session.transcript.items.last() {
+        Some(Item::Tool(tool)) if tool.running() => return div().into_any_element(),
+        Some(Item::Assistant { .. }) => "Writing…",
+        _ => "Thinking…",
+    };
+    let label = if crate::platform::reduce_motion() {
+        div()
+            .text_color(palette.muted)
+            .child(text)
+            .into_any_element()
+    } else {
+        window.request_animation_frame();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            // Reduced in f64: an f32 can't hold the epoch to the frame.
+            .as_secs_f64()
+            .rem_euclid(f64::from(WAVE_PERIOD)) as f32;
+        div()
+            .flex()
+            .children(text.chars().enumerate().map(|(ix, c)| {
+                let lit = wave(now - ix as f32 * WAVE_STAGGER);
+                div()
+                    .text_color(palette.text.opacity(0.4 + 0.5 * lit))
+                    .child(c.to_string())
+            }))
+            .into_any_element()
+    };
+    div()
+        .pt(px(10.))
+        .px(px(2.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .text_size(px(13.))
+        .child(
+            svg()
+                .path(SPARK_ICON)
+                .size(px(13.))
+                .text_color(palette.faint),
+        )
+        .child(label)
+        .into_any_element()
+}
+
+/// The wave's brightness at `time` seconds: rises over the first 15% of
+/// each period, settles by 40%, then rests.
+fn wave(time: f32) -> f32 {
+    let p = time.rem_euclid(WAVE_PERIOD) / WAVE_PERIOD;
+    let rise = if p < 0.15 {
+        p / 0.15
+    } else if p < 0.4 {
+        1. - (p - 0.15) / 0.25
+    } else {
+        0.
+    };
+    rise * rise * (3. - 2. * rise)
 }
 
 /// A grey ring with a turning accent arc.
@@ -1103,4 +1188,18 @@ fn first_draft_prompt(note: Option<&str>) -> String {
         text.push_str(note);
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wave_rises_settles_and_rests_each_period() {
+        assert_eq!(wave(0.), 0.);
+        assert!((wave(0.15 * WAVE_PERIOD) - 1.).abs() < 1e-4);
+        assert_eq!(wave(0.5 * WAVE_PERIOD), 0.);
+        // Letters behind the first wrap into the previous period.
+        assert!((wave(-0.85 * WAVE_PERIOD) - 1.).abs() < 1e-4);
+    }
 }

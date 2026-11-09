@@ -68,6 +68,16 @@ pub fn reduce_transparency() -> bool {
     }
 }
 
+pub fn reduce_motion() -> bool {
+    // SAFETY: an NSWorkspace property returning BOOL, available since 10.12.
+    unsafe {
+        msg_send![
+            &*NSWorkspace::sharedWorkspace(),
+            accessibilityDisplayShouldReduceMotion
+        ]
+    }
+}
+
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
     static NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification: &'static NSString;

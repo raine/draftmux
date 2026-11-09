@@ -19,6 +19,9 @@ pub fn system_dark(cx: &App) -> bool {
 pub fn reduce_transparency() -> bool {
     false
 }
+pub fn reduce_motion() -> bool {
+    false
+}
 
 /// Retaining the clipboard keeps X11 selection ownership alive.
 struct RichClipboard(arboard::Clipboard);
