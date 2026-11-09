@@ -56,6 +56,9 @@ const GAP: Pixels = px(6.);
 /// Between the popover and the edges of the editor pane.
 const MARGIN: Pixels = px(8.);
 const PADDING: Pixels = px(5.);
+/// Highlighted items follow the panel's rounded corners: concentric with
+/// them, inset by the padding.
+const ITEM_RADIUS: Pixels = px(crate::platform::POPUP_RADIUS - 5.);
 const RESULTS_WIDTH: Pixels = px(380.);
 const INSTRUCTION_WIDTH: Pixels = px(320.);
 
@@ -698,7 +701,7 @@ impl SelectionPopover {
             let highlighted = open.highlighted == Some(index);
             div()
                 .id(("item", index))
-                .rounded(px(5.))
+                .rounded(ITEM_RADIUS)
                 .when(highlighted, |item| {
                     item.bg(palette.accent).text_color(palette.on_accent)
                 })

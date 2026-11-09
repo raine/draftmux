@@ -164,6 +164,9 @@ pub fn toolbar_items(_: &crate::theme::Palette) -> Option<gpui::AnyElement> {
 pub fn menu_color(palette: &crate::theme::Palette) -> gpui::Hsla {
     palette.menu_tint
 }
+/// The corner radius the window server gives pop-up windows on macOS 26.
+pub const POPUP_RADIUS: f32 = 14.;
+
 pub fn popup_background() -> gpui::WindowBackgroundAppearance {
     gpui::WindowBackgroundAppearance::Blurred
 }

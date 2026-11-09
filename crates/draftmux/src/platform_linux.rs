@@ -91,6 +91,9 @@ pub fn toolbar_items(palette: &crate::theme::Palette) -> Option<gpui::AnyElement
 pub fn menu_color(palette: &crate::theme::Palette) -> gpui::Hsla {
     palette.menu
 }
+/// Keeps pop-up items at their 5px radius inside the padding.
+pub const POPUP_RADIUS: f32 = 10.;
+
 pub fn popup_background() -> gpui::WindowBackgroundAppearance {
     gpui::WindowBackgroundAppearance::Opaque
 }
