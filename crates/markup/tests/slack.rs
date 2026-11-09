@@ -138,7 +138,7 @@ fn headings() {
 fn tables() {
     insta::assert_snapshot!(snapshot(
         "| Left | Center | Right | None |\n|:-----|:------:|------:|------|\n\
-         | `a|b` | *c* | <https://x.y|l|k> | |\n| ragged |\nafter\n\nnot | a table\n"
+         | `a|b` | *c* | <https://x.y|l|k> | [a|b](https://x.y/?q=1|2) |\n| ragged |\nafter\n\nnot | a table\n"
     ));
 }
 

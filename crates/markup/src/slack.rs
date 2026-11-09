@@ -485,26 +485,34 @@ fn heading(line: &str) -> Option<(u8, &str)> {
     (!content.is_empty()).then_some((hashes as u8, content))
 }
 
-/// Table cells of a row, split at pipes outside code and `<…>` links, with
-/// the optional outer pipes dropped.
+/// Table cells of a row, split at pipes outside code, `<…>` links and
+/// `[label](url)` links, with the optional outer pipes dropped.
 fn cells(line: &str) -> Vec<&str> {
     let line = line.trim();
     let line = line.strip_prefix('|').unwrap_or(line);
     let mut cells = Vec::new();
     let mut start = 0;
     let mut closer = None;
-    for (ix, c) in line.char_indices() {
+    let mut ix = 0;
+    while let Some(c) = line[ix..].chars().next() {
         match (closer, c) {
             (Some(close), _) if c == close => closer = None,
             (Some(_), _) => {}
             (None, '`') => closer = Some('`'),
             (None, '<') => closer = Some('>'),
+            (None, '[') => {
+                if let Some((len, ..)) = markdown_link(&line[ix..]) {
+                    ix += len;
+                    continue;
+                }
+            }
             (None, '|') if !line[..ix].ends_with('\\') => {
                 cells.push(line[start..ix].trim());
                 start = ix + 1;
             }
             _ => {}
         }
+        ix += c.len_utf8();
     }
     let last = line[start..].trim();
     if !last.is_empty() || start == 0 {

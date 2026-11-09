@@ -1,6 +1,6 @@
 ---
 source: crates/markup/tests/slack.rs
-expression: "snapshot(\"| Left | Center | Right | None |\\n|:-----|:------:|------:|------|\\n\\\n         | `a|b` | *c* | <https://x.y|l|k> | |\\n| ragged |\\nafter\\n\\nnot | a table\\n\")"
+expression: "snapshot(\"| Left | Center | Right | None |\\n|:-----|:------:|------:|------|\\n\\\n         | `a|b` | *c* | <https://x.y|l|k> | [a|b](https://x.y/?q=1|2) |\\n| ragged |\\nafter\\n\\nnot | a table\\n\")"
 ---
 table [Left, Center, Right, None]
   header
@@ -20,6 +20,7 @@ table [Left, Center, Right, None]
     cell
       "l|k" -> https://x.y
     cell
+      "a|b" -> https://x.y/?q=1|2
   row
     cell
       "ragged"
