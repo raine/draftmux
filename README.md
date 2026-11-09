@@ -182,6 +182,29 @@ default. Run them per package with `cargo test -p PACKAGE -- --ignored`.
 `just test-scripts` tests the build, install and release scripts with stub
 binaries, without cargo or Apple credentials; `just shellcheck` lints them.
 
+### Typing performance
+
+Build with `cargo build -j 2 -p draftmux --bin draftmux`, then run
+`tools/profile-typing small` or `tools/profile-typing large`. These open isolated
+992-byte and 98 KB drafts; they do not use your drafts or start a pi session.
+On macOS the tool launches a temporary app bundle and prints the timing log's
+path. Elsewhere timings go to stderr. Quit the fixture app when finished.
+
+Type the same text at the same pace and window size for each comparison.
+`DRAFTMUX_TIMING=1` enables timings in milliseconds for input handling,
+highlighting, edit subscribers, preview parsing, preview frames and editor
+layout. `input-to-editor-paint` starts in the native text input handler and ends
+at editor paint: it **does not** include time queued in the OS, GPU presentation
+or display scanout. Check `preview-frame` as well: a slow preview frame can
+still delay subsequent input delivery. Compare the same build profile; debug
+numbers are not release latency estimates.
+
+For component-only CPU measurements, run:
+
+```sh
+cargo test -j 2 -p draftmux --bin draftmux performance::typing -- --ignored --nocapture
+```
+
 ### Release
 
 `just release-macos` builds a release on an Apple silicon Mac into

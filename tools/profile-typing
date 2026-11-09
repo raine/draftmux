@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Launch an isolated typing fixture with CPU timings on stderr.
+"""Launch an isolated typing fixture with opt-in CPU timings.
 
 Usage: tools/profile-typing [small|large] [path/to/draftmux]
-Type into the focused editor. DRAFTMUX_TIMING reports milliseconds; input-to-
-editor-paint excludes OS delivery, GPU presentation, and display scanout.
-The fixture directory is retained so saved text can be checked after quitting.
+Type into the focused editor. On macOS, read the printed timings.log path;
+elsewhere timings go to stderr. DRAFTMUX_TIMING reports milliseconds;
+input-to-editor-paint excludes OS delivery, GPU presentation, and display
+scanout. The fixture directory is retained for checking saved text after quitting.
 """
 import json
 import os
 from pathlib import Path
+import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,7 +20,7 @@ size = sys.argv[1] if len(sys.argv) > 1 else "small"
 if size not in ("small", "large"):
     raise SystemExit("expected small or large")
 binary = Path(sys.argv[2] if len(sys.argv) > 2 else "target/debug/draftmux").resolve()
-root = Path(tempfile.mkdtemp(prefix="draftmux-typing-"))
+root = Path(tempfile.mkdtemp(prefix="dmx-typing-", dir="/tmp"))
 draft = root / "drafts" / "typing-fixture"
 (draft / "session").mkdir(parents=True)
 section = """## Release readiness
@@ -47,8 +50,32 @@ text = section * (2 if size == "small" else 200) + "A final update"
     "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
 }))
 print(f"Fixture: {draft} ({len(text.encode())} bytes)", file=sys.stderr, flush=True)
-result = subprocess.run([str(binary), "app"], env={
-    **os.environ, "DRAFTMUX_DATA_DIR": str(root), "DRAFTMUX_CONFIG_DIR": str(root),
-    "DRAFTMUX_TIMING": "1",
-})
+# AppKit needs a bundle identity for normal activation and display-link updates.
+# Copy rather than link the executable so rebuilding cannot change a running fixture.
+if sys.platform == "darwin":
+    contents = root / "Typing Profile.app" / "Contents"
+    executable = contents / "MacOS" / "draftmux"
+    executable.parent.mkdir(parents=True)
+    shutil.copy2(binary, executable)
+    (contents / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "dev.draftmux.typing-profile." + root.name,
+        "CFBundleName": "Draftmux Typing Profile",
+        "CFBundleExecutable": "draftmux",
+        "CFBundlePackageType": "APPL",
+        "NSHighResolutionCapable": True,
+    }))
+    subprocess.run(["codesign", "--force", "--sign", "-", str(contents.parent)], check=True)
+    log = root / "timings.log"
+    print(f"Timings: {log}", file=sys.stderr, flush=True)
+    result = subprocess.run([
+        "open", "-n", "--env", f"DRAFTMUX_DATA_DIR={root}",
+        "--env", f"DRAFTMUX_CONFIG_DIR={root}", "--env", "DRAFTMUX_TIMING=1",
+        "--stderr", str(log), "--stdout", str(root / "stdout.log"),
+        str(contents.parent), "--args", "app",
+    ])
+else:
+    result = subprocess.run([str(binary), "app"], env={
+        **os.environ, "DRAFTMUX_DATA_DIR": str(root), "DRAFTMUX_CONFIG_DIR": str(root),
+        "DRAFTMUX_TIMING": "1",
+    })
 sys.exit(result.returncode)

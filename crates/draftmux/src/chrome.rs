@@ -7,7 +7,11 @@
 //! sidebar column paints a translucent tint, opaque with Reduce Transparency,
 //! and the content panes are opaque.
 
+mod preview;
+mod preview_work;
 mod sidebar;
+
+use preview::Preview;
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -18,7 +22,8 @@ use editor::{Editor, EditorEvent};
 use gpui::{
     App, BoxShadow, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
     FontWeight, Hsla, KeyBinding, MouseButton, Pixels, Point, ScrollHandle, SharedString,
-    Subscription, Task, Window, WindowControlArea, actions, div, point, prelude::*, px, svg,
+    StyleRefinement, Subscription, Task, Window, WindowControlArea, actions, div, point,
+    prelude::*, px, svg,
 };
 use markup::Document;
 
@@ -28,9 +33,9 @@ use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
-use crate::markup_view::{self, SelectBody};
+use crate::markup_view;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
-use crate::selectable::{self, Scroller, SelectionChanged, TextSelection};
+use crate::selectable::{Scroller, SelectionChanged, TextSelection};
 use crate::selection_popover::SelectionPopover;
 use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
@@ -76,7 +81,11 @@ pub struct Chrome {
     chat: Entity<Chat>,
     selection: Entity<SelectionPopover>,
     /// The selected draft's text parsed for its target.
-    preview: Option<Document>,
+    preview: Entity<Preview>,
+    preview_work: preview_work::Work,
+    preview_task: Task<()>,
+    /// Source snapshot whose offsets the displayed preview uses.
+    preview_source: String,
     /// Selection in the preview, mirrored to the editor as the markdown it
     /// was rendered from.
     preview_selection: Entity<TextSelection>,
@@ -135,7 +144,13 @@ impl Render for Chrome {
                             .relative()
                             .when(self.show_editor, |pane| pane.border_l_1())
                             .child({
-                                let body = self.preview_body(window, cx).into_any_element();
+                                let body = self.preview.clone().cached(
+                                    StyleRefinement::default()
+                                        .absolute()
+                                        .top_0()
+                                        .left_0()
+                                        .size_full(),
+                                );
                                 SelectionPopover::wrap_preview(&self.selection, body, cx)
                             })
                             .child(scrollbar(
@@ -303,7 +318,15 @@ impl Chrome {
             formatter,
             chat,
             selection,
-            preview: None,
+            preview: cx.new(|_| Preview {
+                document: None,
+                target: None,
+                selection: preview_selection.clone(),
+                scroll: preview_scroll.clone(),
+            }),
+            preview_work: preview_work::Work::default(),
+            preview_task: Task::ready(()),
+            preview_source: String::new(),
             preview_selection,
             preview_map: None,
             mirrored: None,
@@ -417,6 +440,8 @@ impl Chrome {
         };
         self.save_error = None;
         self.autosave = Task::ready(());
+        self.preview_work.invalidate();
+        self.set_preview(None, cx);
         if let Some(draft) = self.drafts.current() {
             let (dir, target) = (draft.dir.clone(), draft.meta.target);
             self.formatter
@@ -503,6 +528,7 @@ impl Chrome {
 
     /// Empties the editor after the selected draft left the list.
     fn deselect(&mut self, cx: &mut Context<Self>) {
+        self.preview_work.invalidate();
         self.autosave = Task::ready(());
         self.set_preview(None, cx);
         self.editor.update(cx, |editor, cx| editor.set_text("", cx));
@@ -570,14 +596,60 @@ impl Chrome {
         let Some(target) = self.drafts.current().map(|draft| draft.meta.target) else {
             return;
         };
-        self.set_preview(Some(markup_view::preview(target, &text)), cx);
         self.drafts.edited(&text, Instant::now());
         self.schedule_save(cx);
-        cx.notify();
+        self.preview_selection
+            .update(cx, |selection, cx| selection.clear(cx));
+        if self.preview_work.request(target, text) {
+            self.preview_task = cx.spawn(async move |this, cx| {
+                loop {
+                    // Coalesce bursts without postponing work indefinitely during typing.
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    let Ok(Some(request)) = this.update(cx, |this, _| this.preview_work.take())
+                    else {
+                        break;
+                    };
+                    let revision = request.revision;
+                    let (document, source) = cx
+                        .background_executor()
+                        .spawn(async move {
+                            (
+                                markup_view::preview(request.target, &request.text),
+                                request.text,
+                            )
+                        })
+                        .await;
+                    if this
+                        .update(cx, |this, cx| {
+                            if this.preview_work.is_current(revision)
+                                && this.editor.read(cx).text() == source
+                            {
+                                this.set_preview(Some(document), cx);
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     fn set_preview(&mut self, preview: Option<Document>, cx: &mut Context<Self>) {
-        self.preview = preview;
+        let target = self.drafts.current().map(|draft| draft.meta.target);
+        self.preview_source = if preview.is_some() {
+            self.editor.read(cx).text().to_owned()
+        } else {
+            String::new()
+        };
+        self.preview.update(cx, |this, cx| {
+            this.document = preview;
+            this.target = target;
+            cx.notify();
+        });
         self.preview_map = None;
         self.preview_selection
             .update(cx, |selection, cx| selection.reset(cx));
@@ -599,13 +671,18 @@ impl Chrome {
             }
             return;
         };
-        let map = self.preview_map.get_or_insert_with(|| {
-            SourceMap::new(self.editor.read(cx).text(), selection.paragraphs())
-        });
-        if let Some(range) = map.range(start, end) {
+        let map = self
+            .preview_map
+            .get_or_insert_with(|| SourceMap::new(&self.preview_source, selection.paragraphs()));
+        if let Some(range) = map.range(start, end).and_then(|range| {
+            preview_work::unchanged_range(&self.preview_source, self.editor.read(cx).text(), range)
+        }) {
             self.mirrored = Some(range.clone());
             self.editor
                 .update(cx, |editor, cx| editor.select_range(range, cx));
+        } else {
+            self.preview_selection
+                .update(cx, |selection, cx| selection.clear(cx));
         }
     }
 
@@ -666,6 +743,7 @@ impl Chrome {
             self.show_error(format!("Couldn't change the target: {err:#}"), cx);
             return;
         }
+        self.preview_work.invalidate();
         self.set_plain_text(target, cx);
         let preview = markup_view::preview(target, self.editor.read(cx).text());
         self.set_preview(Some(preview), cx);
@@ -689,56 +767,6 @@ impl Chrome {
         let text = self.editor.read(cx).text().to_owned();
         let confirmation = copy::copy(target, &text, cx);
         self.show_toast(confirmation, cx);
-    }
-
-    fn preview_body(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let _timing = editor::timing::span("preview-elements");
-        let theme = theme::get(cx);
-        let target = self.drafts.current().map(|draft| draft.meta.target);
-        let (body, background) = match (&self.preview, target) {
-            (Some(doc), Some(target)) if !doc.blocks.is_empty() => {
-                let style = markup_view::style(target, theme.dark);
-                (
-                    markup_view::render_preview(
-                        doc,
-                        &style,
-                        "preview-body",
-                        &self.preview_scroll,
-                        Some(SelectBody {
-                            state: self.preview_selection.clone(),
-                            body: 0,
-                            color: theme.palette.selection,
-                        }),
-                        window,
-                        cx,
-                    ),
-                    Some(style.background),
-                )
-            }
-            _ => (
-                div()
-                    .text_size(px(14.))
-                    .text_color(theme.palette.faint)
-                    .child("Nothing to preview")
-                    .into_any_element(),
-                None,
-            ),
-        };
-        // The body sits on its platform's own page color, as it does there.
-        selectable::area(&self.preview_selection, cx)
-            .id("preview")
-            // The pane determines the viewport size, not the document's intrinsic size.
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .when_some(background, |this, background| this.bg(background))
-            .overflow_y_scroll()
-            .track_scroll(&self.preview_scroll)
-            .px_6()
-            .pt_5()
-            .pb_10()
-            .child(body)
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
