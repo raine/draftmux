@@ -727,6 +727,10 @@ impl Chrome {
         // The body sits on its platform's own page color, as it does there.
         selectable::area(&self.preview_selection, cx)
             .id("preview")
+            // The pane determines the viewport size, not the document's intrinsic size.
+            .absolute()
+            .top_0()
+            .left_0()
             .size_full()
             .when_some(background, |this, background| this.bg(background))
             .overflow_y_scroll()
