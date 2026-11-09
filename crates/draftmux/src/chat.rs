@@ -30,8 +30,8 @@ use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
     Focusable, FollowMode, FontWeight, HighlightStyle, Hsla, KeyBinding, ListAlignment, ListState,
-    StyledText, Task, Transformation, Window, actions, div, font, list, percentage, prelude::*, px,
-    relative, svg,
+    StyledText, Task, Transformation, Window, actions, div, ease_out_quint, font, list, percentage,
+    prelude::*, px, relative, svg,
 };
 use shell_env::ShellEnv;
 
@@ -58,6 +58,10 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// shows it, so dragging a selection doesn't flicker the chip.
 const CHIP_SETTLE: Duration = Duration::from_millis(250);
 const KEY_CONTEXT: &str = "Composer";
+/// How long a newly arrived item takes to fade in and rise into place.
+const ENTRANCE: Duration = Duration::from_millis(200);
+/// How far below its place a newly arrived item starts.
+const ENTRANCE_RISE: f32 = 6.;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -121,6 +125,10 @@ struct Session {
     /// Read-only editors that make the user's messages selectable, by
     /// transcript index, with the text each was made for.
     bubbles: HashMap<usize, (String, Entity<Editor>)>,
+    /// When items that arrived while the session was shown started their
+    /// entrance, by transcript index. Restored history and items that
+    /// arrived unseen appear at once.
+    entering: HashMap<usize, Instant>,
     /// Whether the list ends with the activity row, shown while the agent
     /// runs.
     activity_row: bool,
@@ -245,6 +253,7 @@ impl Chat {
                             history_loaded: false,
                             history_ready: false,
                             bubbles: HashMap::new(),
+                            entering: HashMap::new(),
                             activity_row: false,
                             _events: Task::ready(()),
                         },
@@ -432,6 +441,7 @@ impl Chat {
         session.transcript.prepend(items);
         // Prepending moves every item to a new index.
         session.bubbles.clear();
+        session.entering.clear();
         self.sync_list(id, cx);
     }
 
@@ -569,10 +579,30 @@ impl Chat {
     /// Updates the list, the owner and the idle timer after `id`'s
     /// transcript changed.
     fn after_change(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.enter_new_items(id);
         self.sync_list(id, cx);
         if self.current.as_deref() == Some(id) {
             cx.emit(ChatEvent::Running(self.busy()));
             self.schedule_idle(cx);
+        }
+    }
+
+    /// Starts the entrance of the items appended since the list last
+    /// synced, if `id` is the shown session.
+    fn enter_new_items(&mut self, id: &str) {
+        if self.current.as_deref() != Some(id) {
+            return;
+        }
+        let Some(session) = self.sessions.get_mut(id) else {
+            return;
+        };
+        let shown = session.list.item_count() - usize::from(session.activity_row);
+        let now = Instant::now();
+        session
+            .entering
+            .retain(|_, start| now.saturating_duration_since(*start) < ENTRANCE);
+        for index in shown..session.transcript.items.len() {
+            session.entering.insert(index, now);
         }
     }
 
@@ -777,11 +807,27 @@ impl Chat {
                 .child(text.clone())
                 .into_any_element(),
         };
+        let entrance = session
+            .entering
+            .get(&index)
+            .map(|start| start.elapsed().as_secs_f32() / ENTRANCE.as_secs_f32())
+            .filter(|progress| *progress < 1.);
         div()
             .px(px(14.))
             .pt(if stacked { px(0.) } else { px(10.) })
             .when(index + 1 == items.len(), |item| item.pb(px(10.)))
             .child(body)
+            // Offset, not resized, so the list's measured height holds.
+            .when_some(entrance, |item, progress| {
+                window.request_animation_frame();
+                let delta = ease_out_quint()(progress);
+                let rise = if crate::platform::reduce_motion() {
+                    0.
+                } else {
+                    ENTRANCE_RISE
+                };
+                item.relative().top(px(rise * (1. - delta))).opacity(delta)
+            })
             .into_any_element()
     }
 
