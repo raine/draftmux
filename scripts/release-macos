@@ -2,8 +2,9 @@
 # Builds a distributable Draftmux release on this Mac into
 # target/macos-release/VERSION: the app signed with Developer ID, notarized
 # and stapled, inside a disk image that is itself signed, notarized and
-# stapled, plus the image's .sha256. Uploads and publishes nothing; generate
-# the Homebrew cask from the .sha256 with scripts/homebrew-cask.
+# stapled, plus the image's .sha256. Submits both to Apple's notary service
+# but publishes nothing; generate the Homebrew cask from the .sha256 with
+# scripts/homebrew-cask.
 #
 # Needs the signing variables of scripts/sign-macos-release and the App Store
 # Connect variables of scripts/notarize-macos-release. Builds are arm64 only.

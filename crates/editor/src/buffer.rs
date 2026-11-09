@@ -71,7 +71,7 @@ pub enum SelectionAfter {
     Map,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct Change {
     /// Replaced range in the text as it was before this change.
     start: usize,
@@ -604,7 +604,6 @@ mod tests {
     #[test]
     fn replace_range_is_one_step_and_collapses_after_new_text() {
         let mut b = Buffer::new("one two three");
-        type_str(&mut b, "");
         b.set_selection(Selection::caret(13));
         type_str(&mut b, "!");
         b.replace_range(4..7, "2");

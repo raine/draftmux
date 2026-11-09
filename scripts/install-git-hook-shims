@@ -6,7 +6,7 @@ git_common_dir="$(git rev-parse --git-common-dir)"
 hooks_dir="$git_common_dir/hooks"
 
 if (($# == 0)); then
-  set -- pre-commit commit-msg pre-push
+  set -- pre-commit commit-msg
 fi
 
 mkdir -p "$hooks_dir"
@@ -27,7 +27,7 @@ set -euo pipefail
 worktree_root="\$(git rev-parse --show-toplevel)"
 tracked_hook="\$worktree_root/hooks/$hook_name"
 
-# Branches created before the hooks were added have no tracked hook.
+# Checkouts without this tracked hook skip it.
 [[ -x "\$tracked_hook" ]] || exit 0
 
 exec "\$tracked_hook" "\$@"

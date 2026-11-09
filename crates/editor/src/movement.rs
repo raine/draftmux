@@ -277,17 +277,17 @@ impl Buffer {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     /// Monospace layout with every char one unit wide, wrapping each logical
     /// line every `width` chars (no word wrap). Tests use ASCII.
-    pub struct FixedRows {
+    struct FixedRows {
         rows: Vec<Range<usize>>,
     }
 
     impl FixedRows {
-        pub fn new(text: &str, width: usize) -> Self {
+        fn new(text: &str, width: usize) -> Self {
             let mut rows = Vec::new();
             let mut start = 0;
             for line in text.split('\n') {

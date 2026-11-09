@@ -49,7 +49,7 @@ enum TargetArg {
 }
 
 /// Runs the command and returns the process exit code.
-pub fn main(args: Args) -> i32 {
+pub fn main(args: Args) -> Result<u8> {
     // pi runs with the environment of the agent shell that called `open`,
     // which has the PATH and API keys the source session used.
     let pi = || Command::new("pi");
@@ -60,27 +60,19 @@ pub fn main(args: Args) -> i32 {
             eprintln!("draftmux: ignoring Draftmux's settings: {err:#}");
             Settings::default()
         });
-    let created =
-        Store::default_root().and_then(|root| create(&args, &Store::new(root), &pi, &settings));
-    let draft = match created {
-        Ok(draft) => draft,
-        Err(err) => {
-            eprintln!("draftmux: {err:#}");
-            return 1;
-        }
-    };
+    let draft = create(&args, &Store::new(Store::default_root()?), &pi, &settings)?;
     // Printed before focusing: the draft exists and `show` can read it even
     // if the app can't be reached.
     println!("{}", draft.id);
     match ipc::send(&ipc::Request::Focus { id: draft.id }) {
-        Ok(()) => 0,
+        Ok(()) => Ok(0),
         Err(err) => {
             eprintln!(
                 "draftmux: created the draft but couldn't focus it in the app: {err:#}\n\
                  draftmux: the draft is in {}; don't run open again, that creates another draft",
                 draft.dir.display()
             );
-            1
+            Ok(1)
         }
     }
 }
@@ -670,8 +662,9 @@ cat > /dev/null
 "#;
 
     /// Real pi loads a converted session and answers from it. Opt-in: it
-    /// sends the fixture to the profile's default model. Run with
-    /// `cargo test -p draftmux -- --ignored real_pi`; `DRAFTMUX_SMOKE_PI_AGENT_DIR`
+    /// sends the fixture to the profile's default model. Run with `cargo test
+    /// -j 2 -p draftmux --bin draftmux real_pi_answers -- --ignored`;
+    /// `DRAFTMUX_SMOKE_PI_AGENT_DIR`
     /// picks the profile (default `~/.pi/agent`), which needs a default model.
     #[test]
     #[ignore = "runs real pi against the profile's default model"]
@@ -797,7 +790,8 @@ cat > /dev/null
     /// Real pi forks a pi session at handoff: the draft continues on the
     /// source's model, an override sticks across restarts, and the source and
     /// the profile's settings are left alone. Opt-in; calls no model. Run with
-    /// `cargo test -p draftmux -- --ignored real_pi`; `DRAFTMUX_SMOKE_PI_AGENT_DIR`
+    /// `cargo test -j 2 -p draftmux --bin draftmux real_pi_forks -- --ignored`;
+    /// `DRAFTMUX_SMOKE_PI_AGENT_DIR`
     /// picks the profile (default `~/.pi/agent`), which needs two models with
     /// credentials.
     #[test]

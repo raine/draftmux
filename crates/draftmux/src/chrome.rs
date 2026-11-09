@@ -355,16 +355,10 @@ impl Chrome {
         match event {
             ChatEvent::Send(text) => {
                 // pi reads the draft from disk.
-                let saved = match self.flush() {
-                    Ok(()) => {
-                        self.save_error = None;
-                        Ok(self.editor.read(cx).text().to_owned())
-                    }
-                    Err(err) => {
-                        self.save_error = Some(format!("Couldn't save: {err:#}").into());
-                        Err(format!("{err:#}"))
-                    }
-                };
+                let saved = self
+                    .flush()
+                    .map(|()| self.editor.read(cx).text().to_owned())
+                    .map_err(|err| format!("{err:#}"));
                 let text = text.clone();
                 self.chat
                     .update(cx, |chat, cx| chat.prompt(text, saved, cx));
@@ -383,8 +377,12 @@ impl Chrome {
                     .update(cx, |editor, cx| editor.set_read_only(running, cx));
                 self.formatter
                     .update(cx, |formatter, cx| formatter.set_agent_running(running, cx));
-                self.selection
-                    .update(cx, |selection, cx| selection.set_agent_running(running, cx));
+                // Selection actions are unavailable while the editor is
+                // read-only.
+                if running {
+                    self.selection
+                        .update(cx, |selection, cx| selection.dismiss(cx));
+                }
             }
         }
         cx.notify();
@@ -416,8 +414,7 @@ impl Chrome {
         match self.drafts.poll(Instant::now()) {
             Ok(()) => self.save_error = None,
             Err(err) => {
-                eprintln!("draftmux: saving draft: {err:#}");
-                self.save_error = Some(format!("Couldn't save: {err:#}").into());
+                self.save_failed(&err);
                 // The text stays pending; try again after another delay.
                 let text = self.editor.read(cx).text().to_owned();
                 self.drafts.edited(&text, Instant::now());
@@ -428,9 +425,17 @@ impl Chrome {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.drafts
-            .flush()
-            .inspect_err(|err| eprintln!("draftmux: saving draft: {err:#}"))
+        let result = self.drafts.flush();
+        match &result {
+            Ok(()) => self.save_error = None,
+            Err(err) => self.save_failed(err),
+        }
+        result
+    }
+
+    fn save_failed(&mut self, err: &anyhow::Error) {
+        eprintln!("draftmux: saving draft: {err:#}");
+        self.save_error = Some(format!("Couldn't save: {err:#}").into());
     }
 
     /// Saves before the window closes or the app quits. On failure, shows the
@@ -438,8 +443,7 @@ impl Chrome {
     fn flush_before_exit(&mut self, cx: &mut Context<Self>) -> bool {
         match self.flush() {
             Ok(()) => true,
-            Err(err) => {
-                self.save_error = Some(format!("Couldn't save: {err:#}").into());
+            Err(_) => {
                 cx.notify();
                 false
             }
@@ -652,7 +656,8 @@ fn target_switch(
     palette: &Palette,
     cx: &mut Context<Chrome>,
 ) -> impl IntoElement {
-    let segment = |target: Target, label: &'static str| {
+    let segment = |target: Target| {
+        let label = target.label();
         let on = target == selected;
         div()
             .id(label)
@@ -679,9 +684,7 @@ fn target_switch(
         .gap(px(2.))
         .rounded(px(7.))
         .bg(palette.segment_track)
-        .child(segment(Target::Github, "GitHub"))
-        .child(segment(Target::Slack, "Slack"))
-        .child(segment(Target::Email, "Email"))
+        .children(Target::ALL.iter().map(|&target| segment(target)))
 }
 
 /// A box shadow of `color` moved down by `y`. A zero blur with a spread draws

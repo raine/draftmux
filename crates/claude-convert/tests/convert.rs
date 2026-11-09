@@ -151,16 +151,15 @@ fn no_known_model_leaves_the_choice_to_pi() {
 }
 
 #[test]
-fn profile_default_reads_settings_and_fills_gaps() {
+fn profile_default_reads_settings() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("settings.json"),
         r#"{"defaultProvider":"openai","defaultModel":"gpt-6","defaultThinkingLevel":"low"}"#,
     )
     .unwrap();
-    let profile = ModelSelection::profile_default(dir.path()).unwrap();
     assert_eq!(
-        profile,
+        ModelSelection::profile_default(dir.path()).unwrap(),
         ModelSelection {
             model: Some(Model {
                 provider: "openai".into(),
@@ -169,19 +168,6 @@ fn profile_default_reads_settings_and_fills_gaps() {
             thinking_level: Some("low".into()),
         }
     );
-
-    let explicit_model = ModelSelection {
-        thinking_level: None,
-        ..sonnet()
-    };
-    assert_eq!(
-        explicit_model.or(profile.clone()),
-        ModelSelection {
-            thinking_level: Some("low".into()),
-            ..sonnet()
-        }
-    );
-    assert_eq!(ModelSelection::default().or(profile.clone()), profile);
 }
 
 #[test]

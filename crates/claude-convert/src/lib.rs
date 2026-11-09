@@ -21,6 +21,8 @@ use serde_json::{Value, json};
 
 use select::Line;
 
+pub use draftmux_pi_profiles::ModelRef as Model;
+
 /// pi's `KnownApi` value for Anthropic's Messages API, the API Claude Code
 /// talks to.
 const API: &str = "anthropic-messages";
@@ -36,8 +38,6 @@ pub struct ModelSelection {
     pub thinking_level: Option<String>,
 }
 
-pub use draftmux_pi_profiles::ModelRef as Model;
-
 impl ModelSelection {
     /// The profile's defaults from `<agent_dir>/settings.json`
     /// (`defaultProvider`, `defaultModel`, `defaultThinkingLevel`). A missing
@@ -48,14 +48,6 @@ impl ModelSelection {
             model: defaults.model,
             thinking_level: defaults.thinking_level,
         })
-    }
-
-    /// Each part from `self`, else from `fallback`.
-    pub fn or(self, fallback: Self) -> Self {
-        Self {
-            model: self.model.or(fallback.model),
-            thinking_level: self.thinking_level.or(fallback.thinking_level),
-        }
     }
 }
 
@@ -88,25 +80,13 @@ pub fn convert(transcript: impl BufRead, cwd: &Path, model: &ModelSelection) -> 
     let lines = select::parse(transcript)?;
     let conversation = select::conversation(&lines)?;
     let messages = messages(&conversation, cwd);
-    Ok(emit(
-        &messages,
-        cwd,
-        model,
-        uuid::Uuid::now_v7().to_string(),
-        Utc::now(),
-    ))
+    Ok(emit(&messages, cwd, model))
 }
 
 /// A session with no conversation, continuing on `model`, for a draft that
 /// wasn't handed off from Claude Code.
 pub fn empty(cwd: &Path, model: &ModelSelection) -> Session {
-    emit(
-        &[],
-        cwd,
-        model,
-        uuid::Uuid::now_v7().to_string(),
-        Utc::now(),
-    )
+    emit(&[], cwd, model)
 }
 
 enum Turn<'a> {
@@ -204,13 +184,9 @@ fn messages<'a>(conversation: &[&'a Line], cwd: &Path) -> Vec<Turn<'a>> {
     turns
 }
 
-fn emit(
-    turns: &[Turn],
-    cwd: &Path,
-    model: &ModelSelection,
-    session_id: String,
-    now: DateTime<Utc>,
-) -> Session {
+fn emit(turns: &[Turn], cwd: &Path, model: &ModelSelection) -> Session {
+    let session_id = uuid::Uuid::now_v7().to_string();
+    let now = Utc::now();
     let mut entries = vec![json!({
         "type": "session",
         "version": 3,

@@ -5,13 +5,12 @@ use std::ops::Deref;
 
 use gpui::{
     AnyElement, App, BoxShadow, ClickEvent, ElementId, FontWeight, Hsla, IntoElement, SharedString,
-    Window, div, point, prelude::*, px, rgba, svg,
+    Window, div, prelude::*, px, svg,
 };
 
 use crate::assets::{RESET_ICON, UPDOWN_ICON};
-use crate::theme::{self, Palette};
-
-pub const MONO: &str = "Menlo";
+use crate::chrome::shadow;
+use crate::theme::{self, MONO, Palette, hex};
 
 /// The app palette plus the colours only the Settings window uses, for the
 /// current appearance.
@@ -83,28 +82,11 @@ impl Deref for Colors {
     }
 }
 
-/// A colour from `0xRRGGBBAA`.
-fn hex(value: u32) -> Hsla {
-    rgba(value).into()
-}
-
 /// The hairline ring and soft drop shadow of a control.
 fn control_shadow(c: &Colors) -> Vec<BoxShadow> {
     vec![
-        BoxShadow {
-            color: c.field_ring,
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(0.5),
-            inset: false,
-        },
-        BoxShadow {
-            color: hex(0x00000012),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(1.5),
-            spread_radius: px(0.),
-            inset: false,
-        },
+        shadow(c.field_ring, 0., 0., 0.5),
+        shadow(hex(0x00000012), 1., 1.5, 0.),
     ]
 }
 
@@ -130,20 +112,8 @@ pub fn group(c: &Colors, rows: Vec<AnyElement>) -> impl IntoElement {
         .rounded(px(10.))
         .bg(c.group)
         .shadow(vec![
-            BoxShadow {
-                color: hex(0x0000001a),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.5),
-                inset: false,
-            },
-            BoxShadow {
-                color: hex(0x0000000a),
-                offset: point(px(0.), px(0.5)),
-                blur_radius: px(1.),
-                spread_radius: px(0.),
-                inset: false,
-            },
+            shadow(hex(0x0000001a), 0., 0., 0.5),
+            shadow(hex(0x0000000a), 0.5, 1., 0.),
         ]);
     for (ix, row) in rows.into_iter().enumerate() {
         group = group.child(
@@ -347,13 +317,7 @@ pub fn switch(
                 .size(px(15.))
                 .rounded_full()
                 .bg(c.on_accent)
-                .shadow(vec![BoxShadow {
-                    color: hex(0x00000040),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(2.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }]),
+                .shadow(vec![shadow(hex(0x00000040), 1., 2., 0.)]),
         )
         .on_click(on_click)
 }
@@ -406,20 +370,8 @@ pub fn menu_panel<A: Clone + 'static>(
         .rounded(px(7.))
         .bg(c.menu)
         .shadow(vec![
-            BoxShadow {
-                color: hex(0x00000033),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.5),
-                inset: false,
-            },
-            BoxShadow {
-                color: hex(0x00000029),
-                offset: point(px(0.), px(6.)),
-                blur_radius: px(18.),
-                spread_radius: px(0.),
-                inset: false,
-            },
+            shadow(hex(0x00000033), 0., 0., 0.5),
+            shadow(hex(0x00000029), 6., 18., 0.),
         ]);
     let (accent, on_accent) = (c.accent, c.on_accent);
     for (ix, item) in items.iter().enumerate() {

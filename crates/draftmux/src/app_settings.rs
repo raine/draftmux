@@ -19,8 +19,7 @@ struct GlobalSettings(Entity<AppSettings>);
 
 impl Global for GlobalSettings {}
 
-pub fn init(cx: &mut App) {
-    let data_dir = draftmux_storage::data_dir().unwrap_or_else(|_| std::env::temp_dir());
+pub fn init(data_dir: PathBuf, cx: &mut App) {
     let (settings, error) = match Settings::load(&data_dir) {
         Ok(settings) => (settings, None),
         Err(err) => {

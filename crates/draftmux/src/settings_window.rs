@@ -29,7 +29,7 @@ use crate::app_settings::AppSettings;
 use crate::assets::{FOLDER_ICON, GEAR_ICON, GLOBE_ICON, PLUS_ICON, SPARK_ICON};
 use crate::model_picker::{ModelPicker, PickerEvent};
 use crate::profiles::{ModelList, ProfileCatalog};
-use crate::theme::{self, Palette};
+use crate::theme::{self, MONO, Palette};
 use widgets::*;
 
 actions!(settings, [OpenSettings, CloseSettings]);
@@ -157,8 +157,9 @@ enum Choice {
     /// Unset the field.
     Inherit,
     Profile(PathBuf),
-    SameAsSession,
-    SameAsDrafting,
+    /// Follow the session's model (drafting) or the drafting model
+    /// (selection).
+    Follow(ModelField),
     ChooseModel(ModelField),
     Thinking(ModelField, ThinkingLevel),
     Target(Target),
@@ -422,11 +423,11 @@ impl SettingsWindow {
                     true => model_field.is_set(&own) && model_field.own_model(&own).is_none(),
                     false => model_field.model(&resolved).is_none(),
                 };
-                let choice = match model_field {
-                    ModelField::Drafting => Choice::SameAsSession,
-                    ModelField::Selection => Choice::SameAsDrafting,
-                };
-                items.push(item(model_field.follows().into(), follows, choice));
+                items.push(item(
+                    model_field.follows().into(),
+                    follows,
+                    Choice::Follow(model_field),
+                ));
                 if let Some(model) = model_field.own_model(&own) {
                     items.push(item(
                         model_ref(model).to_string().into(),
@@ -486,11 +487,11 @@ impl SettingsWindow {
                 let dir = tilde_path(&dir, &self.home);
                 self.update_scope(|scope| scope.profile = Some(dir), cx)
             }
-            Choice::SameAsSession => self.update_scope(
+            Choice::Follow(ModelField::Drafting) => self.update_scope(
                 |scope| scope.drafting_model = Some(DraftingModel::Session),
                 cx,
             ),
-            Choice::SameAsDrafting => self.update_scope(
+            Choice::Follow(ModelField::Selection) => self.update_scope(
                 |scope| scope.selection_model = Some(SelectionModel::Drafting),
                 cx,
             ),
@@ -613,19 +614,9 @@ impl SettingsWindow {
     }
 
     fn add_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add".into()),
-        });
+        let dir = pick_folder("Add", cx);
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(dir) = paths.into_iter().next() else {
-                return;
-            };
+            let Some(dir) = dir.await else { return };
             this.update_in(cx, |this, window, cx| {
                 // A folder that already has a rule opens it instead.
                 let ix = match this.settings(cx).rule_for(&dir, &this.home) {
@@ -644,19 +635,9 @@ impl SettingsWindow {
     }
 
     fn add_profile(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add profile".into()),
-        });
+        let dir = pick_folder("Add profile", cx);
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(dir) = paths.into_iter().next() else {
-                return;
-            };
+            let Some(dir) = dir.await else { return };
             this.update(cx, |this, cx| {
                 let added =
                     ProfileCatalog::global(cx).update(cx, |catalog, cx| catalog.add(&dir, cx));
@@ -714,6 +695,17 @@ fn scope_mut(settings: &mut Settings, page: Page) -> Option<&mut Scope> {
         Page::Rule(ix) => settings.directories.get_mut(ix).map(|rule| &mut rule.scope),
         _ => None,
     }
+}
+
+/// Asks for one folder; `None` when cancelled.
+fn pick_folder(prompt: &'static str, cx: &App) -> impl Future<Output = Option<PathBuf>> + use<> {
+    let paths = cx.prompt_for_paths(PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: Some(prompt.into()),
+    });
+    async move { paths.await.ok()?.ok()??.into_iter().next() }
 }
 
 fn model_ref(model: &ModelOverride) -> ModelRef {

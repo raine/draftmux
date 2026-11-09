@@ -33,7 +33,7 @@ use crate::chat_model::ChatModel;
 use crate::chrome::shadow;
 use crate::markup_view::{self, MarkupStyle};
 use crate::profiles::ProfileCatalog;
-use crate::theme::{self, Palette, Theme};
+use crate::theme::{self, MONO, Palette, Theme};
 use transcript::{DiffLine, Item, Tool, Transcript};
 
 actions!(chat, [Send, Stop]);
@@ -41,8 +41,6 @@ actions!(chat, [Send, Stop]);
 /// How long an idle pi process is kept for the selected draft.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const KEY_CONTEXT: &str = "Composer";
-
-const MONO: &str = "Menlo";
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -144,7 +142,7 @@ impl Chat {
                         Session {
                             draft: draft.clone(),
                             agent: None,
-                            transcript: Transcript::new(),
+                            transcript: Transcript::default(),
                             list,
                             model: None,
                             history_loaded: false,
@@ -448,7 +446,7 @@ impl Chat {
             return;
         };
         let old_len = session.list.item_count();
-        if let Some((from, old_len)) = session.transcript.take_change(old_len) {
+        if let Some(from) = session.transcript.take_change(old_len) {
             session
                 .list
                 .splice(from..old_len, session.transcript.items.len() - from);

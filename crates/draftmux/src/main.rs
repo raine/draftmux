@@ -26,6 +26,10 @@ mod skill;
 mod source;
 mod theme;
 
+use std::io::{self, Write};
+use std::process::ExitCode;
+
+use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use draftmux_storage::Store;
 
@@ -54,47 +58,49 @@ enum Command {
     Capture(capture::Args),
 }
 
-fn main() {
-    if let Some(command) = Cli::parse().command {
-        std::process::exit(match command {
-            Command::Open(args) => open::main(args),
-            Command::Show(args) => show::main(args),
-            Command::Skill(args) => skill::main(args),
-            #[cfg(feature = "capture")]
-            Command::Capture(args) => capture::main(args),
-        });
+fn main() -> ExitCode {
+    let result = match Cli::parse().command {
+        Some(Command::Open(args)) => open::main(args),
+        Some(Command::Show(args)) => show::main(args).map(|()| 0),
+        Some(Command::Skill(args)) => skill::main(args),
+        #[cfg(feature = "capture")]
+        Some(Command::Capture(args)) => Ok(capture::main(args)),
+        None => run_app().map(|()| 0),
+    };
+    match result {
+        Ok(code) => ExitCode::from(code),
+        Err(err) => {
+            eprintln!("draftmux: {err:#}");
+            ExitCode::FAILURE
+        }
     }
+}
 
-    let server = match ipc::claim() {
-        Ok(ipc::Claim::Owner(server)) => server,
-        Ok(ipc::Claim::Taken) => {
-            if let Err(err) = ipc::activate_running() {
-                eprintln!("draftmux: {err:#}");
-                std::process::exit(1);
-            }
-            return;
-        }
-        Err(err) => {
-            eprintln!("draftmux: {err:#}");
-            std::process::exit(1);
-        }
-    };
+/// Writes `bytes` to `out`. A reader that stops early, as with `| head`,
+/// isn't a failure.
+fn write_output(out: &mut impl Write, bytes: &[u8]) -> Result<()> {
+    match out.write_all(bytes).and_then(|()| out.flush()) {
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        result => result.context("writing to stdout"),
+    }
+}
 
-    let store = match Store::default_root() {
-        Ok(root) => Store::new(root),
-        Err(err) => {
-            eprintln!("draftmux: {err:#}");
-            std::process::exit(1);
-        }
+/// Runs the app, or brings the already running one forward.
+fn run_app() -> Result<()> {
+    let server = match ipc::claim()? {
+        ipc::Claim::Owner(server) => server,
+        ipc::Claim::Taken => return ipc::activate_running(),
     };
+    let data_dir = draftmux_storage::data_dir()?;
+    let store = Store::new(Store::default_root()?);
 
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             theme::init(cx);
             shell_env::init(cx);
-            profiles::init(cx);
-            app_settings::init(cx);
+            profiles::init(data_dir.clone(), cx);
+            app_settings::init(data_dir, cx);
             editor::init(cx);
             markup_view::init(cx);
             format::init(cx);
@@ -139,4 +145,5 @@ fn main() {
             server.serve(window, cx);
             cx.activate(true);
         });
+    Ok(())
 }

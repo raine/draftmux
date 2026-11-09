@@ -16,12 +16,12 @@ absolute_git_path() { case "$1" in /*) printf '%s\n' "$1" ;; *) (cd "$repo_root/
 repository_identity="$(absolute_git_path "$(git rev-parse --git-common-dir)")"
 worktree_identity="$(absolute_git_path "$(git rev-parse --git-dir)")"
 stash_lock="$repository_identity/draftmux/locks/v1/stash-reflog.lock"
-install_companion_hooks() { "$repo_root/scripts/install-git-hook-shims" commit-msg pre-push; }
+install_companion_hooks() { "$repo_root/scripts/install-git-hook-shims" commit-msg; }
 staged_paths_are_docs_or_media_only() {
   local p found=0
   while IFS= read -r p; do
     found=1
-    case "${p,,}" in docs/* | *.md | *.markdown | *.avif | *.gif | *.jpeg | *.jpg | *.png | *.svg | *.webp) ;; *) return 1 ;; esac
+    case "${p,,}" in *.md | *.markdown | *.avif | *.gif | *.jpeg | *.jpg | *.png | *.svg | *.webp) ;; *) return 1 ;; esac
   done < <(git diff --cached --name-only --diff-filter=ACMRD)
   [[ "$found" == 1 ]]
 }
@@ -48,7 +48,7 @@ resolve_created_stash() {
   stash_oid="${r#*$'\t'}"
 }
 push_unique_stash() {
-  local i max="${DRAFTMUX_PRE_COMMIT_STASH_PUSH_ATTEMPTS:-20}" delay="${DRAFTMUX_PRE_COMMIT_STASH_PUSH_RETRY_SECONDS:-0.05}" e
+  local i max=20 e
   e="$(mktemp)"
   for ((i = 1; i <= max; i++)); do
     if git stash push --quiet --keep-index --include-untracked -m "$stash_message" 2>"$e"; then
@@ -65,7 +65,7 @@ push_unique_stash() {
       rm -f "$e"
       return 1
     fi
-    sleep "$delay"
+    sleep 0.05
   done
   echo "error: timed out updating the shared stash ref after $max attempts" >&2
   cat "$e" >&2
@@ -121,7 +121,6 @@ if staged_paths_are_docs_or_media_only; then
 fi
 if ! just pre-commit; then
   echo 'pre-commit checks failed' >&2
-  echo 'if clippy reported fixable lints, run: just clippy-fix' >&2
   echo 'review and stage any fixes, then commit again' >&2
   exit 1
 fi

@@ -34,30 +34,15 @@ enum Command {
     Install,
 }
 
-pub fn main(args: Args) -> i32 {
-    let result = match args.command {
-        None => print(),
+/// Returns the process exit code.
+pub fn main(args: Args) -> Result<u8> {
+    match args.command {
+        None => crate::write_output(&mut io::stdout().lock(), BODY.as_bytes()).map(|()| 0),
         Some(Command::Install) => install_main(),
-    };
-    match result {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("draftmux: {err:#}");
-            1
-        }
     }
 }
 
-fn print() -> Result<i32> {
-    let mut out = io::stdout().lock();
-    match out.write_all(BODY.as_bytes()).and_then(|()| out.flush()) {
-        // The reader stopped early, as with `| head`; that isn't a failure.
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(0),
-        result => result.context("writing to stdout").map(|()| 0),
-    }
-}
-
-fn install_main() -> Result<i32> {
+fn install_main() -> Result<u8> {
     let home = std::env::home_dir().context("can't find the home directory")?;
     // The same config dir the skill's session locator uses.
     let claude = std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -343,7 +328,7 @@ mod tests {
         let claude = home.join(".claude");
         let skills = claude.join("skills");
         fs::create_dir_all(&skills).unwrap();
-        // A link to a checkout, as the manual install made.
+        // A link to a checkout the user made by hand.
         let checkout = home.join("checkout/skills/draftmux");
         fs::create_dir_all(&checkout).unwrap();
         symlink(&checkout, skills.join("draftmux")).unwrap();

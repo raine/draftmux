@@ -74,7 +74,7 @@ impl Store {
         Self { root: root.into() }
     }
 
-    /// `~/Library/Application Support/Draftmux/drafts`.
+    /// `drafts` in [`data_dir`].
     pub fn default_root() -> Result<PathBuf> {
         Ok(data_dir()?.join("drafts"))
     }
@@ -161,11 +161,6 @@ impl Store {
     pub fn save_text(&self, id: &str, text: &str) -> Result<Meta> {
         let path = self.draft_dir(id)?.join(DRAFT_FILE);
         atomic::write(&path, text.as_bytes())?;
-        self.touch(id)
-    }
-
-    /// Records activity that doesn't change the text, such as a prompt.
-    pub fn touch(&self, id: &str) -> Result<Meta> {
         self.update_meta(id, |meta| meta.updated_at = Utc::now())
     }
 

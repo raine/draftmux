@@ -3,25 +3,14 @@
 
 mod common;
 
-use common::outline;
-use markup::{Document, github, rich, slack};
+use common::{outline, posted};
+use markup::{github, rich, slack};
 
 /// What Slack posts for a fixture (with each changed block's note), and the
 /// HTML and plain text Copy for Slack puts on the pasteboard.
 fn slack_snapshot(mrkdwn: &str) -> String {
     let doc = slack::parse(mrkdwn);
-    let posted: String = slack::posted(&doc)
-        .into_iter()
-        .map(|(block, note)| {
-            let note = note
-                .map(|note| format!("note {note:?}\n"))
-                .unwrap_or_default();
-            let outline = outline(&Document {
-                blocks: vec![block],
-            });
-            format!("{note}{outline}")
-        })
-        .collect();
+    let posted = posted(&doc);
     let html = rich::html(&doc).replace("</p>", "</p>\n");
     let plain = rich::plain(&doc).replace('\u{feff}', "␣");
     format!("# posted\n{posted}\n# html\n{html}\n\n# plain\n{plain}\n")

@@ -158,7 +158,7 @@ impl MarkupStyle {
         Self {
             background: c(0xffffffff, 0x0d1117ff),
             font_family: ".SystemUIFont".into(),
-            mono_family: "Menlo".into(),
+            mono_family: crate::theme::MONO.into(),
             text_size: px(14.),
             line_height: 1.5,
             heading_scale: [2., 1.5, 1.25, 1., 0.875, 0.85],

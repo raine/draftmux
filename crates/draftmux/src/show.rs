@@ -12,7 +12,7 @@ use clap::ArgGroup;
 use draftmux_storage::{Draft, Status, Store, Target};
 use serde::Serialize;
 
-/// Print a draft's text exactly as it is in the editor.
+/// Print a draft's text as the app last saved it.
 #[derive(clap::Args, Debug)]
 #[command(group(ArgGroup::new("draft").required(true).args(["id", "source"])))]
 pub struct Args {
@@ -40,24 +40,10 @@ struct JsonOutput<'a> {
     body: &'a str,
 }
 
-/// Runs the command against the default drafts directory and returns the
-/// process exit code.
-pub fn main(args: Args) -> i32 {
-    let result = Store::default_root().and_then(|root| {
-        run(
-            &args,
-            &Store::new(root),
-            &mut io::stdout().lock(),
-            &mut io::stderr(),
-        )
-    });
-    match result {
-        Ok(()) => 0,
-        Err(err) => {
-            eprintln!("draftmux: {err:#}");
-            1
-        }
-    }
+/// Runs the command against the default drafts directory.
+pub fn main(args: Args) -> Result<()> {
+    let store = Store::new(Store::default_root()?);
+    run(&args, &store, &mut io::stdout().lock(), &mut io::stderr())
 }
 
 fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -> Result<()> {
@@ -83,11 +69,7 @@ fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -
             body
         }
     };
-    match out.write_all(output.as_bytes()).and_then(|()| out.flush()) {
-        // The reader stopped early, as with `| head`; that isn't a failure.
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        result => result.context("writing to stdout"),
-    }
+    crate::write_output(out, output.as_bytes())
 }
 
 fn resolve(args: &Args, store: &Store, err: &mut impl Write) -> Result<Draft> {

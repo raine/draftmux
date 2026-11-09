@@ -62,10 +62,9 @@ struct GlobalCatalog(Entity<ProfileCatalog>);
 impl Global for GlobalCatalog {}
 
 /// Detects the profiles and starts loading their models.
-pub fn init(cx: &mut App) {
+pub fn init(data_dir: PathBuf, cx: &mut App) {
     let catalog = cx.new(|cx| {
         let home = std::env::home_dir().unwrap_or_default();
-        let data_dir = draftmux_storage::data_dir().unwrap_or_else(|_| std::env::temp_dir());
         let added = AddedProfiles::new(&data_dir);
         let mut catalog = ProfileCatalog {
             home,

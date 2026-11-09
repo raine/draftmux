@@ -2,13 +2,31 @@
 
 use std::fmt::Write;
 
-use markup::{Block, Document, Span};
+use markup::{Block, Document, Span, slack};
 
 /// Renders a document as an indented outline, one block or span per line.
 pub fn outline(doc: &Document) -> String {
     let mut out = String::new();
     write_blocks(&mut out, &doc.blocks, 0);
     out
+}
+
+/// The outline of what Slack posts for `doc`, with a line for each block's
+/// note.
+#[allow(dead_code)]
+pub fn posted(doc: &Document) -> String {
+    slack::posted(doc)
+        .into_iter()
+        .map(|(block, note)| {
+            let note = note
+                .map(|note| format!("note {note:?}\n"))
+                .unwrap_or_default();
+            let outline = outline(&Document {
+                blocks: vec![block],
+            });
+            format!("{note}{outline}")
+        })
+        .collect()
 }
 
 fn write_blocks(out: &mut String, blocks: &[Block], depth: usize) {

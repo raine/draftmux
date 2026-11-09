@@ -178,8 +178,8 @@ pub fn activate_running() -> Result<()> {
 /// through LaunchServices (`open -n`, leaving the lock to decide which
 /// instance runs), which doesn't pass on the caller's environment, so `HOME`
 /// and any `DRAFTMUX_DATA_DIR` are forwarded to keep the app on the CLI's
-/// data directory. The returned
-/// child is then `open`, which exits once the launch is submitted. Otherwise
+/// data directory; the returned child is then `open`, which exits once the
+/// launch is submitted. Otherwise
 /// this binary is spawned with no command in its own process group, so the
 /// agent's tool timeout or Ctrl-C doesn't kill it.
 fn launch(dir: &Path) -> Result<Child> {

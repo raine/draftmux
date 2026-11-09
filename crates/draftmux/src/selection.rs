@@ -504,7 +504,7 @@ echo '{"alternatives": ["over here", "here"]}'"#,
     }
 
     /// Needs pi on `PATH` with a working default model in `~/.pi/agent`:
-    /// `cargo test -p draftmux -- --ignored real_pi`.
+    /// `cargo test -j 2 -p draftmux --bin draftmux real_pi_selection -- --ignored`.
     #[test]
     #[ignore]
     fn real_pi_selection_call_leaves_the_draft_session_alone() {

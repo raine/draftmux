@@ -54,12 +54,9 @@ lists `~/.claude/skills` in its `"skills"` setting, because both paths lead to
 the same file. If `~/.agents/skills/draftmux` exists, which every pi profile
 loads, install leaves pi alone and links Claude Code's skill to it instead.
 
-Running install again updates the skills it installed earlier. It never
-replaces anything else at those paths, such as a link to a checkout's
-`skills/draftmux` from an earlier manual install: it reports the path and
-skips it. That link keeps working, since
-[skills/draftmux/SKILL.md](skills/draftmux/SKILL.md) is the same stub; remove
-it and run install again to switch.
+Running install again updates the skills it installed. It never replaces
+anything else at those paths: it reports the path and skips it. Remove what is
+there and run install again to replace it.
 
 In pi, the skill finds the session file through `$PI_SESSION_FILE`, which pi's
 bash tool sets. pi extensions that replace the bash tool must pass the tool's
@@ -82,8 +79,8 @@ data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`),
 beside the installed app. Your pi profiles and shell environment stay the
 same. It prints the command to drive it from the CLI.
 
-Tests that need real external tools, such as oxfmt, are ignored by default.
-Run them with `cargo test -- --ignored`.
+Tests that need real external tools, such as pi or oxfmt, are ignored by
+default. Run them per package with `cargo test -p PACKAGE -- --ignored`.
 
 `just test-scripts` tests the build, install and release scripts with stub
 binaries, without cargo or Apple credentials; `just shellcheck` lints them.
@@ -94,7 +91,8 @@ binaries, without cargo or Apple credentials; `just shellcheck` lints them.
 `target/macos-release/<version>/`: `Draftmux.app` signed with a Developer ID
 certificate, notarized and stapled, inside a disk image that is itself
 signed, notarized and stapled, plus the image's `.sha256`. It checks
-credentials before building and uploads or publishes nothing. It needs:
+credentials before building. It submits the app and disk image to Apple's
+notary service but publishes nothing. It needs:
 
 | Variable                           | Value                                              |
 | ---------------------------------- | -------------------------------------------------- |
@@ -125,25 +123,25 @@ and `uv`) and commit the output.
 ### Layout
 
 ```text
-Cargo.toml           workspace manifest; shared dependencies and the gpui pin
-rust-toolchain.toml  toolchain matching Zed at the pinned gpui rev
+Cargo.toml             workspace manifest; shared dependencies and the gpui pin
+rust-toolchain.toml    toolchain matching Zed at the pinned gpui rev
 crates/claude-convert/ Claude Code transcript → pi session conversion (no gpui)
-crates/draftmux/     the app binary: startup, window and UI
-crates/markup/       message block tree, its parsers and Slack rich text (no gpui)
-crates/pi-profiles/  pi profile detection, defaults and model lists (no gpui)
-crates/pi-rpc/       pi RPC client, per-draft pi process manager, handoff fork (no gpui)
-crates/settings/     settings.json, directory rules and their resolution (no gpui)
-crates/shell-env/    login-shell environment capture; resolves pi and oxfmt
-crates/storage/      draft directories, meta.json, atomic writes, autosave
-pi-extension/        pi extension the app passes to pi; bundled as a resource
-macos/               Info.plist, app icon master (1024 px) and disk image layout
-scripts/             build, install and release scripts and their tests
-skills/draftmux/     agent skill stub; its instructions are crates/draftmux/src/skill.md
+crates/draftmux/       the app binary and CLI: startup, windows and app UI
+crates/editor/         markdown source editor: wrapping, undo, highlighting
+crates/markup/         message block tree, its parsers and Slack rich text (no gpui)
+crates/pi-profiles/    pi profile detection, defaults and model lists (no gpui)
+crates/pi-rpc/         pi RPC client, per-draft pi process manager, handoff fork (no gpui)
+crates/settings/       settings.json, directory rules and their resolution (no gpui)
+crates/shell-env/      login-shell environment capture; resolves pi and oxfmt
+crates/storage/        draft directories, meta.json, atomic writes, autosave
+pi-extension/          pi extension the app passes to pi; bundled as a resource
+macos/                 Info.plist, app icon master (1024 px) and disk image layout
+scripts/               build, install and release scripts and their tests
+skills/draftmux/       agent skill stub; its instructions are crates/draftmux/src/skill.md
 ```
 
 Library crates go under `crates/<name>` and are added when a subsystem has
 its own implementation and tests, such as draft storage or the pi RPC client.
-UI code stays in `crates/draftmux` until a split is useful.
 
 ### Bumping gpui
 

@@ -21,7 +21,6 @@ pub enum Item {
     Assistant {
         text: String,
         doc: Document,
-        streaming: bool,
     },
     Tool(Box<Tool>),
     /// A turn that failed, or that the user stopped (`error` is `None`).
@@ -68,6 +67,7 @@ pub enum DiffLine {
     Added(String),
 }
 
+#[derive(Default)]
 pub struct Transcript {
     pub items: Vec<Item>,
     /// Between sending a prompt (or pi starting a run) and the run settling.
@@ -85,24 +85,10 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            busy: false,
-            last_prompt: None,
-            pending_error: None,
-            streaming: None,
-            draft_text: None,
-            changed_from: None,
-        }
-    }
-
-    /// The first changed index and the item count before the changes, then
-    /// forgets them.
-    pub fn take_change(&mut self, old_len: usize) -> Option<(usize, usize)> {
-        self.changed_from
-            .take()
-            .map(|from| (from.min(old_len), old_len))
+    /// The first changed index, at most the item count before the changes
+    /// (`old_len`), then forgets it.
+    pub fn take_change(&mut self, old_len: usize) -> Option<usize> {
+        self.changed_from.take().map(|from| from.min(old_len))
     }
 
     fn touch(&mut self, index: usize) {
@@ -222,7 +208,6 @@ impl Transcript {
                     self.push(Item::Assistant {
                         text: String::new(),
                         doc: Document::default(),
-                        streaming: true,
                     });
                 }
                 _ => {}
@@ -246,11 +231,7 @@ impl Transcript {
                     if text.trim().is_empty() {
                         self.items.remove(index);
                     } else {
-                        self.items[index] = Item::Assistant {
-                            doc: markup::github::parse(&text),
-                            text,
-                            streaming: false,
-                        };
+                        self.items[index] = Item::assistant(text);
                     }
                     self.touch(index);
                 }
@@ -262,25 +243,18 @@ impl Transcript {
                 tool_call_id,
                 tool_name,
                 args,
-            } => self.push(Item::Tool(Box::new(Tool {
-                id: tool_call_id.clone(),
-                name: tool_name.clone(),
-                args: args.clone(),
-                status: ToolStatus::Running { since: now },
-                output: String::new(),
-                details: Value::Null,
-                stats: None,
-                expanded: false,
-            }))),
+            } => self.push(Tool::item(
+                tool_call_id.clone(),
+                tool_name.clone(),
+                args.clone(),
+                ToolStatus::Running { since: now },
+            )),
             Event::ToolExecutionUpdate {
                 tool_call_id,
                 partial_result,
                 ..
             } => {
-                if let Some(index) = self.tool_index(tool_call_id) {
-                    let Item::Tool(tool) = &mut self.items[index] else {
-                        unreachable!()
-                    };
+                if let Some((index, tool)) = self.tool(tool_call_id) {
                     tool.output = truncate_lines(&content_text(&partial_result["content"], "\n"));
                     self.touch(index);
                 }
@@ -292,12 +266,9 @@ impl Transcript {
                 duration_ms,
                 ..
             } => {
-                let Some(index) = self.tool_index(tool_call_id) else {
-                    return;
-                };
                 let previous = written.and_then(|_| self.draft_text.as_deref().map(line_count));
-                let Item::Tool(tool) = &mut self.items[index] else {
-                    unreachable!()
+                let Some((index, tool)) = self.tool(tool_call_id) else {
+                    return;
                 };
                 let duration = duration_ms
                     .map(Duration::from_millis)
@@ -324,9 +295,6 @@ impl Transcript {
     fn end_run(&mut self) {
         self.busy = false;
         if let Some(index) = self.streaming.take() {
-            if let Some(Item::Assistant { streaming, .. }) = self.items.get_mut(index) {
-                *streaming = false;
-            }
             self.touch(index);
         }
         for index in 0..self.items.len() {
@@ -339,14 +307,42 @@ impl Transcript {
         }
     }
 
-    fn tool_index(&self, id: &str) -> Option<usize> {
+    /// The latest tool call with `id`, and its index.
+    fn tool(&mut self, id: &str) -> Option<(usize, &mut Tool)> {
         self.items
-            .iter()
-            .rposition(|item| matches!(item, Item::Tool(tool) if tool.id == id))
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, item)| match item {
+                Item::Tool(tool) if tool.id == id => Some((index, &mut **tool)),
+                _ => None,
+            })
+    }
+}
+
+impl Item {
+    fn assistant(text: String) -> Self {
+        Item::Assistant {
+            doc: markup::github::parse(&text),
+            text,
+        }
     }
 }
 
 impl Tool {
+    fn item(id: String, name: String, args: Value, status: ToolStatus) -> Item {
+        Item::Tool(Box::new(Tool {
+            id,
+            name,
+            args,
+            status,
+            output: String::new(),
+            details: Value::Null,
+            stats: None,
+            expanded: false,
+        }))
+    }
+
     fn finish(&mut self, result: &Value, is_error: bool, duration: Option<Duration>) {
         self.status = ToolStatus::Done { is_error, duration };
         self.output = truncate_lines(&content_text(&result["content"], "\n"));
@@ -456,7 +452,7 @@ pub fn history(messages: &[Value]) -> (Vec<Item>, usize) {
         .filter(|message| matches!(role(message), "user" | "assistant"))
         .count();
 
-    let mut transcript = Transcript::new();
+    let mut transcript = Transcript::default();
     for message in &messages[start..] {
         match role(message) {
             "user" => {
@@ -471,23 +467,15 @@ pub fn history(messages: &[Value]) -> (Vec<Item>, usize) {
                     .unwrap_or_default();
                 let text = content_text(&message["content"], "\n\n");
                 if !text.trim().is_empty() {
-                    transcript.push(Item::Assistant {
-                        doc: markup::github::parse(&text),
-                        text,
-                        streaming: false,
-                    });
+                    transcript.push(Item::assistant(text));
                 }
                 for call in content.iter().filter(|block| block["type"] == "toolCall") {
-                    transcript.push(Item::Tool(Box::new(Tool {
-                        id: call["id"].as_str().unwrap_or_default().to_owned(),
-                        name: call["name"].as_str().unwrap_or_default().to_owned(),
-                        args: call["arguments"].clone(),
-                        status: ToolStatus::Stopped,
-                        output: String::new(),
-                        details: Value::Null,
-                        stats: None,
-                        expanded: false,
-                    })));
+                    transcript.push(Tool::item(
+                        call["id"].as_str().unwrap_or_default().to_owned(),
+                        call["name"].as_str().unwrap_or_default().to_owned(),
+                        call["arguments"].clone(),
+                        ToolStatus::Stopped,
+                    ));
                 }
                 let failure = match message["stopReason"].as_str() {
                     Some("error") => Some(Some(error_message(message))),
@@ -503,10 +491,7 @@ pub fn history(messages: &[Value]) -> (Vec<Item>, usize) {
             }
             "toolResult" => {
                 let id = message["toolCallId"].as_str().unwrap_or_default();
-                if let Some(index) = transcript.tool_index(id) {
-                    let Item::Tool(tool) = &mut transcript.items[index] else {
-                        unreachable!()
-                    };
+                if let Some((_, tool)) = transcript.tool(id) {
                     let duration = message["durationMs"].as_u64().map(Duration::from_millis);
                     tool.finish(message, message["isError"] == true, duration);
                 }
@@ -670,7 +655,7 @@ mod tests {
 
     #[test]
     fn recorded_edit_run() {
-        let mut transcript = Transcript::new();
+        let mut transcript = Transcript::default();
         let prompt =
             "Use the edit tool to change 'world' to 'there' in the draft file. Then reply 'done'.";
         transcript.sent(prompt.into(), "Hello world draft.\n".into());
@@ -706,15 +691,16 @@ mod tests {
                 DiffLine::Added("Hello there draft.".into()),
             ]
         );
+        assert!(transcript.streaming.is_none());
         assert!(matches!(
             transcript.items.last(),
-            Some(Item::Assistant { streaming: false, text, .. }) if !text.is_empty()
+            Some(Item::Assistant { text, .. }) if !text.is_empty()
         ));
     }
 
     #[test]
     fn recorded_aborted_write_run() {
-        let mut transcript = Transcript::new();
+        let mut transcript = Transcript::default();
         let prompt = "Count slowly from 1 to 200, one number per line.";
         transcript.sent(prompt.into(), "Hello world draft.\n".into());
         let numbers: String = (1..=200).map(|n| format!("{n}\n")).collect();
@@ -739,7 +725,7 @@ mod tests {
 
     #[test]
     fn running_tool_and_crash() {
-        let mut transcript = Transcript::new();
+        let mut transcript = Transcript::default();
         transcript.sent("go".into(), String::new());
         let now = Instant::now();
         let start = AgentEvent::Pi(Event::ToolExecutionStart {
@@ -775,7 +761,7 @@ mod tests {
 
     #[test]
     fn assistant_error_waits_for_auto_retry() {
-        let mut transcript = Transcript::new();
+        let mut transcript = Transcript::default();
         transcript.sent("go".into(), String::new());
         let now = Instant::now();
         let error = serde_json::json!({

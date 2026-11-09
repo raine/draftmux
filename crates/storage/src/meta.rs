@@ -64,7 +64,7 @@ impl Target {
 }
 
 /// The settings a draft keeps from its creation (see [`Meta::settings`]).
-/// Drafts created before settings existed load with these defaults.
+/// A `meta.json` without `settings` loads with these defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DraftSettings {
@@ -186,18 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn every_target_round_trips() {
-        for &target in Target::ALL {
-            let json = serde_json::to_string(&target).unwrap();
-            assert_eq!(serde_json::from_str::<Target>(&json).unwrap(), target);
+    fn targets_are_stored_by_name() {
+        for (target, json) in [
+            (Target::Github, r#""github""#),
+            (Target::Slack, r#""slack""#),
+            (Target::Email, r#""email""#),
+        ] {
+            assert_eq!(serde_json::to_string(&target).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Target>(json).unwrap(), target);
         }
-    }
-
-    #[test]
-    fn email_target_is_stored_as_email() {
-        let json = FIXTURE.replace(r#""target": "slack""#, r#""target": "email""#);
-        let meta: Meta = serde_json::from_str(&json).unwrap();
-        assert_eq!(meta.target, Target::Email);
-        assert_eq!(serde_json::to_string_pretty(&meta).unwrap(), json);
     }
 }

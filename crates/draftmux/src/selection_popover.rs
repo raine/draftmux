@@ -63,22 +63,22 @@ const INSTRUCTION_WIDTH: Pixels = px(320.);
 const INSTRUCTION_PLACEHOLDER: &str = "e.g. less formal, mention the timeout";
 
 pub fn init(cx: &mut App) {
-    let popover = Some("SelectionPopover > Editor");
-    let results = Some("SelectionResults > Editor");
-    let instruction = Some("SelectionInstruction > Editor");
+    let popover = Some(format!("{POPOVER_CONTEXT} > Editor"));
+    let results = Some(format!("{RESULTS_CONTEXT} > Editor"));
+    let instruction = Some(format!("{INSTRUCTION_CONTEXT} > Editor"));
     let mut bindings = vec![
-        KeyBinding::new("escape", Dismiss, popover),
-        KeyBinding::new("up", Previous, results),
-        KeyBinding::new("down", Next, results),
-        KeyBinding::new("enter", Confirm, results),
-        KeyBinding::new("escape", Dismiss, instruction),
-        KeyBinding::new("enter", Confirm, instruction),
+        KeyBinding::new("escape", Dismiss, popover.as_deref()),
+        KeyBinding::new("up", Previous, results.as_deref()),
+        KeyBinding::new("down", Next, results.as_deref()),
+        KeyBinding::new("enter", Confirm, results.as_deref()),
+        KeyBinding::new("escape", Dismiss, instruction.as_deref()),
+        KeyBinding::new("enter", Confirm, instruction.as_deref()),
     ];
     for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
         .into_iter()
         .enumerate()
     {
-        bindings.push(KeyBinding::new(key, Pick(index), results));
+        bindings.push(KeyBinding::new(key, Pick(index), results.as_deref()));
     }
     // Bound after the editor's keys, so these win at the same depth.
     cx.bind_keys(bindings);
@@ -89,7 +89,6 @@ pub struct SelectionPopover {
     editor: Entity<Editor>,
     main: AnyWindowHandle,
     draft: Option<Draft>,
-    agent_running: bool,
     open: Option<Open>,
     panel: Option<Panel>,
     /// The popover content's size, measured by the panel after layout.
@@ -168,7 +167,6 @@ impl SelectionPopover {
             editor,
             main: window.window_handle(),
             draft: None,
-            agent_running: false,
             open: None,
             panel: None,
             content_size: None,
@@ -184,14 +182,6 @@ impl SelectionPopover {
     pub fn set_draft(&mut self, draft: Option<Draft>, cx: &mut Context<Self>) {
         self.draft = draft;
         self.dismiss(cx);
-    }
-
-    /// Selection actions are unavailable while the agent runs.
-    pub fn set_agent_running(&mut self, running: bool, cx: &mut Context<Self>) {
-        self.agent_running = running;
-        if running {
-            self.dismiss(cx);
-        }
     }
 
     /// Wraps the editor pane: adds the popover's key contexts and actions,
@@ -259,8 +249,7 @@ impl SelectionPopover {
 
     /// Whether a draft is focused that selection calls can fork.
     fn available(&self, cx: &App) -> bool {
-        !self.agent_running
-            && !self.editor.read(cx).is_read_only()
+        !self.editor.read(cx).is_read_only()
             && self
                 .draft
                 .as_ref()
@@ -314,7 +303,7 @@ impl SelectionPopover {
         }));
     }
 
-    fn dismiss(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.pending_show = None;
         if self.open.take().is_some() {
             self.changed(cx);
@@ -359,13 +348,7 @@ impl SelectionPopover {
     /// The state changed: redraw and place the panel to match.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.content_size = None;
-        cx.notify();
-        if let Some(panel) = &self.panel {
-            panel
-                .handle
-                .update(cx, |_, window, _| window.refresh())
-                .ok();
-        }
+        self.redraw(cx);
         self.schedule_reconcile(cx);
     }
 

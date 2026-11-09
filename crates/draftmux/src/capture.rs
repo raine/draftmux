@@ -39,7 +39,7 @@ pub struct Args {
     width: f32,
 }
 
-pub fn main(args: Args) -> i32 {
+pub fn main(args: Args) -> u8 {
     let target = match args.target.as_str() {
         "github" => Target::Github,
         "slack" => Target::Slack,

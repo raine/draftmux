@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(fs::read_to_string(config.path()).unwrap(), "{}");
     }
 
-    /// Needs oxfmt on `PATH`: `cargo test -p draftmux -- --ignored`.
+    /// Needs oxfmt on `PATH`: `cargo test -j 2 -p draftmux --bin draftmux real_oxfmt -- --ignored`.
     #[test]
     #[ignore]
     fn real_oxfmt_formats_markdown_with_default_options() {

@@ -71,8 +71,8 @@ draft from Draftmux. Use the text exactly as it is: the user has already
 polished it, so don't rewrite, reformat, shorten or fix it.
 
 For a command that takes a file, pass the draft's path. This keeps backticks,
-`$` and quotes in the body intact. The path contains a space, so always quote
-it, and check `show` succeeded before using it:
+`$` and quotes in the body intact. Always quote the path, which can contain
+spaces, and check `show` succeeded before using it:
 
 ```sh
 p=$(draftmux show --source "$f" --path) || exit 1

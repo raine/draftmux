@@ -356,7 +356,6 @@ fn get_state() {
     ))]);
     let state = block_on(h.agent.get_state()).unwrap();
     assert_eq!(state.thinking_level, ThinkingLevel::Medium);
-    assert_eq!(state.session_id, "s");
     assert!(state.model.is_none());
 }
 
@@ -469,7 +468,7 @@ fn idle_stop() {
     let Some(AgentEvent::Ready(state)) = ready.last() else {
         unreachable!()
     };
-    assert_eq!(state.session_id, "s");
+    assert_eq!(state.thinking_level, ThinkingLevel::Medium);
     let due = h.agent.deadline().unwrap();
     assert!(!h.agent.poll(due - Duration::from_millis(1)));
     assert!(h.agent.poll(due));

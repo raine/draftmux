@@ -48,6 +48,3 @@ tempfile = "3.27.0"
 [features]
 # `draftmux capture`: renders fixture drafts to PNGs (history/docs/design.md, Testing).
 capture = ["dep:image", "gpui/test-support", "gpui_platform/test-support"]
-
-[dev-dependencies]
-futures = "0.3"

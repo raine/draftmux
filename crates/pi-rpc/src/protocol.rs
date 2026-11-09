@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// The commands Draftmux sends. Commands that write pi's global settings
 /// (`set_steering_mode`, `set_follow_up_mode`, `set_auto_compaction`,
@@ -108,30 +108,18 @@ pub struct State {
     pub model: Option<Model>,
     pub thinking_level: ThinkingLevel,
     pub is_streaming: bool,
-    pub is_compacting: bool,
     pub session_file: Option<PathBuf>,
-    pub session_id: String,
-    pub session_name: Option<String>,
-    pub message_count: u64,
-    pub pending_message_count: u64,
 }
 
-/// A model from pi's catalog. Provider-specific fields stay in `extra`.
+/// A model from pi's catalog.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
     pub id: String,
-    pub name: String,
     pub provider: String,
     pub api: String,
     #[serde(default)]
     pub reasoning: bool,
-    pub context_window: u64,
-    pub max_tokens: u64,
-    #[serde(default)]
-    pub input: Vec<String>,
-    #[serde(flatten)]
-    pub extra: Map<String, Value>,
 }
 
 #[derive(Deserialize)]

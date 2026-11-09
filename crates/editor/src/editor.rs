@@ -124,8 +124,7 @@ pub enum EditorEvent {
     SelectionChanged(Range<usize>),
 }
 
-/// Fonts, colours and metrics. The default is the draft editor of the light
-/// "Native" prototype.
+/// Fonts, colours and metrics. The default is the light draft editor.
 #[derive(Clone)]
 pub struct EditorStyle {
     pub font: Font,
@@ -235,15 +234,6 @@ impl Editor {
     /// The selection as an ordered byte range.
     pub fn selected_range(&self) -> Range<usize> {
         self.buffer.selection().range()
-    }
-
-    pub fn selected_text(&self) -> &str {
-        self.buffer.selected_text()
-    }
-
-    pub fn set_selected_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-        self.buffer.select_range(range, false);
-        self.after_change(None, true, cx);
     }
 
     /// Window-space rectangles of the selection, one per visual row, for
@@ -416,7 +406,7 @@ impl Editor {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.selected_text();
+        let text = self.buffer.selected_text();
         if !text.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
         }

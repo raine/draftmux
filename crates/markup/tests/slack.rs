@@ -3,7 +3,7 @@
 mod common;
 
 use common::outline;
-use markup::{Document, slack};
+use markup::slack;
 
 fn snapshot(mrkdwn: &str) -> String {
     outline(&slack::parse(mrkdwn))
@@ -126,18 +126,7 @@ fn empty_document() {
 
 /// The outline of what Slack posts, with a line for each block's note.
 fn posted(mrkdwn: &str) -> String {
-    slack::posted(&slack::parse(mrkdwn))
-        .into_iter()
-        .map(|(block, note)| {
-            let note = note
-                .map(|note| format!("note {note:?}\n"))
-                .unwrap_or_default();
-            let outline = outline(&Document {
-                blocks: vec![block],
-            });
-            format!("{note}{outline}")
-        })
-        .collect()
+    common::posted(&slack::parse(mrkdwn))
 }
 
 #[test]
