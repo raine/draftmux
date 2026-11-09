@@ -3,9 +3,10 @@
 //! General and Selection actions hold app-wide settings. Under Agent, All
 //! directories holds the defaults and each directory rule its overrides. A
 //! rule's unset fields show the value they inherit and where it comes from;
-//! overridden fields get a dot and a reset button. Every change is saved at
-//! once and applies to drafts created afterwards.
+//! overridden fields get a dot and a reset button. Scope changes apply to
+//! drafts created afterwards; selection actions apply to every draft.
 
+mod selection_actions;
 mod widgets;
 
 use std::path::{Path, PathBuf};
@@ -176,6 +177,7 @@ pub struct SettingsWindow {
     menu: Option<(Field, Vec<MenuItem<Choice>>)>,
     picker: Option<(ModelField, Entity<ModelPicker>, Subscription)>,
     instructions: Entity<Editor>,
+    action_editor: Option<selection_actions::ActionEditor>,
     /// What pi reads in the current rule's directory.
     pi_reads: Option<PiReads>,
     error: Option<SharedString>,
@@ -223,6 +225,7 @@ impl SettingsWindow {
             menu: None,
             picker: None,
             instructions,
+            action_editor: None,
             pi_reads: None,
             error: None,
             should_move: false,
@@ -274,6 +277,8 @@ impl SettingsWindow {
                 });
             }
         }
+        // Action fields are a draft until Save; reloads must not replace them.
+        // Saving checks the original list before applying the edit.
         self.refresh_pi_reads(cx);
         cx.notify();
     }
@@ -1716,25 +1721,19 @@ impl SettingsWindow {
                         ),
                     )
                     .into_any_element(),
-                    row(
-                        label(c, "Actions", false),
-                        vec![description(
-                            c,
-                            "Alternatives, Shorter, Tighten, and an instruction of your own",
-                        )],
-                        div(),
-                    )
-                    .into_any_element(),
                 ],
             )
             .into_any_element(),
             note(
                 c,
-                "Each action runs as a one-off pi call on the draft's session that leaves no \
-                 session behind. Its model is the Selection model setting of the draft's \
-                 directory.",
+                "Selecting text in the editor offers Alternatives, your actions and an \
+                 instruction of your own. Each runs as a one-off pi call on the draft's session \
+                 that leaves no session behind, with the Selection model setting of the \
+                 draft's directory.",
             )
             .into_any_element(),
+            group_title(c, "Actions").into_any_element(),
+            group(c, self.action_rows(cx)).into_any_element(),
         ]
     }
 }

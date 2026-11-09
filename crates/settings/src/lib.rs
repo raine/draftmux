@@ -6,7 +6,7 @@
 //! editable by hand; the app reloads the file when it changes. `draftmux
 //! open` reads it, resolves it for the source session's cwd and keeps the
 //! result in the new draft, so changes apply to new drafts only. The
-//! alternatives count is an app preference read on every selection call.
+//! alternatives count and selection actions are app-wide preferences.
 
 mod matching;
 mod pi_reads;
@@ -43,6 +43,56 @@ pub struct Settings {
     pub directories: Vec<Rule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alternatives: Option<usize>,
+    /// Unset uses Shorter and Tighten; an empty list hides all custom actions.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_actions"
+    )]
+    pub selection_actions: Option<Vec<SelectionAction>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionAction {
+    pub name: String,
+    pub prompt: String,
+}
+
+impl SelectionAction {
+    pub fn is_valid(&self) -> bool {
+        !self.name.trim().is_empty() && !self.prompt.trim().is_empty()
+    }
+}
+
+pub fn default_selection_actions() -> Vec<SelectionAction> {
+    [
+        (
+            "Shorter",
+            "Make it shorter while keeping the important meaning.",
+        ),
+        (
+            "Tighten",
+            "Tighten it: remove filler and redundancy, keep the meaning and tone.",
+        ),
+    ]
+    .into_iter()
+    .map(|(name, prompt)| SelectionAction {
+        name: name.into(),
+        prompt: prompt.into(),
+    })
+    .collect()
+}
+
+fn deserialize_actions<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<SelectionAction>>, D::Error> {
+    let entries = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?;
+    Ok(entries.map(|entries| {
+        entries
+            .into_iter()
+            .filter_map(|entry| serde_json::from_value::<SelectionAction>(entry).ok())
+            .filter(SelectionAction::is_valid)
+            .collect()
+    }))
 }
 
 /// One scope's values; an unset field inherits.
@@ -165,6 +215,12 @@ impl Settings {
         draftmux_storage::write_atomic(&Self::path(config_dir), &json)
     }
 
+    pub fn selection_actions(&self) -> Vec<SelectionAction> {
+        self.selection_actions
+            .clone()
+            .unwrap_or_else(default_selection_actions)
+    }
+
     pub fn alternatives(&self) -> usize {
         self.alternatives.unwrap_or(DEFAULT_ALTERNATIVES)
     }
@@ -199,6 +255,46 @@ mod tests {
         let json = std::fs::read_to_string(Settings::path(dir.path())).unwrap();
         assert!(json.contains(r#""drafting_model": "session""#), "{json}");
         assert!(json.contains(r#""path": "~/work""#), "{json}");
+    }
+
+    #[test]
+    fn selection_actions_default_only_when_unset() {
+        let settings: Settings = serde_json::from_str(r#"{"alternatives":4}"#).unwrap();
+        assert_eq!(settings.selection_actions(), default_selection_actions());
+        assert_eq!(settings.alternatives(), 4);
+        let empty: Settings = serde_json::from_str(r#"{"selection_actions":[]}"#).unwrap();
+        assert!(empty.selection_actions().is_empty());
+        let json = serde_json::to_string(&empty).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), empty);
+        assert!(
+            !serde_json::to_string(&settings)
+                .unwrap()
+                .contains("selection_actions")
+        );
+    }
+
+    #[test]
+    fn selection_actions_skip_invalid_entries_and_preserve_order_and_prompts() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"selection_actions":[
+            {"name":"Second", "prompt":"  Keep this\nexactly.  "},
+            {"name":" ", "prompt":"No"},
+            {"name":"Blank prompt", "prompt":"\n "},
+            {"name":"Missing prompt"},
+            {"name":123, "prompt":"Wrong type"},
+            null,
+            {"name":"First", "prompt":"Another prompt"}
+        ]}"#,
+        )
+        .unwrap();
+        let actions = settings.selection_actions();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "Second");
+        assert_eq!(actions[0].prompt, "  Keep this\nexactly.  ");
+        assert_eq!(actions[1].name, "First");
+        let dir = tempfile::tempdir().unwrap();
+        settings.save(dir.path()).unwrap();
+        assert_eq!(Settings::load(dir.path()).unwrap(), settings);
     }
 
     #[test]

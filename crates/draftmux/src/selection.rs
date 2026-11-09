@@ -69,8 +69,6 @@ impl SelectionConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Alternatives,
-    Shorter,
-    Tighten,
     /// The user's own instruction.
     Instruction(String),
 }
@@ -80,10 +78,6 @@ impl Action {
         match self {
             Action::Alternatives => {
                 "Suggest alternative phrasings that preserve the meaning and fit the surrounding text."
-            }
-            Action::Shorter => "Make it shorter while keeping the important meaning.",
-            Action::Tighten => {
-                "Tighten it: remove filler and redundancy, keep the meaning and tone."
             }
             Action::Instruction(text) => text,
         }
@@ -329,6 +323,27 @@ mod tests {
     }
 
     #[test]
+    fn custom_actions_pass_the_prompt_unchanged() {
+        let mut actions = draftmux_settings::default_selection_actions();
+        actions.push(draftmux_settings::SelectionAction {
+            name: "Custom".into(),
+            prompt: "Keep the details.\n  Use a warmer tone.  ".into(),
+        });
+        for action in actions {
+            let request = request(
+                "Hi there",
+                "there",
+                Action::Instruction(action.prompt.clone()),
+            );
+            assert_eq!(request.action.instruction(), action.prompt);
+            assert!(prompt(&request, 3).unwrap().contains(&format!(
+                "Task for the selected passage: {}\n\n",
+                action.prompt
+            )));
+        }
+    }
+
+    #[test]
     fn syntax_matches_the_draft_prompt() {
         let extension = include_str!("../../../pi-extension/draftmux.ts");
         for &target in Target::ALL {
@@ -339,7 +354,11 @@ mod tests {
 
     #[test]
     fn prompt_names_slack_syntax_and_refuses_blank_or_huge_selections() {
-        let mut slack = request("Ship it today", "today", Action::Shorter);
+        let mut slack = request(
+            "Ship it today",
+            "today",
+            Action::Instruction("Shorten it".into()),
+        );
         slack.target = Target::Slack;
         assert!(prompt(&slack, 3).unwrap().contains("Slack mrkdwn"));
         slack.target = Target::Plain;
@@ -511,7 +530,11 @@ echo '{"alternatives": ["over here", "here"]}'"#,
         let mut pi = Command::new("/bin/sh");
         pi.args(["-c", "echo 'No API key found for anthropic' >&2; exit 1"]);
         let parent = tempfile::tempdir().unwrap();
-        let mut request = request("Hi there", "there", Action::Shorter);
+        let mut request = request(
+            "Hi there",
+            "there",
+            Action::Instruction("Shorten it".into()),
+        );
         request.cwd = parent.path().to_path_buf();
         let err = run(
             pi,

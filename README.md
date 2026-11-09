@@ -87,7 +87,7 @@ the applications and icons directories. Drafts are not removed.
 
 Everything the Settings window changes is saved in plain JSON files, which you
 can also edit by hand: `settings.json` holds the defaults, directory rules and
-alternatives count, and `profiles.json` the pi profile folders added in
+selection actions, and `profiles.json` the pi profile folders added in
 Draftmux. They live in `~/.config/draftmux` (or `$XDG_CONFIG_HOME/draftmux`)
 on macOS and Linux; set `DRAFTMUX_CONFIG_DIR` to use another directory.
 Settings shows the path under Files. Older versions kept these files in the
@@ -96,7 +96,22 @@ drafts directory and Draftmux moves them on first launch.
 Draftmux applies a saved edit within a second, without a restart. If the file
 doesn't parse, Settings shows the error and the last valid settings stay in
 use until the file is fixed. New drafts pick up changed settings; existing
-drafts keep the settings they were created with.
+drafts keep the settings they were created with. Selection actions and the
+alternatives count apply immediately to all drafts.
+
+The app-wide `selection_actions` key in `settings.json` is an ordered list of
+objects with `name` and `prompt` strings, for example:
+
+```json
+"selection_actions": [
+  { "name": "More formal", "prompt": "Rewrite in a more formal tone." }
+]
+```
+
+Omit the key to use Shorter and Tighten, or set it to `[]` for no custom
+actions. Invalid entries, including blank names or prompts, are skipped.
+Alternatives and Instruction remain available. Manage the list in Settings →
+Selection actions.
 
 ### Draftmux skill
 

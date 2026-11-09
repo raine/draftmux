@@ -70,6 +70,9 @@ pub fn init(cx: &mut App) {
     let instruction = Some(format!("{INSTRUCTION_CONTEXT} > Editor"));
     let mut bindings = vec![
         KeyBinding::new("escape", Dismiss, popover.as_deref()),
+        KeyBinding::new("up", Previous, popover.as_deref()),
+        KeyBinding::new("down", Next, popover.as_deref()),
+        KeyBinding::new("enter", Confirm, popover.as_deref()),
         KeyBinding::new("up", Previous, results.as_deref()),
         KeyBinding::new("down", Next, results.as_deref()),
         KeyBinding::new("enter", Confirm, results.as_deref()),
@@ -115,7 +118,7 @@ struct Open {
 }
 
 enum Mode {
-    Actions,
+    Actions(Vec<draftmux_settings::SelectionAction>),
     Instruction(Entity<Editor>),
     /// Dropping it cancels the call and kills pi.
     Running {
@@ -142,18 +145,25 @@ struct Panel {
     _activation: Subscription,
 }
 
-const ACTIONS: [(&str, Option<&str>); 4] = [
-    ("Alternatives", Some("✦")),
-    ("Shorter", None),
-    ("Tighten", None),
-    ("Instruction…", None),
-];
-
 impl SelectionPopover {
     pub fn new(editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
             cx.subscribe(&editor, |this, _, event, cx| this.editor_event(event, cx)),
             cx.observe(&editor, |this, _, cx| this.schedule_reconcile(cx)),
+            cx.observe(&AppSettings::global(cx), |this, settings, cx| {
+                let actions = settings.read(cx).settings.selection_actions();
+                if let Some(Open {
+                    mode: Mode::Actions(current),
+                    highlighted,
+                    ..
+                }) = &mut this.open
+                    && *current != actions
+                {
+                    *current = actions;
+                    *highlighted = None;
+                    this.changed(cx);
+                }
+            }),
             // gpui can't move the panel along with the window. Activation
             // changes report bounds too, unchanged.
             cx.observe_window_bounds(window, move |this, window, cx| {
@@ -301,7 +311,12 @@ impl SelectionPopover {
                 this.open = Some(Open {
                     range,
                     text: editor.text().to_string(),
-                    mode: Mode::Actions,
+                    mode: Mode::Actions(
+                        AppSettings::global(cx)
+                            .read(cx)
+                            .settings
+                            .selection_actions(),
+                    ),
                     highlighted: None,
                 });
                 this.changed(cx);
@@ -382,7 +397,7 @@ impl SelectionPopover {
 
     fn item_count(&self) -> usize {
         match self.open.as_ref().map(|open| &open.mode) {
-            Some(Mode::Actions) => ACTIONS.len(),
+            Some(Mode::Actions(actions)) => actions.len() + 2,
             Some(Mode::Results(options)) => options.len(),
             _ => 0,
         }
@@ -436,16 +451,29 @@ impl SelectionPopover {
                     self.run(SelectionAction::Instruction(instruction), cx);
                 }
             }
+            Mode::Actions(_) => {
+                if let Some(index) = open.highlighted {
+                    self.pick_action(index, cx);
+                }
+            }
             _ => {}
         }
     }
 
     fn pick_action(&mut self, index: usize, cx: &mut Context<Self>) {
-        match index {
-            0 => self.run(SelectionAction::Alternatives, cx),
-            1 => self.run(SelectionAction::Shorter, cx),
-            2 => self.run(SelectionAction::Tighten, cx),
-            _ => self.start_instruction(cx),
+        let Some(Open {
+            mode: Mode::Actions(actions),
+            ..
+        }) = &self.open
+        else {
+            return;
+        };
+        if index == 0 {
+            self.run(SelectionAction::Alternatives, cx);
+        } else if let Some(action) = actions.get(index - 1) {
+            self.run(SelectionAction::Instruction(action.prompt.clone()), cx);
+        } else if index == actions.len() + 1 {
+            self.start_instruction(cx);
         }
     }
 
@@ -648,6 +676,17 @@ impl SelectionPopover {
     /// The size of the first frame, before the content has been measured.
     fn estimated_size(&self) -> Size<Pixels> {
         match self.open.as_ref().map(|open| &open.mode) {
+            Some(Mode::Actions(actions)) => {
+                let width = 220.
+                    + actions
+                        .iter()
+                        .map(|action| (action.name.chars().count() as f32 * 7.).min(140.) + 20.)
+                        .sum::<f32>();
+                size(
+                    px(width.min(600.) + 10.),
+                    px((width / 600.).ceil() * 28. + 10.),
+                )
+            }
             Some(Mode::Results(_)) => size(RESULTS_WIDTH, px(120.)),
             Some(Mode::Instruction(_)) => size(INSTRUCTION_WIDTH + PADDING * 2., px(64.)),
             _ => size(px(330.), px(36.)),
@@ -741,15 +780,18 @@ impl SelectionPopover {
                 })
         };
         match &open.mode {
-            Mode::Actions => div()
+            Mode::Actions(actions) => div()
                 .flex()
                 .gap(px(2.))
+                .max_w(px(600.))
+                .flex_wrap()
                 .children(
-                    ACTIONS
-                        .iter()
+                    std::iter::once(("Alternatives", Some("✦")))
+                        .chain(actions.iter().map(|action| (action.name.as_str(), None)))
+                        .chain(std::iter::once(("Instruction…", None)))
                         .enumerate()
-                        .flat_map(|(index, (label, icon))| {
-                            let separator = (index == ACTIONS.len() - 1).then(|| {
+                        .map(|(index, (label, icon))| {
+                            let separator = (index == actions.len() + 1).then(|| {
                                 div()
                                     .w(px(1.))
                                     .my(px(4.))
@@ -768,7 +810,7 @@ impl SelectionPopover {
                                     .children(icon.map(|icon| {
                                         div().text_size(px(11.)).child(icon.to_string())
                                     }))
-                                    .child(*label)
+                                    .child(div().max_w(px(140.)).truncate().child(label.to_owned()))
                                     .on_click({
                                         let this = this.clone();
                                         move |_, _, cx| {
@@ -776,7 +818,14 @@ impl SelectionPopover {
                                         }
                                     })
                                     .into_any_element();
-                            separator.into_iter().chain([button])
+                            match separator {
+                                Some(separator) => div()
+                                    .flex()
+                                    .child(separator)
+                                    .child(button)
+                                    .into_any_element(),
+                                None => button,
+                            }
                         }),
                 )
                 .into_any_element(),
