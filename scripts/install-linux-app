@@ -56,7 +56,7 @@ exec_path=${exec_path//\\/\\\\}
 exec_path=${exec_path//%/%%}
 {
   while IFS= read -r line; do
-    case "$line" in Exec=*) printf 'Exec="%s"\n' "$exec_path" ;; *) printf '%s\n' "$line" ;; esac
+    case "$line" in Exec=*) printf 'Exec="%s" app\n' "$exec_path" ;; *) printf '%s\n' "$line" ;; esac
   done < "$app/share/applications/io.github.raine.Draftmux.desktop"
   printf 'X-Draftmux-Managed=true\n'
 } >| "$desktop"

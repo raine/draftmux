@@ -180,7 +180,7 @@ pub fn activate_running() -> Result<()> {
 /// and the directory overrides are forwarded to keep the app on the CLI's
 /// data and configuration directories; the returned child is then `open`, which exits once the
 /// launch is submitted. Otherwise
-/// this binary is spawned with no command in its own process group, so the
+/// this binary is spawned as `draftmux app` in its own process group, so the
 /// agent's tool timeout or Ctrl-C doesn't kill it.
 fn launch(dir: &Path) -> Result<Child> {
     let log_path = dir.join(LOG);
@@ -210,6 +210,7 @@ fn launch(dir: &Path) -> Result<Child> {
         }
         None => {
             let mut command = Command::new(&exe);
+            command.arg("app");
             if let Some(home) = std::env::home_dir() {
                 command.current_dir(home);
             }

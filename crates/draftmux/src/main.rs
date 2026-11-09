@@ -35,7 +35,7 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use draftmux_storage::Store;
 
 use gpui::{
@@ -45,7 +45,7 @@ use gpui::{
 
 actions!(draftmux, [Quit]);
 
-/// Run without a command to open the app.
+/// Draftmux: polish messages handed off from coding agents.
 #[derive(Parser)]
 #[command(name = "draftmux")]
 struct Cli {
@@ -59,6 +59,9 @@ enum Command {
     Show(show::Args),
     List(list::Args),
     Skill(skill::Args),
+    /// Run the app in this process.
+    #[command(hide = true)]
+    App,
     #[cfg(feature = "capture")]
     #[command(hide = true)]
     Capture(capture::Args),
@@ -72,7 +75,14 @@ fn main() -> ExitCode {
         Some(Command::Skill(args)) => skill::main(args),
         #[cfg(feature = "capture")]
         Some(Command::Capture(args)) => Ok(capture::main(args)),
-        None => run_app().map(|()| 0),
+        Some(Command::App) => run_app().map(|()| 0),
+        // Finder, the Dock and the CLI's own launch start the bundle's
+        // binary with no arguments.
+        None if platform::launched_as_app() => run_app().map(|()| 0),
+        None => Cli::command()
+            .print_help()
+            .map(|()| 0)
+            .context("writing to stdout"),
     };
     match result {
         Ok(code) => ExitCode::from(code),

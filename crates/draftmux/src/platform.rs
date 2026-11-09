@@ -6,7 +6,9 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadMarker, msg_send};
 use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSWorkspace};
-use objc2_foundation::{NSArray, NSNotification, NSObjectProtocol, NSOperationQueue, NSString};
+use objc2_foundation::{
+    NSArray, NSBundle, NSNotification, NSObjectProtocol, NSOperationQueue, NSString,
+};
 
 /// The label of a button that reveals a path in the file manager.
 pub const REVEAL_LABEL: &str = "Show in Finder";
@@ -66,6 +68,18 @@ pub fn reduce_transparency() -> bool {
             accessibilityDisplayShouldReduceTransparency
         ]
     }
+}
+
+/// Whether LaunchServices started this process as its app (Finder, the
+/// Dock, `open -a`). LaunchServices sets `__CFBundleIdentifier` to the
+/// launched app's identifier; a shell passes on its terminal's.
+pub fn launched_as_app() -> bool {
+    let Some(launched) = std::env::var_os("__CFBundleIdentifier") else {
+        return false;
+    };
+    NSBundle::mainBundle()
+        .bundleIdentifier()
+        .is_some_and(|own| launched.to_str() == Some(&own.to_string()))
 }
 
 pub fn reduce_motion() -> bool {

@@ -19,6 +19,11 @@ pub fn system_dark(cx: &App) -> bool {
 pub fn reduce_transparency() -> bool {
     false
 }
+/// The desktop entry runs `draftmux app`, so a bare command is never the
+/// app's launch.
+pub fn launched_as_app() -> bool {
+    false
+}
 pub fn reduce_motion() -> bool {
     false
 }

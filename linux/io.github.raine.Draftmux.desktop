@@ -2,7 +2,7 @@
 Type=Application
 Name=Draftmux
 Comment=Draft GitHub, Slack, rich-text and plain-text messages
-Exec=draftmux
+Exec=draftmux app
 Icon=io.github.raine.Draftmux
 Terminal=false
 Categories=Office;TextEditor;

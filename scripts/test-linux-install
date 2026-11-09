@@ -10,7 +10,7 @@ export HOME="$tmp/home" DRAFTMUX_INSTALL_PREFIX="$tmp/local space" XDG_DATA_HOME
 "$app/install" >/dev/null
 [[ $("$DRAFTMUX_INSTALL_PREFIX/bin/draftmux") == stub ]]
 cmp "$root/pi-extension/draftmux.ts" "$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/share/draftmux/pi-extension/draftmux.ts"
-grep -Fx "Exec=\"$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/bin/draftmux\"" "$XDG_DATA_HOME/applications/io.github.raine.Draftmux.desktop"
+grep -Fx "Exec=\"$DRAFTMUX_INSTALL_PREFIX/lib/draftmux/bin/draftmux\" app" "$XDG_DATA_HOME/applications/io.github.raine.Draftmux.desktop"
 "$app/install" >/dev/null
 rm "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux"
 printf 'unrelated\n' > "$DRAFTMUX_INSTALL_PREFIX/bin/draftmux"

@@ -143,11 +143,13 @@ On Linux, install the build libraries above. The Rust toolchain is pinned
 in `rust-toolchain.toml`.
 
 ```sh
-cargo run
+cargo run -- app
 ```
 
-`cargo run` uses your real drafts. On Linux, use
-`DRAFTMUX_DATA_DIR="$(mktemp -d)" cargo run -j 2 -p draftmux` for scratch data.
+A bare `draftmux` prints help; `draftmux app` runs the app in the
+current process. `cargo run -- app` uses your real drafts. On Linux,
+use `DRAFTMUX_DATA_DIR="$(mktemp -d)" cargo run -j 2 -p draftmux -- app` for
+scratch data.
 On macOS, to try a change without touching them, run
 `just dev-app`: it builds a debug `Draftmux Dev.app` and opens it with its own
 data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`,
@@ -231,4 +233,4 @@ bump it deliberately:
    crates in the enabled platform graphs
    (`cargo tree --target aarch64-apple-darwin -i <crate>`).
 4. Run `cargo update -p gpui -p gpui_platform`, build, fix API changes, and
-   check the window chrome with `cargo run`.
+   check the window chrome with `cargo run -- app`.
