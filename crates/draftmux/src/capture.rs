@@ -61,13 +61,16 @@ pub fn main(args: Args) -> i32 {
         .run(move |cx: &mut App| {
             markup_view::init(cx);
             cx.spawn(async move |cx| {
-                let code = match capture_all(target, &fixtures, &args.out, args.width, cx).await {
-                    Ok(()) => 0,
-                    Err(err) => {
-                        eprintln!("draftmux capture: {err:#}");
-                        1
-                    }
-                };
+                let code =
+                    match capture_all(target, &args.target, &fixtures, &args.out, args.width, cx)
+                        .await
+                    {
+                        Ok(()) => 0,
+                        Err(err) => {
+                            eprintln!("draftmux capture: {err:#}");
+                            1
+                        }
+                    };
                 cx.update(|cx| cx.quit());
                 std::process::exit(code);
             })
@@ -91,15 +94,12 @@ fn fixtures(dir: &Path) -> Result<Vec<(String, String)>> {
 
 async fn capture_all(
     target: Target,
+    target_name: &str,
     fixtures: &[(String, String)],
     out: &Path,
     width: f32,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let target_name = match target {
-        Target::Github => "github",
-        _ => "slack",
-    };
     for (name, text) in fixtures {
         for dark in [false, true] {
             let doc = markup_view::preview(target, text);

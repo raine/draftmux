@@ -109,13 +109,18 @@ fn multi_line_item(list: &List) -> bool {
     list.items.iter().any(|item| {
         item.blocks.iter().any(|block| match block {
             Block::Paragraph(spans) => spans.iter().any(|span| span.text.contains('\n')),
-            block => {
-                let mut found = false;
-                visit_lists(block, &mut |list| found |= multi_line_item(list));
-                found
-            }
+            Block::List(nested) => multi_line_item(nested),
+            _ => false,
         })
     })
+}
+
+/// The "• " or "N. " marker that starts item `ix` of `list` as a text line.
+pub(crate) fn text_marker(list: &List, ix: usize) -> String {
+    match list.start {
+        Some(start) => format!("{}. ", start + ix as u64),
+        None => "• ".to_owned(),
+    }
 }
 
 /// `list` as text lines with a "•" or "N." marker, nested items indented by
@@ -126,10 +131,7 @@ fn list_lines(list: &List, depth: usize) -> Vec<Span> {
         if ix > 0 {
             push_span(&mut out, "\n", SpanStyle::default(), None);
         }
-        let marker = match list.start {
-            Some(start) => format!("{}. ", start + ix as u64),
-            None => "• ".to_owned(),
-        };
+        let marker = text_marker(list, ix);
         push_span(
             &mut out,
             &format!("{}{marker}", "    ".repeat(depth)),
@@ -749,18 +751,20 @@ pub fn smart_quotes(text: &[char]) -> Vec<char> {
     };
     let digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
     let space = |c: Option<char>| c.is_none_or(char::is_whitespace);
-    let mut out = text.to_vec();
-    let at = |out: &[char], ix: usize| out.get(ix).copied();
-    for ix in 0..out.len() {
-        let prev = ix.checked_sub(1).and_then(|ix| at(&out, ix));
-        let next = at(&out, ix + 1);
+    // Quotes, curled or not, are neither letters, digits nor spaces, so
+    // each one's neighbours can be read from the input.
+    let at = |ix: usize| text.get(ix).copied();
+    let mut out = Vec::with_capacity(text.len());
+    for (ix, &c) in text.iter().enumerate() {
+        let prev = ix.checked_sub(1).and_then(at);
+        let next = at(ix + 1);
         let opens = !letter(prev) && !digit(prev) && !space(next);
-        out[ix] = match out[ix] {
+        out.push(match c {
             '"' if opens => '“',
             '"' if !digit(prev) => '”',
             '\'' if letter(prev) && letter(next) => '’',
             '\'' if opens => {
-                if digit(next) && digit(at(&out, ix + 2)) {
+                if digit(next) && digit(at(ix + 2)) {
                     // '90s
                     '’'
                 } else {
@@ -770,7 +774,7 @@ pub fn smart_quotes(text: &[char]) -> Vec<char> {
             '\'' if letter(prev) && !digit(next) => '’',
             '\'' if digit(prev) => '′',
             c => c,
-        };
+        });
     }
     out
 }

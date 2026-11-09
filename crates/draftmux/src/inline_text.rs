@@ -27,7 +27,6 @@ pub struct InlineText {
     segments: Vec<Segment>,
     blank_line: Option<Pixels>,
     laid: Rc<RefCell<Option<Laid>>>,
-    hitboxes: Vec<(Hitbox, SharedString)>,
 }
 
 /// Part of a paragraph with one look. Unset fields keep the surrounding
@@ -85,7 +84,6 @@ impl InlineText {
             segments,
             blank_line: None,
             laid: Rc::default(),
-            hitboxes: Vec::new(),
         }
     }
 
@@ -127,7 +125,8 @@ struct Laid {
 
 impl Element for InlineText {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    /// Link hitboxes and their URLs.
+    type PrepaintState = Vec<(Hitbox, SharedString)>;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -177,29 +176,34 @@ impl Element for InlineText {
         _: &mut (),
         window: &mut Window,
         _: &mut App,
-    ) {
+    ) -> Self::PrepaintState {
+        let mut hitboxes = Vec::new();
         let mut laid = self.laid.borrow_mut();
-        let Some(laid) = laid.as_mut() else { return };
+        let Some(laid) = laid.as_mut() else {
+            return hitboxes;
+        };
         if laid.wrap != Some(bounds.size.width) {
             laid.lines = break_lines(&laid.shaped, Some(bounds.size.width), true);
             laid.wrap = Some(bounds.size.width);
         }
-        self.hitboxes.clear();
         for (line, top, left) in positioned(laid, bounds) {
             for frag in &line.frags {
                 let piece = &laid.shaped.pieces[frag.piece];
                 if let Some(url) = &self.segments[piece.segment].link {
+                    // A chip's box, icon included, is part of the link.
+                    let (lead, trail) = frag.edges(piece);
                     let width = piece.line.x_for_index(frag.range.end)
                         - piece.line.x_for_index(frag.range.start);
                     let bounds = Bounds::new(
-                        point(left + frag.x, top),
-                        size(width, laid.shaped.line_height),
+                        point(left + frag.x - lead, top),
+                        size(lead + width + trail, laid.shaped.line_height),
                     );
                     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    self.hitboxes.push((hitbox, url.clone()));
+                    hitboxes.push((hitbox, url.clone()));
                 }
             }
         }
+        hitboxes
     }
 
     fn paint(
@@ -208,19 +212,22 @@ impl Element for InlineText {
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut (),
-        _: &mut (),
+        hitboxes: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
         let laid = self.laid.borrow();
         let Some(laid) = laid.as_ref() else { return };
         let shaped = &laid.shaped;
+        // Each piece's fragments come in order, so one cursor per piece
+        // cuts them without reshaping.
+        let mut cursors: Vec<_> = shaped.pieces.iter().map(|p| p.line.cursor()).collect();
         for (line, top, left) in positioned(laid, bounds) {
             let baseline = top + shaped.baseline;
             for frag in &line.frags {
                 let piece = &shaped.pieces[frag.piece];
                 let segment = &self.segments[piece.segment];
-                let part = slice(&piece.line, frag.range.clone());
+                let part = cursors[frag.piece].take_until(frag.range.end);
                 let x = left + frag.x;
                 if let Some(chip) = &segment.chip {
                     paint_chip(chip, segment, piece, frag, &part, x, baseline, window, cx);
@@ -239,10 +246,8 @@ impl Element for InlineText {
                 .ok();
             }
         }
-        for (hitbox, url) in &self.hitboxes {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            let hitbox = hitbox.clone();
-            let url = url.clone();
+        for (hitbox, url) in hitboxes.drain(..) {
+            window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == MouseButton::Left
@@ -261,15 +266,6 @@ impl IntoElement for InlineText {
     fn into_element(self) -> Self {
         self
     }
-}
-
-/// The part of `line` in `range`, positioned from its own start.
-fn slice(line: &ShapedLine, range: Range<usize>) -> ShapedLine {
-    let mut cursor = line.cursor();
-    if range.start > 0 {
-        cursor.take_until(range.start);
-    }
-    cursor.take_until(range.end)
 }
 
 /// Lines with their top and left edges in window coordinates.
@@ -323,8 +319,9 @@ fn paint_chip(
     let border = chip.border_width();
     let opens = frag.range.start == 0;
     let closes = frag.range.end == piece.line.len();
-    let left = if opens { x - piece.lead } else { x };
-    let right = x + part.width + if closes { piece.trail } else { px(0.) };
+    let (lead, trail) = frag.edges(piece);
+    let left = x - lead;
+    let right = x + part.width + trail;
     let top = baseline - piece.line.ascent - chip.pad_top - border;
     let bottom = baseline + piece.line.descent + chip.pad_bottom + border;
     let radius = |on: bool| if on { chip.radius } else { px(0.) };
@@ -489,6 +486,24 @@ struct Frag {
     x: Pixels,
 }
 
+impl Frag {
+    /// The chip edges drawn before and after this fragment: a piece's lead
+    /// where it starts and its trail where it ends.
+    fn edges(&self, piece: &Piece) -> (Pixels, Pixels) {
+        let lead = if self.range.start == 0 {
+            piece.lead
+        } else {
+            px(0.)
+        };
+        let trail = if self.range.end == piece.line.len() {
+            piece.trail
+        } else {
+            px(0.)
+        };
+        (lead, trail)
+    }
+}
+
 /// Item ranges with no break opportunity between them.
 type Word = Vec<(usize, Range<usize>)>;
 
@@ -641,22 +656,25 @@ fn cut_word(items: &[Item], word: Word, wrap: Pixels) -> Vec<Word> {
         let mut start = range.start;
         for (offset, c) in item.text[range.clone()].char_indices() {
             let at = range.start + offset;
-            let width = item.width(&(at..at + c.len_utf8()));
-            if x + width > wrap && x > px(0.) {
+            let end = at + c.len_utf8();
+            let mut width = item.width(&(at..end));
+            if end == item.text.len() {
+                width += item.trail;
+            }
+            // Spaces hang past the line end instead of starting a line.
+            if c != ' ' && x + width > wrap && x > px(0.) {
                 if at > start {
                     parts.last_mut().unwrap().push((piece, start..at));
                 }
                 parts.push(Word::new());
                 start = at;
-                x = px(0.);
+                // A chip's lead moves with its first character.
+                x = if at == 0 { item.lead } else { px(0.) };
             }
             x += width;
         }
         if start < range.end {
             parts.last_mut().unwrap().push((piece, start..range.end));
-        }
-        if range.end == item.text.len() {
-            x += item.trail;
         }
     }
     parts.retain(|part| !part.is_empty());
@@ -740,6 +758,10 @@ mod tests {
         assert_eq!(texts(&items, &lines), ["ab ", "abcdefgh"]);
         let lines = layout_lines(&items, 0, None, false);
         assert_eq!(texts(&items, &lines), ["ab abcdefgh"]);
+        // A cut word's trailing space hangs.
+        let items = [item("abcdef gh")];
+        let lines = layout_lines(&items, 0, Some(px(3.)), true);
+        assert_eq!(texts(&items, &lines), ["abc", "def ", "gh"]);
     }
 
     #[test]
@@ -752,5 +774,12 @@ mod tests {
         assert_eq!(texts(&items, &lines), ["ab ", "code"]);
         assert_eq!(lines[1].frags[0].x, px(2.));
         assert_eq!(lines[1].width, px(8.));
+        // Cut to fit, the chip's edges count on its first and last line.
+        let mut chip = item("code");
+        chip.lead = px(2.);
+        chip.trail = px(2.);
+        let items = [chip];
+        let lines = layout_lines(&items, 0, Some(px(6.)), true);
+        assert_eq!(texts(&items, &lines), ["cod", "e"]);
     }
 }

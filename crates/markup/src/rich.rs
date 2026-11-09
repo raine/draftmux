@@ -1,10 +1,10 @@
 //! Rich text for pasting a message into Slack's composer.
 //!
 //! Slack reads HTML from the pasteboard; RTF is for native apps such as Mail
-//! and Notes, and [`plain`] for pasting without formatting. Both follow Slack's newline-literal layout: every line of a
-//! paragraph, empty ones included, is its own line, and blocks follow each
-//! other without extra spacing. Both serialize [`slack::posted`], as the
-//! preview does.
+//! and Notes, and [`plain`] for pasting without formatting. All three follow
+//! Slack's newline-literal layout: every line of a paragraph, empty ones
+//! included, is its own line, and blocks follow each other without extra
+//! spacing. All three serialize [`slack::posted`], as the preview does.
 
 use std::fmt::Write;
 
@@ -72,10 +72,7 @@ fn plain_blocks(out: &mut Vec<String>, blocks: &[Block], indent: &str) {
             }
             Block::List(list) => {
                 for (ix, item) in list.items.iter().enumerate() {
-                    let marker = match list.start {
-                        None => "• ".to_owned(),
-                        Some(start) => format!("{}. ", start + ix as u64),
-                    };
+                    let marker = slack::text_marker(list, ix);
                     if let Some(checked) = item.task {
                         out.push(format!(
                             "{indent}{marker}{}",

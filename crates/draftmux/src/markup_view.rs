@@ -743,7 +743,7 @@ impl Renderer<'_> {
             let boxed = |inline: &InlineBox, text: String| Segment {
                 text: text.into(),
                 scale: Some(inline.scale),
-                color: inline.color.or(base.color),
+                color: inline.color,
                 chip: Some(inline.chip.clone()),
                 ..base.clone()
             };
