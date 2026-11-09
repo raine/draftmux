@@ -66,8 +66,8 @@ fn added_name(dir: &Path) -> String {
         .unwrap_or_else(|| dir.display().to_string())
 }
 
-/// The folders the user added, in `profiles.json` in Draftmux's data
-/// directory. Stateless like the drafts store: every call reads the file.
+/// The folders the user added, in `profiles.json` in Draftmux's
+/// configuration directory. Stateless like the drafts store: every call reads the file.
 #[derive(Debug, Clone)]
 pub struct AddedProfiles {
     path: PathBuf,
@@ -79,10 +79,14 @@ struct AddedFile {
 }
 
 impl AddedProfiles {
-    pub fn new(data_dir: &Path) -> Self {
+    pub fn new(config_dir: &Path) -> Self {
         Self {
-            path: data_dir.join("profiles.json"),
+            path: config_dir.join("profiles.json"),
         }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// The added folders; none when the file doesn't exist.

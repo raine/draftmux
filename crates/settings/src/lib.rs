@@ -1,10 +1,12 @@
 //! Draftmux's own settings: defaults for every directory, directory rules
 //! that override them, and how they resolve for a draft's working directory.
 //!
-//! The Settings window writes `settings.json` in Draftmux's data directory;
-//! `draftmux open` reads it, resolves it for the source session's cwd and
-//! keeps the result in the new draft, so changes apply to new drafts only.
-//! The alternatives count is an app preference read on every selection call.
+//! The settings are `settings.json` in Draftmux's configuration directory
+//! (see `draftmux_storage::config_dir`), written by the Settings window and
+//! editable by hand; the app reloads the file when it changes. `draftmux
+//! open` reads it, resolves it for the source session's cwd and keeps the
+//! result in the new draft, so changes apply to new drafts only. The
+//! alternatives count is an app preference read on every selection call.
 
 mod matching;
 mod pi_reads;
@@ -139,14 +141,14 @@ impl SelectionModel {
 }
 
 impl Settings {
-    pub fn path(data_dir: &Path) -> PathBuf {
-        data_dir.join("settings.json")
+    pub fn path(config_dir: &Path) -> PathBuf {
+        config_dir.join("settings.json")
     }
 
-    /// The settings in `data_dir`; the built-in defaults when there's no
+    /// The settings in `config_dir`; the built-in defaults when there's no
     /// file yet. A file that doesn't parse is an error.
-    pub fn load(data_dir: &Path) -> Result<Self> {
-        let path = Self::path(data_dir);
+    pub fn load(config_dir: &Path) -> Result<Self> {
+        let path = Self::path(config_dir);
         match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .with_context(|| format!("parsing {}", path.display())),
@@ -155,12 +157,12 @@ impl Settings {
         }
     }
 
-    pub fn save(&self, data_dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(data_dir)
-            .with_context(|| format!("creating {}", data_dir.display()))?;
+    pub fn save(&self, config_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(config_dir)
+            .with_context(|| format!("creating {}", config_dir.display()))?;
         let mut json = serde_json::to_vec_pretty(self).expect("settings serialize");
         json.push(b'\n');
-        draftmux_storage::write_atomic(&Self::path(data_dir), &json)
+        draftmux_storage::write_atomic(&Self::path(config_dir), &json)
     }
 
     pub fn alternatives(&self) -> usize {

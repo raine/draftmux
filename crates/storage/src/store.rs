@@ -245,7 +245,8 @@ impl Store {
 }
 
 /// Overrides [`data_dir`], so a development build can run beside the
-/// installed app without touching its drafts, settings or socket.
+/// installed app without touching its drafts, settings or socket. Settings
+/// follow it unless [`crate::CONFIG_DIR_VAR`] is set.
 pub const DATA_DIR_VAR: &str = "DRAFTMUX_DATA_DIR";
 
 /// The app's data directory: `$DRAFTMUX_DATA_DIR` when set, else

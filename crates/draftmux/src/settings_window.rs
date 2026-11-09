@@ -198,9 +198,8 @@ impl SettingsWindow {
                     this.set_instructions(text, cx);
                 }
             }),
-            cx.observe(&settings, |this, _, cx| {
-                this.refresh_pi_reads(cx);
-                cx.notify();
+            cx.observe_in(&settings, window, |this, _, window, cx| {
+                this.settings_changed(window, cx);
             }),
             cx.observe(&catalog, |this, _, cx| {
                 this.refresh_picker_models(cx);
@@ -244,6 +243,29 @@ impl SettingsWindow {
             .update(cx, |editor, cx| editor.set_text(&text, cx));
         self.refresh_pi_reads(cx);
         window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Follows a change to the settings, which an edit to `settings.json`
+    /// outside the app can make while the window is open.
+    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Page::Rule(ix) = self.page
+            && ix >= self.settings(cx).directories.len()
+        {
+            // The rule shown is gone.
+            self.show(Page::Defaults, window, cx);
+            return;
+        }
+        if let Some(scope) = scope(self.settings(cx), self.page) {
+            let saved = scope.instructions.clone();
+            let text = self.instructions.read(cx).text().to_owned();
+            if (!text.trim().is_empty()).then_some(text) != saved {
+                self.instructions.update(cx, |editor, cx| {
+                    editor.set_text(&saved.unwrap_or_default(), cx)
+                });
+            }
+        }
+        self.refresh_pi_reads(cx);
         cx.notify();
     }
 
@@ -1543,6 +1565,7 @@ impl SettingsWindow {
             .into_any_element(),
         );
         let data_dir = draftmux_storage::data_dir().ok();
+        let config_dir = draftmux_storage::config_dir().ok();
         let shell = shell_env::ShellEnv::global(cx);
         let tool = |name: &str, path: Option<PathBuf>, use_: &str| -> AnyElement {
             row(
@@ -1606,17 +1629,39 @@ impl SettingsWindow {
                  Draftmux never writes pi's files."
             ))
             .into_any_element(),
-            group_title(c, "Drafts").into_any_element(),
+            group_title(c, "Files").into_any_element(),
             group(c, vec![
                 row(
-                    "Drafts and settings",
+                    "Settings",
+                    config_dir
+                        .iter()
+                        .map(|dir| description(c, self.tilde(&Settings::path(dir))))
+                        .collect(),
+                    push_button(c,
+                        "show-config",
+                        crate::platform::REVEAL_LABEL,
+                        cx.listener(|_, _, _, cx| {
+                            if let Ok(dir) = draftmux_storage::config_dir() {
+                                let file = Settings::path(&dir);
+                                if file.exists() {
+                                    cx.reveal_path(&file);
+                                } else if std::fs::create_dir_all(&dir).is_ok() {
+                                    cx.reveal_path(&dir);
+                                }
+                            }
+                        }),
+                    ),
+                )
+                .into_any_element(),
+                row(
+                    "Drafts",
                     data_dir
                         .iter()
                         .map(|dir| description(c, self.tilde(dir)))
                         .collect(),
                     push_button(c,
                         "show-data",
-                        "Show in Finder",
+                        crate::platform::REVEAL_LABEL,
                         cx.listener(|_, _, _, cx| {
                             if let Ok(dir) = draftmux_storage::data_dir() {
                                 cx.reveal_path(&dir);
@@ -1626,6 +1671,11 @@ impl SettingsWindow {
                 )
                 .into_any_element(),
             ])
+            .into_any_element(),
+            note(c,
+                "Everything here is saved in settings.json and profiles.json, which you can \
+                 also edit by hand. Draftmux applies saved edits right away.",
+            )
             .into_any_element(),
         ]
     }

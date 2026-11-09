@@ -7,6 +7,7 @@ mod chat_model;
 mod chrome;
 mod copy;
 mod drafts;
+mod file_watch;
 mod format;
 mod inline_text;
 mod ipc;
@@ -94,6 +95,7 @@ fn run_app() -> Result<()> {
         ipc::Claim::Taken => return ipc::activate_running(),
     };
     let data_dir = draftmux_storage::data_dir()?;
+    let config_dir = draftmux_storage::config_dir()?;
     let store = Store::new(Store::default_root()?);
 
     gpui_platform::application()
@@ -101,8 +103,8 @@ fn run_app() -> Result<()> {
         .run(move |cx: &mut App| {
             theme::init(cx);
             shell_env::init(cx);
-            profiles::init(data_dir.clone(), cx);
-            app_settings::init(data_dir, cx);
+            profiles::init(data_dir, &config_dir, cx);
+            app_settings::init(config_dir, cx);
             editor::init(cx);
             markup_view::init(cx);
             format::init(cx);

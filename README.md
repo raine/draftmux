@@ -83,6 +83,21 @@ remove `~/.local/lib/draftmux`, the `~/.local/bin/draftmux` symlink, and
 `io.github.raine.Draftmux.desktop` / `io.github.raine.Draftmux.png` from
 the applications and icons directories. Drafts are not removed.
 
+### Configuration
+
+Everything the Settings window changes is saved in plain JSON files, which you
+can also edit by hand: `settings.json` holds the defaults, directory rules and
+alternatives count, and `profiles.json` the pi profile folders added in
+Draftmux. They live in `~/.config/draftmux` (or `$XDG_CONFIG_HOME/draftmux`)
+on macOS and Linux; set `DRAFTMUX_CONFIG_DIR` to use another directory.
+Settings shows the path under Files. Older versions kept these files in the
+drafts directory and Draftmux moves them on first launch.
+
+Draftmux applies a saved edit within a second, without a restart. If the file
+doesn't parse, Settings shows the error and the last valid settings stay in
+use until the file is fixed. New drafts pick up changed settings; existing
+drafts keep the settings they were created with.
+
 ### Draftmux skill
 
 Agents hand messages off to Draftmux with the `draftmux` skill: it opens the
@@ -130,8 +145,9 @@ cargo run
 `DRAFTMUX_DATA_DIR="$(mktemp -d)" cargo run -j 2 -p draftmux` for scratch data.
 On macOS, to try a change without touching them, run
 `just dev-app`: it builds a debug `Draftmux Dev.app` and opens it with its own
-data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`),
-beside the installed app. Your pi profiles and shell environment stay the
+data directory under `/tmp/dmx.*/data` (set through `DRAFTMUX_DATA_DIR`,
+which also holds its settings unless `DRAFTMUX_CONFIG_DIR` is set), beside
+the installed app. Your pi profiles and shell environment stay the
 same. It prints the command to drive it from the CLI.
 
 Tests that need real external tools, such as pi or oxfmt, are ignored by

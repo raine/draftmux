@@ -8,10 +8,12 @@
 
 mod atomic;
 mod autosave;
+mod config;
 mod meta;
 mod store;
 
 pub use atomic::write as write_atomic;
 pub use autosave::Autosave;
+pub use config::{CONFIG_DIR_VAR, CONFIG_FILES, config_dir};
 pub use meta::{DraftSettings, Meta, ModelChoice, Source, SourceKind, Status, Target};
 pub use store::{DATA_DIR_VAR, Draft, NewDraft, Scan, Store, data_dir};

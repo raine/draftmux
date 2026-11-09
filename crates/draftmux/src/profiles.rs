@@ -4,6 +4,7 @@
 //! results in an entity views can observe. Model lists come from
 //! `pi --list-models`, which takes a few seconds per profile, so they load
 //! in the background after the login-shell environment is captured.
+//! Profiles are detected again when `profiles.json` changes.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,6 +15,8 @@ use draftmux_pi_profiles::{
 };
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use shell_env::ShellEnv;
+
+use crate::file_watch::{WatchedFile, every_poll};
 
 /// A profile's models as far as they are known.
 #[derive(Debug, Clone)]
@@ -54,7 +57,9 @@ pub struct ProfileCatalog {
     home: PathBuf,
     data_dir: PathBuf,
     added: AddedProfiles,
+    added_file: WatchedFile,
     entries: Vec<ProfileEntry>,
+    _poll: Task<()>,
 }
 
 struct GlobalCatalog(Entity<ProfileCatalog>);
@@ -62,15 +67,17 @@ struct GlobalCatalog(Entity<ProfileCatalog>);
 impl Global for GlobalCatalog {}
 
 /// Detects the profiles and starts loading their models.
-pub fn init(data_dir: PathBuf, cx: &mut App) {
+pub fn init(data_dir: PathBuf, config_dir: &Path, cx: &mut App) {
     let catalog = cx.new(|cx| {
         let home = std::env::home_dir().unwrap_or_default();
-        let added = AddedProfiles::new(&data_dir);
+        let added = AddedProfiles::new(config_dir);
         let mut catalog = ProfileCatalog {
             home,
             data_dir,
+            added_file: WatchedFile::new(added.path().to_owned()),
             added,
             entries: Vec::new(),
+            _poll: every_poll(cx, ProfileCatalog::poll),
         };
         catalog.detect(cx);
         catalog
@@ -94,6 +101,7 @@ impl ProfileCatalog {
     /// Adds a profile folder (kept in `profiles.json`) and loads it.
     pub fn add(&mut self, dir: &Path, cx: &mut Context<Self>) -> Result<()> {
         self.added.add(dir, &self.home)?;
+        self.added_file.mark_seen();
         self.detect(cx);
         Ok(())
     }
@@ -103,6 +111,12 @@ impl ProfileCatalog {
         if let Some(ix) = self.entries.iter().position(|e| e.profile.dir == dir) {
             self.entries[ix].defaults = read_defaults(dir);
             self.load(ix, cx);
+        }
+    }
+
+    fn poll(&mut self, cx: &mut Context<Self>) {
+        if self.added_file.changed() {
+            self.detect(cx);
         }
     }
 

@@ -50,6 +50,9 @@ pub fn write_flavours(flavours: &crate::copy::Flavours, cx: &mut App) -> bool {
     }
 }
 
+/// The label of a button that reveals a path in the file manager.
+pub const REVEAL_LABEL: &str = "Show in File Manager";
+
 pub fn window_options(mut options: gpui::WindowOptions) -> gpui::WindowOptions {
     if let Some(titlebar) = options.titlebar.as_mut() {
         titlebar.appears_transparent = false;

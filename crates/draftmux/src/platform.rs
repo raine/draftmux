@@ -8,6 +8,9 @@ use objc2::{MainThreadMarker, msg_send};
 use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSWorkspace};
 use objc2_foundation::{NSArray, NSNotification, NSObjectProtocol, NSOperationQueue, NSString};
 
+/// The label of a button that reveals a path in the file manager.
+pub const REVEAL_LABEL: &str = "Show in Finder";
+
 pub type AppearanceObserver = Retained<ProtocolObject<dyn NSObjectProtocol>>;
 pub fn observe_appearance(cx: &mut App) -> AppearanceObserver {
     let (tx, rx) = async_channel::bounded::<()>(1);
