@@ -39,7 +39,7 @@ app:
 app-debug:
     scripts/bundle --debug
 
-# Build and install Draftmux.app in ~/Applications and link ~/.local/bin/draftmux
+# Build and install Draftmux.app in /Applications and link ~/.local/bin/draftmux
 install-app *ARGS:
     scripts/install "$@"
 

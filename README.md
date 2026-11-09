@@ -19,7 +19,7 @@ Development) and [just](https://github.com/casey/just).
 just install-app
 ```
 
-This builds `Draftmux.app`, installs it in `~/Applications`, and links
+This builds `Draftmux.app`, installs it in `/Applications`, and links
 `~/.local/bin/draftmux` to the binary inside the app, which is both the app
 and the `draftmux` CLI. Make sure `~/.local/bin` is on your `PATH`. Use
 `--app-dir` and `--bin-dir` to install elsewhere, and `--app PATH` to install

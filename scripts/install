@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds Draftmux.app and installs it for the current user: the app into
-# ~/Applications and a `draftmux` symlink into ~/.local/bin pointing at the
-# binary inside the installed app. Never writes outside those two directories
+# Builds Draftmux.app and installs it: the app into /Applications and a
+# `draftmux` symlink into ~/.local/bin pointing at the binary inside the
+# installed app. Never writes outside those two directories
 # (or the ones given with --app-dir and --bin-dir).
 set -euo pipefail
 
@@ -9,14 +9,14 @@ usage() {
   cat <<USAGE
 Usage: scripts/install [--app-dir DIR] [--bin-dir DIR] [--app APP]
 
-  --app-dir DIR  where Draftmux.app goes (default: ~/Applications)
+  --app-dir DIR  where Draftmux.app goes (default: /Applications)
   --bin-dir DIR  where the draftmux symlink goes (default: ~/.local/bin)
   --app APP      install this built Draftmux.app instead of building one
 USAGE
 }
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-app_dir="$HOME/Applications"
+app_dir="/Applications"
 bin_dir="$HOME/.local/bin"
 built=""
 while [[ $# -gt 0 ]]; do
