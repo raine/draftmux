@@ -54,6 +54,9 @@ actions!(chat, [Send, Stop]);
 
 /// How long an idle pi process is kept for the selected draft.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How long the draft's selection must stay put before the composer's chip
+/// shows it, so dragging a selection doesn't flicker the chip.
+const CHIP_SETTLE: Duration = Duration::from_millis(250);
 const KEY_CONTEXT: &str = "Composer";
 
 pub fn init(cx: &mut App) {
@@ -92,6 +95,10 @@ pub struct Chat {
     /// The selection the user detached; the selection follows text edits,
     /// so this does too.
     detached: Option<Range<usize>>,
+    /// The draft selection the composer's chip shows, which follows the
+    /// editor's once it settles.
+    chip: Range<usize>,
+    settle_chip: Task<()>,
     style: MarkupStyle,
     /// Wakes up when the selected draft's idle pi should stop.
     idle: Task<()>,
@@ -145,14 +152,26 @@ impl Chat {
         cx.subscribe(&draft_editor, |this, editor, event, cx| {
             match event {
                 EditorEvent::Edited => {
+                    let range = editor.read(cx).selected_range();
                     if this.detached.is_some() {
-                        this.detached = Some(editor.read(cx).selected_range());
+                        this.detached = Some(range.clone());
                     }
+                    this.chip = range;
+                    this.settle_chip = Task::ready(());
                 }
                 EditorEvent::SelectionChanged(range) => {
                     if this.detached.as_ref() != Some(range) {
                         this.detached = None;
                     }
+                    let range = range.clone();
+                    this.settle_chip = cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(CHIP_SETTLE).await;
+                        this.update(cx, |this, cx| {
+                            this.chip = range;
+                            cx.notify();
+                        })
+                        .ok();
+                    });
                 }
             }
             cx.notify();
@@ -169,6 +188,8 @@ impl Chat {
             composer,
             draft_editor,
             detached: None,
+            chip: 0..0,
+            settle_chip: Task::ready(()),
             style: message_style(theme::get(cx).dark),
             idle: Task::ready(()),
         }
@@ -463,17 +484,23 @@ impl Chat {
 
     /// The draft editor's selection, unless the user detached it.
     fn attached(&self, cx: &App) -> Option<Quote> {
+        self.quote(self.draft_editor.read(cx).selected_range(), cx)
+    }
+
+    /// `range` of the draft, unless the user detached it.
+    fn quote(&self, range: Range<usize>, cx: &App) -> Option<Quote> {
         self.session()?;
-        let editor = self.draft_editor.read(cx);
-        let range = editor.selected_range();
         if self.detached.as_ref() == Some(&range) {
             return None;
         }
-        Quote::new(editor.text(), range)
+        Quote::new(self.draft_editor.read(cx).text(), range)
     }
 
     fn detach(&mut self, cx: &mut Context<Self>) {
-        self.detached = Some(self.draft_editor.read(cx).selected_range());
+        let range = self.draft_editor.read(cx).selected_range();
+        self.detached = Some(range.clone());
+        self.chip = range;
+        self.settle_chip = Task::ready(());
         cx.notify();
     }
 
@@ -938,7 +965,7 @@ impl Chat {
         let empty = self.composer.read(cx).text().trim().is_empty();
         let can_send = !busy && !empty && session.is_some();
         let model = session.and_then(|session| session.model.clone());
-        let quote = self.attached(cx);
+        let quote = self.quote(self.chip.clone(), cx);
         let placeholder = if quote.is_some() {
             "Ask pi to change the selection, or ask about it…"
         } else {
