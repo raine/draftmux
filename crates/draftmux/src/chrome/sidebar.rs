@@ -5,13 +5,14 @@ use std::time::Duration;
 use chrono::Utc;
 use draftmux_storage::Target;
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, MouseButton, SharedString, Task, div, img, prelude::*,
-    px, svg,
+    AnyElement, ClipboardItem, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels,
+    Point, SharedString, Task, anchored, deferred, div, img, prelude::*, px, svg,
 };
 
 use super::{Chrome, shadow, sidebar_column};
 use crate::assets::{ARCHIVE_ICON, GITHUB_ICON, PLAIN_TEXT_ICON, RICH_TEXT_ICON, SLACK_ICON};
 use crate::drafts::{relative_time, tilde};
+use crate::menu::{MenuItem, menu_panel};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme;
 
@@ -22,6 +23,20 @@ pub(super) struct Toast {
     /// Draft to unarchive when Undo is clicked.
     undo: Option<String>,
     _dismiss: Task<()>,
+}
+
+/// A right-clicked draft row's menu, at the click.
+#[derive(Clone, PartialEq)]
+pub(super) struct RowMenu {
+    id: String,
+    position: Point<Pixels>,
+}
+
+#[derive(Clone, Copy)]
+enum RowAction {
+    CopyId,
+    Reveal,
+    Archive,
 }
 
 impl Chrome {
@@ -35,6 +50,7 @@ impl Chrome {
         let rows = self.drafts.rows().iter().map(|row| {
             let id = row.draft.id.clone();
             let selected = current == Some(id.as_str());
+            let menu_open = self.row_menu.as_ref().is_some_and(|menu| menu.id == id);
             let group: SharedString = format!("draft-row-{id}").into();
             div()
                 .id(group.clone())
@@ -46,6 +62,25 @@ impl Chrome {
                 .py(px(7.))
                 .rounded(px(6.))
                 .when(selected, |row| row.bg(palette.selected_row))
+                // As in Finder and Mail, the right-clicked row gets a ring
+                // without being selected.
+                .when(menu_open, |row| {
+                    row.shadow(vec![shadow(palette.accent, 0., 0., 2.)])
+                })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let id = id.clone();
+                        move |this, event: &MouseDownEvent, _, cx| {
+                            this.row_menu = Some(RowMenu {
+                                id: id.clone(),
+                                position: event.position,
+                            });
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                    }),
+                )
                 .on_click(cx.listener({
                     let id = id.clone();
                     move |this, _, window, cx| {
@@ -186,6 +221,77 @@ impl Chrome {
                     )
                     .child(scrollbar(Source::Handle(self.sidebar_scroll.clone()), bar)),
             )
+            .children(self.row_menu(&palette, cx))
+    }
+
+    fn row_menu(
+        &self,
+        palette: &theme::Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let menu = self.row_menu.clone()?;
+        let item = |label: &str, action| MenuItem {
+            label: SharedString::from(label.to_owned()),
+            checked: false,
+            action: Some(action),
+        };
+        let items = [
+            item("Copy Draft ID", RowAction::CopyId),
+            item(crate::platform::REVEAL_LABEL, RowAction::Reveal),
+            MenuItem {
+                label: SharedString::default(),
+                checked: false,
+                action: None,
+            },
+            item("Archive", RowAction::Archive),
+        ];
+        let this = cx.entity().downgrade();
+        let id = menu.id.clone();
+        let panel = menu_panel(palette, &items, move |action, window, cx| {
+            this.update(cx, |this, cx| this.row_action(&id, action, window, cx))
+                .ok();
+        });
+        Some(deferred(
+            anchored()
+                .position(menu.position)
+                .snap_to_window_with_margin(px(8.))
+                .child(
+                    div()
+                        .occlude()
+                        // A right-click on another row replaces the menu
+                        // before this runs, so only close the menu it shows.
+                        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                            if this.row_menu.as_ref() == Some(&menu) {
+                                this.row_menu = None;
+                                cx.notify();
+                            }
+                        }))
+                        .child(panel),
+                ),
+        ))
+    }
+
+    fn row_action(
+        &mut self,
+        id: &str,
+        action: RowAction,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.row_menu = None;
+        match action {
+            RowAction::CopyId => {
+                cx.write_to_clipboard(ClipboardItem::new_string(id.to_owned()));
+                self.show_toast("Draft ID copied".into(), None, cx);
+            }
+            RowAction::Reveal => {
+                if let Some(row) = self.drafts.rows().iter().find(|row| row.draft.id == id) {
+                    cx.reveal_path(&row.draft.dir);
+                }
+            }
+            RowAction::Archive => self.archive(id, window, cx),
+        }
+        cx.notify();
     }
 
     fn archive(&mut self, id: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {

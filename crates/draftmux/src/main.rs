@@ -13,6 +13,7 @@ mod inline_text;
 mod ipc;
 mod list;
 mod markup_view;
+mod menu;
 mod model_picker;
 mod open;
 #[cfg_attr(target_os = "linux", path = "platform_linux.rs")]

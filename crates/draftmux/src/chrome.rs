@@ -66,6 +66,8 @@ pub struct Chrome {
     /// Why the selected draft's last save failed; cleared by the next save.
     save_error: Option<SharedString>,
     toast: Option<sidebar::Toast>,
+    /// The sidebar row context menu, while it is open.
+    row_menu: Option<sidebar::RowMenu>,
     sidebar_scroll: ScrollHandle,
     preview_scroll: ScrollHandle,
     scrollbars: [ScrollbarState; 3],
@@ -218,6 +220,7 @@ impl Chrome {
             show_preview: true,
             save_error: None,
             toast: None,
+            row_menu: None,
             sidebar_scroll: ScrollHandle::new(),
             preview_scroll: ScrollHandle::new(),
             scrollbars: Default::default(),
