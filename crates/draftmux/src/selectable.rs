@@ -12,6 +12,7 @@
 //! everything. Pressing outside the
 //! surface clears the selection.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -42,6 +43,10 @@ pub fn init(cx: &mut App) {
 /// message, then its order in the body. Keys order paragraphs as they read.
 pub type Key = (usize, usize);
 
+/// Paragraph text collected while constructing a virtualized body, including
+/// paragraphs whose elements will not be laid out or painted.
+pub type TextRegistry = Rc<RefCell<BTreeMap<Key, SharedString>>>;
+
 /// A byte offset in a paragraph's text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
@@ -56,6 +61,7 @@ pub struct Select {
     pub state: Entity<TextSelection>,
     pub key: Key,
     pub color: Hsla,
+    pub registry: Option<TextRegistry>,
 }
 
 /// What scrolls the surface, so a drag past its edge can.
@@ -173,6 +179,11 @@ impl TextSelection {
             cx.emit(SelectionChanged);
             cx.notify();
         }
+    }
+
+    /// Publishes every paragraph in a virtualized body before hit testing.
+    pub fn set_texts(&mut self, texts: BTreeMap<Key, SharedString>) {
+        self.texts = texts;
     }
 
     /// Called by a selectable paragraph as it prepaints.

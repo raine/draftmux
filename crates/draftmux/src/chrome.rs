@@ -318,11 +318,14 @@ impl Chrome {
             formatter,
             chat,
             selection,
-            preview: cx.new(|_| Preview {
+            preview: cx.new(|cx| Preview {
                 document: None,
                 target: None,
                 selection: preview_selection.clone(),
                 scroll: preview_scroll.clone(),
+                cache: Default::default(),
+                appearance: None,
+                _selection: cx.observe(&preview_selection, |_, _, cx| cx.notify()),
             }),
             preview_work: preview_work::Work::default(),
             preview_task: Task::ready(()),
@@ -646,6 +649,10 @@ impl Chrome {
             String::new()
         };
         self.preview.update(cx, |this, cx| {
+            if preview.is_none() {
+                this.cache.clear();
+                this.cache.scrolls.borrow_mut().clear();
+            }
             this.document = preview;
             this.target = target;
             cx.notify();

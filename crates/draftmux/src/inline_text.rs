@@ -95,8 +95,21 @@ impl InlineText {
     /// Lets the text be selected. Its offsets are byte offsets in the
     /// segments' text joined together.
     pub fn selectable(mut self, select: Option<Select>) -> Self {
+        if let Some(select) = &select
+            && let Some(registry) = &select.registry
+        {
+            self.collect_text(registry, select.key);
+        }
         self.select = select;
         self
+    }
+
+    fn collect_text(
+        &self,
+        registry: &crate::selectable::TextRegistry,
+        key: crate::selectable::Key,
+    ) {
+        registry.borrow_mut().insert(key, self.text());
     }
 
     fn text(&self) -> SharedString {
@@ -828,6 +841,30 @@ pub fn is_emoji(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collects_offscreen_paragraph_text_without_layout() {
+        let registry = crate::selectable::TextRegistry::default();
+        let paragraph = InlineText::new(vec![
+            Segment {
+                text: "Hello ".into(),
+                ..Default::default()
+            },
+            Segment {
+                text: "世界".into(),
+                ..Default::default()
+            },
+        ]);
+        paragraph.collect_text(&registry, (0, 1));
+        InlineText::new(vec![Segment {
+            text: "last paragraph".into(),
+            ..Default::default()
+        }])
+        .collect_text(&registry, (0, 200));
+        assert_eq!(registry.borrow()[&(0, 1)].as_ref(), "Hello 世界");
+        assert_eq!(registry.borrow()[&(0, 200)].as_ref(), "last paragraph");
+        assert!(paragraph.laid.borrow().is_none());
+    }
 
     /// Text with every byte one pixel wide.
     fn item(text: &str) -> Item<'_> {

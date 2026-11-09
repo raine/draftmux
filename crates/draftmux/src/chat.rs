@@ -732,6 +732,7 @@ impl Chat {
                         state: self.text_selection.clone(),
                         body: index,
                         color: palette.selection,
+                        registry: None,
                     }),
                 ))
                 .into_any_element(),

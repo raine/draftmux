@@ -7,6 +7,9 @@
 //! scrolling, padding and backgrounds around the body.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 use draftmux_storage::Target;
@@ -22,8 +25,9 @@ use crate::assets::{
     ALERT_CAUTION_ICON, ALERT_IMPORTANT_ICON, ALERT_NOTE_ICON, ALERT_TIP_ICON, ALERT_WARNING_ICON,
     LINK_ICON, SLACK_COPY_ICON,
 };
+use crate::block_cache::BlockCache;
 use crate::inline_text::{Chip, Icon, InlineText, Segment, is_emoji};
-use crate::selectable::{Select, TextSelection};
+use crate::selectable::{Select, TextRegistry, TextSelection};
 use crate::theme::Palette;
 
 /// Visual parameters for one target platform.
@@ -575,6 +579,7 @@ pub struct SelectBody {
     pub state: Entity<TextSelection>,
     pub body: usize,
     pub color: Hsla,
+    pub registry: Option<TextRegistry>,
 }
 
 /// Renders `doc` at the width its parent gives it. `id` must be unique among
@@ -606,14 +611,31 @@ pub fn render(
 pub fn render_preview(
     doc: &Document,
     style: &MarkupStyle,
-    id: impl Into<ElementId>,
     scroll: &ScrollHandle,
     select: Option<SelectBody>,
+    cache: (&mut BlockCache, Pixels),
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let (cache, width) = cache;
     let (Some(colors), true) = (style.notes, style.slack_fallbacks) else {
-        return render(doc, style, id, select);
+        cache.prepare(&doc.blocks, width);
+        let mut renderer = Renderer::new(style, select);
+        renderer.scrolls = Some(cache.scrolls.clone());
+        let blocks = renderer
+            .blocks(&doc.blocks, style.block_gap)
+            .into_iter()
+            .enumerate()
+            .map(|(ix, block)| cache.wrap(ix, root(style).child(block).into_any_element()))
+            .collect::<Vec<_>>();
+        cache
+            .scrolls
+            .borrow_mut()
+            .retain(|id, _| *id <= renderer.next_id);
+        return root(style)
+            .id("preview-body")
+            .children(blocks)
+            .into_any_element();
     };
     let state = window.use_keyed_state("footnotes", cx, |_, _| Footnotes::default());
     let flash = state.read(cx).flash;
@@ -624,53 +646,61 @@ pub fn render_preview(
         .enumerate()
         .filter_map(|(ix, (_, note))| note.map(|note| (ix, note)))
         .collect();
+    let posted: Vec<Block> = posted.into_iter().map(|(block, _)| block).collect();
+    cache.prepare(&posted, width);
     let mut renderer = Renderer::new(style, select);
-    let blocks = renderer.decorated_blocks(
-        posted.iter().map(|(block, _)| block),
-        style.block_gap,
-        |ix, block| {
-            let Some(n) = noted.iter().position(|&(noted, _)| noted == ix) else {
-                return block;
-            };
-            let state = state.clone();
-            let scroll = scroll.clone();
-            div()
-                .relative()
-                .when(flash == Some(Flash::Block(ix)), |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .top(px(-3.))
-                            .bottom(px(-3.))
-                            .left(px(-6.))
-                            .right(px(-6.))
-                            .rounded(px(6.))
-                            .bg(colors.highlight),
-                    )
-                })
-                .child(block)
-                .child(
+    renderer.scrolls = Some(cache.scrolls.clone());
+    let blocks = renderer.decorated_blocks(posted.iter(), style.block_gap, |ix, block| {
+        let Some(n) = noted.iter().position(|&(noted, _)| noted == ix) else {
+            return block;
+        };
+        let state = state.clone();
+        let scroll = scroll.clone();
+        div()
+            .relative()
+            .when(flash == Some(Flash::Block(ix)), |this| {
+                this.child(
                     div()
-                        .id(("footnote-ref", n))
                         .absolute()
-                        .top(px(1.))
-                        .right(px(-18.))
-                        .px(px(3.))
-                        .py(px(2.))
-                        .rounded(px(4.))
-                        .font_family(editor::platform::ui_font())
-                        .text_size(px(10.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .line_height(relative(1.))
-                        .text_color(colors.mark)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(colors.highlight))
-                        .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Note(n), cx))
-                        .child(SharedString::from((n + 1).to_string())),
+                        .top(px(-3.))
+                        .bottom(px(-3.))
+                        .left(px(-6.))
+                        .right(px(-6.))
+                        .rounded(px(6.))
+                        .bg(colors.highlight),
                 )
-                .into_any_element()
-        },
-    );
+            })
+            .child(block)
+            .child(
+                div()
+                    .id(("footnote-ref", n))
+                    .absolute()
+                    .top(px(1.))
+                    .right(px(-18.))
+                    .px(px(3.))
+                    .py(px(2.))
+                    .rounded(px(4.))
+                    .font_family(editor::platform::ui_font())
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .line_height(relative(1.))
+                    .text_color(colors.mark)
+                    .cursor_pointer()
+                    .hover(|this| this.bg(colors.highlight))
+                    .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Note(n), cx))
+                    .child(SharedString::from((n + 1).to_string())),
+            )
+            .into_any_element()
+    });
+    let blocks = blocks
+        .into_iter()
+        .enumerate()
+        .map(|(ix, block)| cache.wrap(ix, root(style).child(block).into_any_element()))
+        .collect::<Vec<_>>();
+    cache
+        .scrolls
+        .borrow_mut()
+        .retain(|id, _| *id <= renderer.next_id);
     let notes = noted.iter().enumerate().map(|(n, &(ix, note))| {
         let state = state.clone();
         let scroll = scroll.clone();
@@ -734,7 +764,7 @@ pub fn render_preview(
         .on_children_prepainted(move |bounds, _, cx| {
             state.update(cx, |this, _| this.blocks = bounds)
         })
-        .id(id)
+        .id("preview-body")
         .children(blocks)
         .children(section)
         .into_any_element()
@@ -840,6 +870,7 @@ struct Renderer<'a> {
     style: &'a MarkupStyle,
     /// Element ids are scoped by the body's root id, so a counter suffices.
     next_id: u64,
+    scrolls: Option<Rc<RefCell<BTreeMap<u64, ScrollHandle>>>>,
     list_depth: usize,
     /// Rendering the blocks of a tight list's item, whose text has no
     /// paragraph margins.
@@ -856,6 +887,7 @@ impl<'a> Renderer<'a> {
         Self {
             style,
             next_id: 0,
+            scrolls: None,
             list_depth: 0,
             tight_item: false,
             heading_size: None,
@@ -872,6 +904,7 @@ impl<'a> Renderer<'a> {
             state: body.state.clone(),
             key: (body.body, self.paragraphs),
             color: body.color,
+            registry: body.registry.clone(),
         })
     }
 
@@ -887,6 +920,16 @@ impl<'a> Renderer<'a> {
     fn id(&mut self) -> ElementId {
         self.next_id += 1;
         ElementId::Integer(self.next_id)
+    }
+
+    fn scroll_handle(&self) -> Option<ScrollHandle> {
+        self.scrolls.as_ref().map(|scrolls| {
+            scrolls
+                .borrow_mut()
+                .entry(self.next_id)
+                .or_default()
+                .clone()
+        })
     }
 
     /// Renders sibling blocks, separated by `gap` (wider above headings).
@@ -1049,6 +1092,9 @@ impl<'a> Renderer<'a> {
             Block::Code { text, .. } => self
                 .code_box()
                 .id(self.id())
+                .when_some(self.scroll_handle(), |div, scroll| {
+                    div.track_scroll(&scroll)
+                })
                 .overflow_x_scroll()
                 .flex()
                 .child(
@@ -1173,6 +1219,9 @@ impl<'a> Renderer<'a> {
                             .child(
                                 div()
                                     .id(self.id())
+                                    .when_some(self.scroll_handle(), |div, scroll| {
+                                        div.track_scroll(&scroll)
+                                    })
                                     .flex_1()
                                     .min_w_0()
                                     .overflow_x_scroll()
@@ -1313,6 +1362,9 @@ impl<'a> Renderer<'a> {
         }
         div()
             .id(self.id())
+            .when_some(self.scroll_handle(), |div, scroll| {
+                div.track_scroll(&scroll)
+            })
             .overflow_x_scroll()
             .flex()
             .child(
