@@ -1399,7 +1399,7 @@ impl<'a> Renderer<'a> {
                             scale: Some(style.emoji_scale),
                             ..base.clone()
                         },
-                        Run::Mention => boxed(style.mention.as_ref().unwrap(), run.to_owned()),
+                        Run::Mention => boxed(style.mention.as_ref().unwrap(), mention_label(run)),
                     });
                 }
             }
@@ -1446,8 +1446,40 @@ fn smart_quotes(spans: &[Span]) -> Vec<Span> {
 enum Run {
     Text,
     Emoji,
-    /// `@name` at the start of a word.
+    /// `@name` at the start of a word, or a Slack mention in angle
+    /// brackets: `<@U123>`, `<@U123|name>`, `<#C123|channel>`, `<!here>`.
     Mention,
+}
+
+/// How a mention run shows: Slack's bracketed forms as `@name`, `#channel`
+/// or `@here`, preferring the label after `|`.
+fn mention_label(run: &str) -> String {
+    let Some(inner) = run.strip_prefix('<').and_then(|r| r.strip_suffix('>')) else {
+        return run.to_owned();
+    };
+    let (sigil, rest) = inner.split_at(1);
+    let (id, label) = rest.split_once('|').unwrap_or((rest, ""));
+    let name = if label.is_empty() { id } else { label };
+    let sigil = if sigil == "#" { "#" } else { "@" };
+    // `<!subteam^S123|@team>` labels already carry the sigil.
+    format!("{sigil}{}", name.strip_prefix(sigil).unwrap_or(name))
+}
+
+/// Length of a Slack mention in angle brackets at the start of `text`.
+fn bracketed_mention(text: &str) -> Option<usize> {
+    let rest = text.strip_prefix('<')?;
+    if !rest.starts_with(['@', '#', '!']) {
+        return None;
+    }
+    let end = rest.find(|c: char| c == '>' || c == '<' || c.is_whitespace() && c != ' ')?;
+    let inner = &rest[1..end];
+    let id = inner.split_once('|').map_or(inner, |(id, _)| id);
+    let valid = rest[end..].starts_with('>')
+        && !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '^' | '_' | '-'));
+    valid.then_some(end + 2)
 }
 
 /// Splits plain text into emoji, mentions (when `mentions`) and other
@@ -1469,6 +1501,15 @@ fn runs(text: &str, mentions: bool) -> Vec<(&str, Run)> {
                 chars.next();
             }
             Some((end, Run::Emoji))
+        } else if let Some(len) = (c == '<' && mentions)
+            .then(|| bracketed_mention(&text[ix..]))
+            .flatten()
+        {
+            let end = ix + len;
+            while chars.peek().is_some_and(|&(at, _)| at < end) {
+                chars.next();
+            }
+            Some((end, Run::Mention))
         } else if c == '@' && mentions && !prev.is_some_and(|p| p.is_alphanumeric()) {
             let name = text[ix + 1..]
                 .find(|n: char| !(n.is_alphanumeric() || matches!(n, '.' | '_' | '-')))
@@ -1624,7 +1665,7 @@ fn is_openable(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::Numbering::{Alpha, Decimal, Roman};
-    use super::{Run, is_openable, ordered_marker, reveal, runs, url_label};
+    use super::{Run, is_openable, mention_label, ordered_marker, reveal, runs, url_label};
     use gpui::{Bounds, point, px, size};
 
     #[test]
@@ -1676,6 +1717,32 @@ mod tests {
             ]
         );
         assert_eq!(runs("@raine", false), [("@raine", Run::Text)]);
+    }
+
+    #[test]
+    fn splits_slack_bracketed_mentions() {
+        assert_eq!(
+            runs(
+                "Thanks <@W010J2WH545>, see <#C1|dev team> <!here> <@ x> <a>",
+                true
+            ),
+            [
+                ("Thanks ", Run::Text),
+                ("<@W010J2WH545>", Run::Mention),
+                (", see ", Run::Text),
+                ("<#C1|dev team>", Run::Mention),
+                (" ", Run::Text),
+                ("<!here>", Run::Mention),
+                (" <@ x> <a>", Run::Text),
+            ]
+        );
+        assert_eq!(mention_label("<@W010J2WH545>"), "@W010J2WH545");
+        assert_eq!(mention_label("<@U1|raine>"), "@raine");
+        assert_eq!(mention_label("<#C1|dev team>"), "#dev team");
+        assert_eq!(mention_label("<#C1>"), "#C1");
+        assert_eq!(mention_label("<!here>"), "@here");
+        assert_eq!(mention_label("<!subteam^S1|@eng>"), "@eng");
+        assert_eq!(mention_label("@raine"), "@raine");
     }
 
     #[test]
