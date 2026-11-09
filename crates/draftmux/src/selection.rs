@@ -192,6 +192,20 @@ fn command(
 const START: &str = "<<<SELECTION>>>";
 const END: &str = "<<<END SELECTION>>>";
 
+/// What the draft is written in. `pi-extension/draftmux.ts` describes the
+/// targets with the same text.
+fn syntax(target: Target) -> &'static str {
+    match target {
+        Target::Github => "GitHub-flavored Markdown",
+        Target::Slack => {
+            "Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text>; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)"
+        }
+        Target::Email => {
+            "plain-text email (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)"
+        }
+    }
+}
+
 /// Starts with a fixed line, so pi never reads it as a flag (`-…`) or a
 /// file reference (`@…`).
 fn prompt(request: &Request, count: usize) -> Result<String, String> {
@@ -206,13 +220,7 @@ fn prompt(request: &Request, count: usize) -> Result<String, String> {
         request.selected(),
         &text[request.range.end..]
     );
-    let syntax = match request.target {
-        Target::Github => "GitHub-flavored Markdown",
-        Target::Slack => {
-            "Slack mrkdwn (*bold*, _italic_, ~strike~, <url|text>; no headings or tables)"
-        }
-        Target::Email => "plain-text email (no Markdown syntax)",
-    };
+    let syntax = syntax(request.target);
     let prompt = format!(
         "[Draftmux selection request]\n\
          This is a one-off request about the draft, separate from editing the draft file. \
@@ -316,6 +324,15 @@ mod tests {
         assert!(prompt.contains("Task for the selected passage: make it formal"));
         assert!(prompt.contains("Give 3 distinct options"));
         assert!(prompt.contains("GitHub-flavored Markdown"));
+    }
+
+    #[test]
+    fn syntax_matches_the_draft_prompt() {
+        let extension = include_str!("../../../pi-extension/draftmux.ts");
+        for target in [Target::Github, Target::Slack, Target::Email] {
+            let literal = format!("\"{}\"", syntax(target));
+            assert!(extension.contains(&literal), "{literal}");
+        }
     }
 
     #[test]

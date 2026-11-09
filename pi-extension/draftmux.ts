@@ -20,11 +20,13 @@ type Config =
 	| { mode: "selection" }
 	| { mode: "draft"; draftPath: string; target: Target; instructions: string };
 
+/** The same text as `syntax` in crates/draftmux/src/selection.rs. */
 const TARGET_SYNTAX: Record<Target, string> = {
-	github: "GitHub (GitHub-flavored Markdown)",
-	slack: "Slack (Slack mrkdwn: *bold*, _italic_, ~strike~, <url|text>; no headings or tables)",
+	github: "GitHub-flavored Markdown",
+	slack:
+		"Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text>; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)",
 	email:
-		"Email (plain-text email body; no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",
+		"plain-text email (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",
 };
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
@@ -75,6 +77,7 @@ function contextMessage(config: Extract<Config, { mode: "draft" }>): string {
 		"",
 		"- Make every change to the draft by editing that file with the edit or write tool; the user sees it in the Draftmux editor. Don't paste drafts or rewritten versions in chat; use chat for discussion.",
 		"- Read the file before editing: the user may have changed it since your last edit.",
+		"- Change only what the user asks for; keep the rest of the draft, including its formatting, as it is.",
 		"- edit and write only work on the draft file. read, bash and other tools work as usual for checking facts.",
 	];
 	if (config.instructions) {

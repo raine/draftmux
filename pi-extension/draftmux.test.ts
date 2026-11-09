@@ -102,12 +102,13 @@ describe("context message", () => {
 			ctx({ sessionManager: { buildSessionProjection: () => ({ messages }) } }),
 		);
 
-	test("carries draft path, target, instructions and edit-the-file rule", () => {
+	test("carries draft path, target, instructions and editing rules", () => {
 		const result = start([]);
 		assert.equal(result.systemPrompt, undefined);
 		assert.equal(result.message.customType, CONTEXT_MESSAGE_TYPE);
 		assert.equal(result.message.display, false);
-		for (const part of [draftPath, "GitHub", "Be brief.", "Don't paste drafts"]) {
+		const parts = [draftPath, "GitHub", "Be brief.", "Don't paste drafts", "Change only what the user asks for"];
+		for (const part of parts) {
 			assert.ok(result.message.content.includes(part), part);
 		}
 	});
@@ -118,9 +119,11 @@ describe("context message", () => {
 		assert.equal(start([{ ...sent, content: [{ type: "text", text: sent.content }] }]), undefined);
 		assert.ok(start([{ ...sent, content: "old instructions" }]).message);
 		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "slack" });
-		assert.match(start([sent]).message.content, /Slack mrkdwn/);
+		const slack = start([sent]).message.content;
+		assert.match(slack, /Slack mrkdwn/);
+		assert.match(slack, /headings and tables are fine/);
 		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "email" });
-		assert.match(start([sent]).message.content, /plain-text email body; no Markdown/);
+		assert.match(start([sent]).message.content, /plain-text email \(no Markdown/);
 	});
 });
 
