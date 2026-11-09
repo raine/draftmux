@@ -492,7 +492,11 @@ fn font_for(styles: Styles, style: &EditorStyle) -> Font {
 }
 
 fn color_for(styles: Styles, read_only: bool, style: &EditorStyle) -> Hsla {
-    if read_only {
+    if styles.contains(Styles::FIELD_KEY) {
+        style.muted
+    } else if styles.contains(Styles::FIELD) {
+        style.faint
+    } else if read_only {
         style.read_only_text
     } else if styles.contains(Styles::CODE) {
         style.code

@@ -38,6 +38,7 @@ struct JsonOutput<'a> {
     status: Status,
     path: &'a Path,
     body: &'a str,
+    fields: &'a markup::frontmatter::Fields,
 }
 
 /// Runs the command against the default drafts directory.
@@ -54,13 +55,15 @@ fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -
     } else {
         let body = store.read_text(&draft.id)?;
         if args.json {
+            let parsed = markup::frontmatter::parse(&body);
             let json = JsonOutput {
                 id: &draft.id,
                 title: &draft.meta.title,
                 target: draft.meta.target,
                 status: draft.meta.status,
                 path: &path,
-                body: &body,
+                body: parsed.body,
+                fields: &parsed.fields,
             };
             let mut json = serde_json::to_string_pretty(&json)?;
             json.push('\n');
@@ -281,8 +284,27 @@ mod tests {
                 "status": "archived",
                 "path": draft.draft_path(),
                 "body": BODY,
+                "fields": {},
             })
         );
+    }
+
+    #[test]
+    fn json_separates_ordered_fields_but_plain_show_preserves_file() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let text = "---\nto: raine@example.com\ncc:\nsubject: Hello\ncustom: value\n---\nBody";
+        let draft = create(&store, "", "/s/a.jsonl", text, 0);
+        let output = show(&store, &[&draft.id, "--json"]);
+        output.result.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&output.out).unwrap();
+        assert_eq!(json["body"], "Body");
+        assert_eq!(json["title"], "");
+        assert_eq!(json["fields"]["subject"], "Hello");
+        assert_eq!(json["fields"]["cc"], "");
+        assert!(output.out.find("\"to\":").unwrap() < output.out.find("\"cc\":").unwrap());
+        assert!(output.out.find("\"cc\":").unwrap() < output.out.find("\"subject\":").unwrap());
+        assert_eq!(show(&store, &[&draft.id]).out, text);
     }
 
     #[test]

@@ -17,6 +17,8 @@ impl Styles {
     pub const CODE: Self = Self(1 << 3);
     pub const LINK: Self = Self(1 << 4);
     pub const STRIKETHROUGH: Self = Self(1 << 5);
+    pub const FIELD: Self = Self(1 << 6);
+    pub const FIELD_KEY: Self = Self(1 << 7);
 
     pub fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -62,6 +64,20 @@ pub fn highlight(text: &str) -> Vec<(Range<usize>, Styles)> {
             for flag in &mut flags[range] {
                 *flag = *flag | style;
             }
+        }
+    }
+
+    let draft = markup::frontmatter::parse(text);
+    if draft.body_offset > 0 {
+        flags[..draft.body_offset].fill(Styles::FIELD);
+        let mut offset = 0;
+        for line in text[..draft.body_offset].split_inclusive('\n') {
+            if !line.starts_with(char::is_whitespace)
+                && let Some(colon) = line.find(':')
+            {
+                flags[offset..offset + colon].fill(Styles::FIELD_KEY);
+            }
+            offset += line.len();
         }
     }
 
@@ -144,6 +160,30 @@ impl LineIndex {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frontmatter_overrides_markdown_styles_without_changing_body_offsets() {
+        let text = "---\ntitle: '**Value**'\ncc:\n---\n# Body";
+        let runs = super::highlight(text);
+        let style_at = |offset| {
+            runs.iter()
+                .find(|(range, _)| range.contains(&offset))
+                .unwrap()
+                .1
+        };
+        assert_eq!(style_at(0), super::Styles::FIELD);
+        assert_eq!(
+            style_at(text.find("title").unwrap()),
+            super::Styles::FIELD_KEY
+        );
+        assert_eq!(style_at(text.find("Value").unwrap()), super::Styles::FIELD);
+        assert!(style_at(text.find("Body").unwrap()).contains(super::Styles::HEADING));
+        assert!(
+            !super::highlight("---\nnot a field\n---\nBody")
+                .iter()
+                .any(|(_, style)| style.contains(super::Styles::FIELD))
+        );
+    }
+
     use super::*;
 
     /// The styled substrings of `text`, for readable assertions.

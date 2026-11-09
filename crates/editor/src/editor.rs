@@ -224,6 +224,7 @@ pub struct EditorStyle {
     pub code: Hsla,
     pub link: Hsla,
     pub muted: Hsla,
+    pub faint: Hsla,
     pub caret: Hsla,
     pub selection: Hsla,
     pub inactive_selection: Hsla,
@@ -249,6 +250,7 @@ impl Default for EditorStyle {
             code: rgb(0xa8336a).into(),
             link: rgb(0x0a6cf5).into(),
             muted: rgba(0x3c3c43a8).into(),
+            faint: rgba(0x3c3c4373).into(),
             caret: rgb(0x0a6cf5).into(),
             selection: rgb(0xb3d4ff).into(),
             inactive_selection: rgb(0xdcdce0).into(),
@@ -501,7 +503,12 @@ impl Editor {
         self.highlights = if self.markdown {
             highlight(self.buffer.text())
         } else {
-            Vec::new()
+            highlight(self.buffer.text())
+                .into_iter()
+                .filter(|(_, style)| {
+                    style.contains(Styles::FIELD) || style.contains(Styles::FIELD_KEY)
+                })
+                .collect()
         };
     }
 

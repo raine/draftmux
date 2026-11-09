@@ -6,6 +6,7 @@
 //! only, no colors, sizes or fonts.
 
 mod emoji;
+pub mod frontmatter;
 pub use emoji::replace_shortcodes;
 pub mod github;
 pub mod plain;

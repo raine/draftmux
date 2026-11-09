@@ -899,6 +899,8 @@ fn root(style: &MarkupStyle) -> Div {
 /// place a target chooses its parser and style.
 pub fn preview(target: Target, text: &str) -> Document {
     let _timing = editor::timing::span("preview-parse");
+    let draft = markup::frontmatter::parse(text);
+    let text = draft.body;
     match target {
         Target::Github => markup::github::parse(text),
         Target::Slack => markup::slack::parse(text),
@@ -1794,6 +1796,17 @@ fn is_openable(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_preview_format_excludes_frontmatter() {
+        for target in draftmux_storage::Target::ALL {
+            let source = "---\ntitle: Secret title\ncc: private@example.com\n---\nBody";
+            assert_eq!(
+                super::preview(*target, source),
+                super::preview(*target, "Body")
+            );
+        }
+    }
+
     use super::Numbering::{Alpha, Decimal, Roman};
     use super::{Run, is_openable, mention_label, ordered_marker, reveal, runs, url_label};
     use gpui::{Bounds, point, px, size};

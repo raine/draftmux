@@ -223,15 +223,26 @@ impl Drafts {
     }
 }
 
-/// The stored title, else the first line of the text without markdown
-/// markers, else "Untitled draft".
+/// The stored title, frontmatter title or subject, then the first body line
+/// without markdown markers, else "Untitled draft".
 fn display_title(title: &str, text: impl FnOnce() -> String) -> String {
     let title = title.trim();
     if !title.is_empty() {
         return title.to_owned();
     }
     let text = text();
-    let line = text
+    let draft = markup::frontmatter::parse(&text);
+    for key in ["title", "subject"] {
+        if let Some(value) = draft
+            .fields
+            .get(key)
+            .filter(|value| !value.trim().is_empty())
+        {
+            return value.trim().chars().take(TITLE_MAX_CHARS).collect();
+        }
+    }
+    let line = draft
+        .body
         .lines()
         .map(strip_markers)
         .find(|line| !line.is_empty())
@@ -260,7 +271,8 @@ fn strip_markers(line: &str) -> String {
             break;
         }
     }
-    line.chars()
+    markup::rich::plain(&markup::github::parse(line))
+        .chars()
         .filter(|c| !matches!(c, '*' | '_' | '`' | '~'))
         .collect::<String>()
         .trim()
@@ -339,6 +351,23 @@ mod tests {
             .iter()
             .map(|row| row.draft.id.as_str())
             .collect()
+    }
+
+    #[test]
+    fn frontmatter_titles_and_markdown_links() {
+        let text = "---\ntitle: PR title\nsubject: Email subject\n---\nBody";
+        assert_eq!(display_title("", || text.into()), "PR title");
+        assert_eq!(display_title("Stored", || text.into()), "Stored");
+        assert_eq!(
+            display_title("", || "---\nsubject: Email\n---\nBody".into()),
+            "Email"
+        );
+        assert_eq!(
+            display_title("", || {
+                "---\ntitle:\n---\nAdds [Aven](https://github.com/raine/aven).".into()
+            }),
+            "Adds Aven."
+        );
     }
 
     #[test]

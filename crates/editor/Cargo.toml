@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+markup = { path = "../markup" }
 comrak = { version = "0.59", default-features = false }
 gpui.workspace = true
 unicode-segmentation = "1.13"

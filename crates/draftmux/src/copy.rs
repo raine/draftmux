@@ -19,6 +19,7 @@ pub fn init(cx: &mut App) {
 /// Copies `text`, a draft in `target`'s syntax, and returns the confirmation
 /// to show.
 pub fn copy(target: Target, text: &str, cx: &mut App) -> &'static str {
+    let text = copy_body(text);
     match target {
         Target::Github => {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
@@ -43,6 +44,11 @@ pub fn copy(target: Target, text: &str, cx: &mut App) -> &'static str {
             }
         }
     }
+}
+
+/// Body shared by every clipboard format. Malformed frontmatter stays intact.
+fn copy_body(text: &str) -> &str {
+    markup::frontmatter::parse(text).body
 }
 
 /// Writes `mrkdwn` to the general pasteboard as Slack's composer should
@@ -163,7 +169,22 @@ pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl 
 
 #[cfg(test)]
 mod tests {
-    use super::web_custom_data;
+    use super::{copy_body, web_custom_data};
+
+    #[test]
+    fn copy_excludes_fields_and_preserves_body() {
+        assert_eq!(
+            copy_body("---\ntitle: PR\nto: a@example.com\n---\n**Body**\n"),
+            "**Body**\n"
+        );
+        for text in [
+            "Body",
+            "---\nHorizontal rule",
+            "---\ntitle: [broken\n---\nBody",
+        ] {
+            assert_eq!(copy_body(text), text);
+        }
+    }
 
     #[test]
     fn pickles_web_custom_data() {

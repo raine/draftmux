@@ -320,6 +320,9 @@ impl Chrome {
             selection,
             preview: cx.new(|cx| Preview {
                 document: None,
+                fields: Default::default(),
+                copied_field: None,
+                copied_task: Task::ready(()),
                 target: None,
                 selection: preview_selection.clone(),
                 scroll: preview_scroll.clone(),
@@ -348,6 +351,12 @@ impl Chrome {
             _clock: clock,
             _subscriptions: subscriptions,
         };
+        chrome._subscriptions.push(cx.subscribe(
+            &chrome.preview,
+            |this, _, event: &preview::FieldCopied, cx| {
+                this.show_toast(format!("Copied {}", event.0), cx);
+            },
+        ));
         if let Some(home) = std::env::home_dir() {
             let settings = AppSettings::global(cx).read(cx).settings.clone();
             if let Err(err) = chrome.drafts.first_launch_sample(&settings, &home) {
@@ -652,6 +661,9 @@ impl Chrome {
             if preview.is_none() {
                 this.cache.reset();
             }
+            this.fields = markup::frontmatter::parse(&self.preview_source).fields;
+            this.copied_field = None;
+            this.copied_task = Task::ready(());
             this.document = preview;
             this.target = target;
             cx.notify();
@@ -677,12 +689,24 @@ impl Chrome {
             }
             return;
         };
-        let map = self
-            .preview_map
-            .get_or_insert_with(|| SourceMap::new(&self.preview_source, selection.paragraphs()));
-        if let Some(range) = map.range(start, end).and_then(|range| {
-            preview_work::unchanged_range(&self.preview_source, self.editor.read(cx).text(), range)
-        }) {
+        let map = self.preview_map.get_or_insert_with(|| {
+            SourceMap::new(
+                markup::frontmatter::parse(&self.preview_source).body,
+                selection.paragraphs(),
+            )
+        });
+        let body_offset = markup::frontmatter::parse(&self.preview_source).body_offset;
+        if let Some(range) = map
+            .range(start, end)
+            .map(|range| range.start + body_offset..range.end + body_offset)
+            .and_then(|range| {
+                preview_work::unchanged_range(
+                    &self.preview_source,
+                    self.editor.read(cx).text(),
+                    range,
+                )
+            })
+        {
             self.mirrored = Some(range.clone());
             self.editor
                 .update(cx, |editor, cx| editor.select_range(range, cx));

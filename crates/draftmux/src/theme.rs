@@ -350,6 +350,7 @@ impl Palette {
             code: self.editor_code,
             link: self.accent,
             muted: self.muted,
+            faint: self.faint,
             caret: self.accent,
             selection: self.selection,
             inactive_selection: self.inactive_selection,
