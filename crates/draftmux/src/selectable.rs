@@ -1,0 +1,425 @@
+//! Text selection across the paragraphs of rendered markup, the way a browser
+//! selects text on a page.
+//!
+//! A [`TextSelection`] belongs to one surface, such as the preview or the
+//! chat. Its paragraphs are [`InlineText`](crate::inline_text::InlineText)s
+//! marked selectable with a [`Select`]; each registers its text and a hit test
+//! while it prepaints. [`area`] wraps the surface: a press starts a selection
+//! at the nearest text, dragging extends it across
+//! paragraphs, a double click selects a word and a triple click a paragraph.
+//! ⌘C copies the selected text and ⌘A selects everything. Pressing outside the
+//! surface clears the selection.
+
+use std::collections::BTreeMap;
+use std::ops::Range;
+use std::rc::Rc;
+
+use gpui::{
+    App, Bounds, ClipboardItem, Context, Div, Entity, EventEmitter, FocusHandle, Hsla, KeyBinding,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Window,
+    actions, canvas, div, prelude::*,
+};
+
+actions!(selectable, [CopySelection, SelectAllText]);
+
+const KEY_CONTEXT: &str = "SelectableText";
+
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new(editor::secondary!("c"), CopySelection, Some(KEY_CONTEXT)),
+        KeyBinding::new(editor::secondary!("a"), SelectAllText, Some(KEY_CONTEXT)),
+    ]);
+}
+
+/// A paragraph's place on its surface: the body it belongs to, such as a chat
+/// message, then its order in the body. Keys order paragraphs as they read.
+pub type Key = (usize, usize);
+
+/// A byte offset in a paragraph's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Pos {
+    pub key: Key,
+    pub offset: usize,
+}
+
+/// What marks an [`InlineText`](crate::inline_text::InlineText) selectable:
+/// the surface's selection, the paragraph's key and the highlight colour.
+#[derive(Clone)]
+pub struct Select {
+    pub state: Entity<TextSelection>,
+    pub key: Key,
+    pub color: Hsla,
+}
+
+/// The selection changed; the range is in each end's paragraph.
+pub struct SelectionChanged;
+
+pub struct TextSelection {
+    focus: FocusHandle,
+    /// The text of every paragraph registered since the content was last
+    /// reset, including ones scrolled out of a list since.
+    texts: BTreeMap<Key, SharedString>,
+    /// Paragraphs painted in the current frame, in paint order.
+    painted: Vec<Painted>,
+    anchor: Option<Pos>,
+    head: Option<Pos>,
+    /// While the button is down: what the drag extends by and the unit it
+    /// started on, which stays selected whichever way it goes.
+    dragging: Option<(Unit, Pos, Pos)>,
+}
+
+struct Painted {
+    key: Key,
+    bounds: Bounds<Pixels>,
+    hit: Rc<dyn Fn(Point<Pixels>) -> usize>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Unit {
+    Char,
+    Word,
+    Paragraph,
+}
+
+impl EventEmitter<SelectionChanged> for TextSelection {}
+
+impl TextSelection {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            focus: cx.focus_handle(),
+            texts: BTreeMap::new(),
+            painted: Vec::new(),
+            anchor: None,
+            head: None,
+            dragging: None,
+        }
+    }
+
+    /// Forgets the paragraphs and the selection, for new content whose
+    /// paragraphs reuse the old keys.
+    pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.texts.clear();
+        self.clear(cx);
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.dragging = None;
+        if self.anchor.take().is_some() | self.head.take().is_some() {
+            cx.emit(SelectionChanged);
+            cx.notify();
+        }
+    }
+
+    /// Called by a selectable paragraph as it prepaints.
+    pub(crate) fn register(
+        &mut self,
+        key: Key,
+        text: SharedString,
+        bounds: Bounds<Pixels>,
+        hit: Rc<dyn Fn(Point<Pixels>) -> usize>,
+    ) {
+        self.texts.insert(key, text);
+        self.painted.push(Painted { key, bounds, hit });
+    }
+
+    /// The selected start and end, in reading order; `None` when nothing is
+    /// selected.
+    pub fn range(&self) -> Option<(Pos, Pos)> {
+        let (anchor, head) = (self.anchor?, self.head?);
+        (anchor != head).then(|| (anchor.min(head), anchor.max(head)))
+    }
+
+    /// The selected part of paragraph `key`, whose text is `len` bytes long.
+    pub fn range_in(&self, key: Key, len: usize) -> Option<Range<usize>> {
+        let (start, end) = self.range()?;
+        if key < start.key || key > end.key {
+            return None;
+        }
+        let from = if key == start.key { start.offset } else { 0 };
+        let to = if key == end.key { end.offset } else { len };
+        let range = from.min(len)..to.min(len);
+        (!range.is_empty()).then_some(range)
+    }
+
+    /// The text of every registered paragraph, in reading order.
+    pub fn paragraphs(&self) -> impl Iterator<Item = (Key, &str)> {
+        self.texts.iter().map(|(key, text)| (*key, text.as_ref()))
+    }
+
+    /// The selected text, with a line break between paragraphs.
+    pub fn selected_text(&self) -> String {
+        let Some((start, end)) = self.range() else {
+            return String::new();
+        };
+        let mut out = Vec::new();
+        for (key, text) in self.texts.range(start.key..=end.key) {
+            if let Some(range) = self.range_in(*key, text.len()) {
+                let range = floor_boundary(text, range.start)..floor_boundary(text, range.end);
+                out.push(&text[range]);
+            } else {
+                out.push("");
+            }
+        }
+        // A selection from a gap starts at the end of the paragraph above
+        // and adds nothing from it.
+        let first = out.iter().position(|text| !text.is_empty()).unwrap_or(0);
+        let last = out
+            .iter()
+            .rposition(|text| !text.is_empty())
+            .map_or(0, |ix| ix + 1);
+        out[first..last.max(first)].join("\n")
+    }
+
+    /// Where `point` falls in the painted paragraphs: in the one whose
+    /// lines it is level with, else at the end of the nearest one above it,
+    /// else at the start of the first.
+    fn pos_at(&self, point: Point<Pixels>) -> Option<Pos> {
+        let mut painted: Vec<&Painted> = self.painted.iter().collect();
+        painted.sort_by_key(|p| p.key);
+        let level = painted
+            .iter()
+            .filter(|p| p.bounds.top() <= point.y && point.y < p.bounds.bottom())
+            .min_by(|a, b| {
+                distance_x(a.bounds, point.x)
+                    .partial_cmp(&distance_x(b.bounds, point.x))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        if let Some(p) = level {
+            return Some(Pos {
+                key: p.key,
+                offset: (p.hit)(point),
+            });
+        }
+        let above = painted.iter().rev().find(|p| p.bounds.top() <= point.y);
+        match above {
+            Some(p) => Some(Pos {
+                key: p.key,
+                offset: self.texts.get(&p.key).map_or(0, |text| text.len()),
+            }),
+            None => painted.first().map(|p| Pos {
+                key: p.key,
+                offset: 0,
+            }),
+        }
+    }
+
+    fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pos) = self.pos_at(event.position) else {
+            self.clear(cx);
+            return;
+        };
+        window.focus(&self.focus, cx);
+        let unit = match event.click_count {
+            1 => Unit::Char,
+            2 => Unit::Word,
+            _ => Unit::Paragraph,
+        };
+        // Shift-click extends the selection from its anchor.
+        let (start, end, head) = match self.anchor {
+            Some(anchor) if unit == Unit::Char && event.modifiers.shift => (anchor, anchor, pos),
+            _ => {
+                let (start, end) = self.expand(pos, unit);
+                (start, end, end)
+            }
+        };
+        self.dragging = Some((unit, start, end));
+        self.anchor = Some(start);
+        self.head = Some(head);
+        cx.emit(SelectionChanged);
+        cx.notify();
+    }
+
+    fn mouse_drag(&mut self, point: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((unit, start, end)) = self.dragging else {
+            return;
+        };
+        let Some(pos) = self.pos_at(point) else {
+            return;
+        };
+        let (anchor, head) = if pos < start {
+            (end, self.expand(pos, unit).0)
+        } else {
+            (start, self.expand(pos, unit).1)
+        };
+        if (self.anchor, self.head) != (Some(anchor), Some(head)) {
+            self.anchor = Some(anchor);
+            self.head = Some(head);
+            cx.emit(SelectionChanged);
+            cx.notify();
+        }
+    }
+
+    /// The word or paragraph around `pos`, or `pos` itself.
+    fn expand(&self, pos: Pos, unit: Unit) -> (Pos, Pos) {
+        let text = self.texts.get(&pos.key).map_or("", |text| text.as_ref());
+        let range = match unit {
+            Unit::Char => pos.offset..pos.offset,
+            Unit::Word => word_at(text, pos.offset),
+            Unit::Paragraph => 0..text.len(),
+        };
+        (
+            Pos {
+                offset: range.start,
+                ..pos
+            },
+            Pos {
+                offset: range.end,
+                ..pos
+            },
+        )
+    }
+
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        let (Some((first, _)), Some((last, text))) =
+            (self.texts.first_key_value(), self.texts.last_key_value())
+        else {
+            return;
+        };
+        self.anchor = Some(Pos {
+            key: *first,
+            offset: 0,
+        });
+        self.head = Some(Pos {
+            key: *last,
+            offset: text.len(),
+        });
+        cx.emit(SelectionChanged);
+        cx.notify();
+    }
+
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        let text = self.selected_text();
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+}
+
+/// Wraps `content`, whose paragraphs are selectable with `state`, in what
+/// drives the selection: presses, drags, copying and selecting all. Controls
+/// in `content` that stop their mouse-down's propagation don't start a
+/// selection.
+pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
+    let focus = state.read(cx).focus.clone();
+    let frame = state.clone();
+    div()
+        .track_focus(&focus)
+        .key_context(KEY_CONTEXT)
+        .on_action({
+            let state = state.clone();
+            move |_: &CopySelection, _, cx| state.update(cx, |this, cx| this.copy(cx))
+        })
+        .on_action({
+            let state = state.clone();
+            move |_: &SelectAllText, _, cx| state.update(cx, |this, cx| this.select_all(cx))
+        })
+        .on_mouse_down(MouseButton::Left, {
+            let state = state.clone();
+            move |event, window, cx| state.update(cx, |this, cx| this.mouse_down(event, window, cx))
+        })
+        .on_mouse_down_out({
+            let state = state.clone();
+            move |_, _, cx| state.update(cx, |this, cx| this.clear(cx))
+        })
+        // Laid out first, so it forgets the last frame's paragraphs before
+        // this frame's register; while dragging it follows the pointer
+        // anywhere in the window.
+        .child(
+            canvas(
+                {
+                    let state = frame.clone();
+                    move |_, _, cx| state.update(cx, |this, _| this.painted.clear())
+                },
+                move |_, _, window, cx| {
+                    if frame.read(cx).dragging.is_none() {
+                        return;
+                    }
+                    let state = frame.clone();
+                    window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            state.update(cx, |this, cx| this.mouse_drag(event.position, cx));
+                        }
+                    });
+                    let state = frame.clone();
+                    window.on_mouse_event(move |_: &MouseUpEvent, _, _, cx| {
+                        state.update(cx, |this, _| this.dragging = None);
+                    });
+                },
+            )
+            .absolute()
+            .size_0(),
+        )
+}
+
+fn distance_x(bounds: Bounds<Pixels>, x: Pixels) -> f32 {
+    if x < bounds.left() {
+        f32::from(bounds.left() - x)
+    } else if x > bounds.right() {
+        f32::from(x - bounds.right())
+    } else {
+        0.
+    }
+}
+
+/// The run of word characters, or of other non-space characters, around
+/// `offset`; an empty range between spaces.
+fn word_at(text: &str, offset: usize) -> Range<usize> {
+    let offset = floor_boundary(text, offset.min(text.len()));
+    let class = |c: char| {
+        if c.is_alphanumeric() || c == '_' || c == '\'' || c == '’' {
+            1
+        } else if c.is_whitespace() {
+            0
+        } else {
+            2
+        }
+    };
+    // The character after the offset, or before it at the end.
+    let Some(here) = text[offset..]
+        .chars()
+        .next()
+        .or_else(|| text[..offset].chars().next_back())
+    else {
+        return offset..offset;
+    };
+    let kind = class(here);
+    if kind == 0 {
+        return offset..offset;
+    }
+    let start = text[..offset]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| class(c) == kind)
+        .last()
+        .map_or(offset, |(ix, _)| ix);
+    let end = text[offset..]
+        .char_indices()
+        .find(|&(_, c)| class(c) != kind)
+        .map_or(text.len(), |(ix, _)| offset + ix);
+    start..end
+}
+
+fn floor_boundary(text: &str, mut offset: usize) -> usize {
+    offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_at;
+
+    #[test]
+    fn word_at_finds_words_and_punctuation_runs() {
+        let text = "it’s a well-known fact";
+        assert_eq!(&text[word_at(text, 1)], "it’s");
+        assert_eq!(&text[word_at(text, 9)], "well");
+        assert_eq!(&text[word_at(text, 13)], "-");
+        assert_eq!(&text[word_at(text, 7)], "a");
+        assert_eq!(word_at(text, 6), 6..6);
+        assert_eq!(&text[word_at(text, text.len())], "fact");
+        assert_eq!(word_at("", 0), 0..0);
+    }
+}

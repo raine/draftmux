@@ -42,9 +42,10 @@ use crate::assets::{
 use crate::bounce::{Bounce, ListBounce};
 use crate::chat_model::ChatModel;
 use crate::chrome::shadow;
-use crate::markup_view::{self, MarkupStyle};
+use crate::markup_view::{self, MarkupStyle, SelectBody};
 use crate::profiles::ProfileCatalog;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
+use crate::selectable::{self, TextSelection};
 use crate::theme::{self, MONO, Palette, Theme};
 use quote::Quote;
 use transcript::{DiffLine, Item, Tool, Transcript};
@@ -83,6 +84,8 @@ impl EventEmitter<ChatEvent> for Chat {}
 pub struct Chat {
     sessions: HashMap<String, Session>,
     current: Option<String>,
+    /// Selection across the agent's messages.
+    text_selection: Entity<TextSelection>,
     composer: Entity<Editor>,
     /// The draft editor, whose selection is attached to the next message.
     draft_editor: Entity<Editor>,
@@ -157,9 +160,12 @@ impl Chat {
         .detach();
         cx.observe_global::<Theme>(|this, cx| this.style = message_style(theme::get(cx).dark))
             .detach();
+        let text_selection = cx.new(TextSelection::new);
+        cx.observe(&text_selection, |_, _, cx| cx.notify()).detach();
         Self {
             sessions: HashMap::new(),
             current: None,
+            text_selection,
             composer,
             draft_editor,
             detached: None,
@@ -188,6 +194,8 @@ impl Chat {
         }
         self.current = id.clone();
         self.idle = Task::ready(());
+        self.text_selection
+            .update(cx, |selection, cx| selection.reset(cx));
         if let (Some(id), Some(draft)) = (id, draft) {
             match self.sessions.get_mut(&id) {
                 Some(session) => {
@@ -674,6 +682,8 @@ impl Chat {
                                     .mb(px(3.)),
                             )
                         })
+                        // The bubble selects its own text.
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .map(|bubble_div| match bubble {
                             Some(editor) => bubble_div.child(editor),
                             None => bubble_div.child(text.clone()),
@@ -682,7 +692,16 @@ impl Chat {
                 .into_any_element(),
             Item::Assistant { doc, .. } => div()
                 .px(px(2.))
-                .child(markup_view::render(doc, &self.style, ("message", index)))
+                .child(markup_view::render(
+                    doc,
+                    &self.style,
+                    ("message", index),
+                    Some(SelectBody {
+                        state: self.text_selection.clone(),
+                        body: index,
+                        color: palette.selection,
+                    }),
+                ))
                 .into_any_element(),
             Item::Tool(tool) => self.tool_row(tool, index, session, &palette, cx),
             Item::Failure { error, .. } => {
@@ -1027,7 +1046,7 @@ impl Render for Chat {
                         log.child(sample_card(&palette))
                     })
                     .child(
-                        div()
+                        selectable::area(&self.text_selection, cx)
                             .relative()
                             .flex_1()
                             .min_h_0()

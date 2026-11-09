@@ -16,16 +16,19 @@ use std::rc::Rc;
 use gpui::{
     App, AvailableSpace, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase, Edges, Element,
     ElementId, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseUpEvent, Pixels, ShapedLine,
-    SharedString, Size, StrikethroughStyle, TextAlign, TextRun, TransformationMatrix,
-    UnderlineStyle, Window, point, px, quad, size,
+    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseUpEvent, Pixels, Point,
+    ShapedLine, SharedString, Size, StrikethroughStyle, TextAlign, TextRun, TransformationMatrix,
+    UnderlineStyle, WhiteSpace, Window, fill, point, px, quad, size,
 };
+
+use crate::selectable::Select;
 
 /// Inline text laid out like a browser paragraph, in the surrounding text
 /// style.
 pub struct InlineText {
     segments: Vec<Segment>,
     blank_line: Option<Pixels>,
+    select: Option<Select>,
     laid: Rc<RefCell<Option<Laid>>>,
 }
 
@@ -84,7 +87,26 @@ impl InlineText {
         Self {
             segments,
             blank_line: None,
+            select: None,
             laid: Rc::default(),
+        }
+    }
+
+    /// Lets the text be selected. Its offsets are byte offsets in the
+    /// segments' text joined together.
+    pub fn selectable(mut self, select: Option<Select>) -> Self {
+        self.select = select;
+        self
+    }
+
+    fn text(&self) -> SharedString {
+        match self.segments.as_slice() {
+            [segment] => segment.text.clone(),
+            segments => segments
+                .iter()
+                .map(|segment| segment.text.as_ref())
+                .collect::<String>()
+                .into(),
         }
     }
 
@@ -106,10 +128,14 @@ struct Shaped {
     baseline: Pixels,
     blank_line: Pixels,
     align: TextAlign,
+    /// Lines only break at `\n`.
+    nowrap: bool,
 }
 
 struct Piece {
     segment: usize,
+    /// Offset of the piece's text in the segments' text joined together.
+    start: usize,
     line: ShapedLine,
     /// Line breaks between the previous piece and this one.
     breaks: usize,
@@ -124,10 +150,17 @@ struct Laid {
     lines: Vec<Line>,
 }
 
+/// Hitboxes inserted in prepaint.
+pub struct Hitboxes {
+    /// The whole text, when it is selectable.
+    text: Option<Hitbox>,
+    /// Links and their URLs.
+    links: Vec<(Hitbox, SharedString)>,
+}
+
 impl Element for InlineText {
     type RequestLayoutState = ();
-    /// Link hitboxes and their URLs.
-    type PrepaintState = Vec<(Hitbox, SharedString)>;
+    type PrepaintState = Hitboxes;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -151,6 +184,7 @@ impl Element for InlineText {
                 // Words are only cut to fit a definite width; min-content
                 // keeps them whole, as browsers do.
                 let (wrap, cut) = match (known.width, available.width) {
+                    _ if shaped.nowrap => (None, false),
                     (Some(width), _) | (None, AvailableSpace::Definite(width)) => {
                         (Some(width), true)
                     }
@@ -176,14 +210,30 @@ impl Element for InlineText {
         bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        let mut hitboxes = Vec::new();
+        let mut hitboxes = Hitboxes {
+            text: None,
+            links: Vec::new(),
+        };
+        if let Some(select) = &self.select {
+            let laid = self.laid.clone();
+            let hit = Rc::new(move |point| {
+                laid.borrow()
+                    .as_ref()
+                    .map_or(0, |laid| index_at(laid, bounds, point))
+            });
+            let text = self.text();
+            select.state.update(cx, |state, _| {
+                state.register(select.key, text, bounds, hit);
+            });
+            hitboxes.text = Some(window.insert_hitbox(bounds, HitboxBehavior::Normal));
+        }
         let mut laid = self.laid.borrow_mut();
         let Some(laid) = laid.as_mut() else {
             return hitboxes;
         };
-        if laid.wrap != Some(bounds.size.width) {
+        if !laid.shaped.nowrap && laid.wrap != Some(bounds.size.width) {
             laid.lines = break_lines(&laid.shaped, Some(bounds.size.width), true);
             laid.wrap = Some(bounds.size.width);
         }
@@ -200,7 +250,7 @@ impl Element for InlineText {
                         size(lead + width + trail, laid.shaped.line_height),
                     );
                     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    hitboxes.push((hitbox, url.clone()));
+                    hitboxes.links.push((hitbox, url.clone()));
                 }
             }
         }
@@ -220,6 +270,14 @@ impl Element for InlineText {
         let laid = self.laid.borrow();
         let Some(laid) = laid.as_ref() else { return };
         let shaped = &laid.shaped;
+        if let Some(hitbox) = &hitboxes.text {
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
+        }
+        let selected = self.select.as_ref().and_then(|select| {
+            let len = self.segments.iter().map(|s| s.text.len()).sum();
+            let range = select.state.read(cx).range_in(select.key, len)?;
+            Some((range, select.color))
+        });
         // Each piece's fragments come in order, so one cursor per piece
         // cuts them without reshaping.
         let mut cursors: Vec<_> = shaped.pieces.iter().map(|p| p.line.cursor()).collect();
@@ -232,6 +290,23 @@ impl Element for InlineText {
                 let x = left + frag.x;
                 if let Some(chip) = &segment.chip {
                     paint_chip(chip, segment, piece, frag, &part, x, baseline, window, cx);
+                }
+                if let Some((selected, color)) = &selected {
+                    let start = selected.start.max(piece.start + frag.range.start);
+                    let end = selected.end.min(piece.start + frag.range.end);
+                    if start < end {
+                        let at = |ix: usize| {
+                            x + piece.line.x_for_index(ix - piece.start)
+                                - piece.line.x_for_index(frag.range.start)
+                        };
+                        window.paint_quad(fill(
+                            Bounds::from_corners(
+                                point(at(start), top),
+                                point(at(end), top + shaped.line_height),
+                            ),
+                            *color,
+                        ));
+                    }
                 }
                 // `paint` centers the text's own ascent and descent in the
                 // line; shift it so its baseline lands on the line's.
@@ -247,12 +322,19 @@ impl Element for InlineText {
                 .ok();
             }
         }
-        for (hitbox, url) in hitboxes.drain(..) {
+        for (hitbox, url) in hitboxes.links.drain(..) {
             window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+            let state = self.select.as_ref().map(|select| select.state.clone());
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                // Releasing a drag that selected text over a link doesn't
+                // open it.
+                let selecting = state
+                    .as_ref()
+                    .is_some_and(|state| state.read(cx).range().is_some());
                 if phase == DispatchPhase::Bubble
                     && event.button == MouseButton::Left
                     && hitbox.is_hovered(window)
+                    && !selecting
                 {
                     cx.open_url(&url);
                 }
@@ -267,6 +349,45 @@ impl IntoElement for InlineText {
     fn into_element(self) -> Self {
         self
     }
+}
+
+/// The byte offset in the joined segments' text nearest `point`: on the line
+/// it is level with, clamped to the text above and below.
+fn index_at(laid: &Laid, bounds: Bounds<Pixels>, point: Point<Pixels>) -> usize {
+    let shaped = &laid.shaped;
+    let end = shaped
+        .pieces
+        .last()
+        .map_or(0, |piece| piece.start + piece.line.text.len());
+    if point.y < bounds.top() {
+        return 0;
+    }
+    // A blank line gives the start of the next line with text.
+    let mut blank = false;
+    for (line, top, left) in positioned(laid, bounds) {
+        let below = point.y >= top + line_height(line, shaped);
+        let Some(first) = line.frags.first() else {
+            blank |= !below;
+            continue;
+        };
+        if blank {
+            return shaped.pieces[first.piece].start + first.range.start;
+        }
+        if below {
+            continue;
+        }
+        let frag = line
+            .frags
+            .iter()
+            .rev()
+            .find(|frag| point.x >= left + frag.x)
+            .unwrap_or(first);
+        let piece = &shaped.pieces[frag.piece];
+        let x = point.x - left - frag.x + piece.line.x_for_index(frag.range.start);
+        let ix = piece.line.closest_index_for_x(x);
+        return piece.start + ix.clamp(frag.range.start, frag.range.end);
+    }
+    end
 }
 
 /// Lines with their top and left edges in window coordinates.
@@ -381,6 +502,7 @@ fn shape(
     let descent = -text_system.descent(font_id, font_size);
     let mut pieces = Vec::new();
     let mut breaks = 0;
+    let mut offset = 0;
     for (ix, segment) in segments.iter().enumerate() {
         let mut font = base_font.clone();
         if let Some(family) = &segment.family {
@@ -404,7 +526,10 @@ fn shape(
         for (lx, text) in segment.text.split('\n').enumerate() {
             if lx > 0 {
                 breaks += 1;
+                offset += 1;
             }
+            let start = offset;
+            offset += text.len();
             if text.is_empty() {
                 continue;
             }
@@ -428,6 +553,7 @@ fn shape(
                 .shape_line(SharedString::new(text), size, &[run], None);
             pieces.push(Piece {
                 segment: ix,
+                start,
                 line,
                 breaks: std::mem::take(&mut breaks),
                 lead,
@@ -442,6 +568,7 @@ fn shape(
         baseline: (line_height - ascent - descent) / 2. + ascent,
         blank_line: blank_line.unwrap_or(line_height),
         align: style.text_align,
+        nowrap: style.white_space == WhiteSpace::Nowrap,
     }
 }
 

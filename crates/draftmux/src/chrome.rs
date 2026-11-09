@@ -27,9 +27,11 @@ use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
 use crate::format::{Format, Formatter};
-use crate::markup_view;
+use crate::markup_view::{self, SelectBody};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
+use crate::selectable::{self, SelectionChanged, TextSelection};
 use crate::selection_popover::SelectionPopover;
+use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
 
 actions!(chrome, [ToggleEditor, TogglePreview]);
@@ -73,6 +75,12 @@ pub struct Chrome {
     selection: Entity<SelectionPopover>,
     /// The selected draft's text parsed for its target.
     preview: Option<Document>,
+    /// Selection in the preview, mirrored to the editor as the markdown it
+    /// was rendered from.
+    preview_selection: Entity<TextSelection>,
+    /// Lines the preview's text up with the markdown; built on demand and
+    /// dropped when the preview changes.
+    preview_map: Option<SourceMap>,
     /// At least one of the markdown editor and the preview is shown.
     show_editor: bool,
     show_preview: bool,
@@ -199,7 +207,12 @@ impl Chrome {
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         let chat = cx.new(|cx| Chat::new(editor.clone(), cx));
         let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
+        let preview_selection = cx.new(TextSelection::new);
         let subscriptions = vec![
+            cx.observe(&preview_selection, |_, _, cx| cx.notify()),
+            cx.subscribe(&preview_selection, |this, _, _: &SelectionChanged, cx| {
+                this.preview_selected(cx)
+            }),
             cx.subscribe(&chat, |this, _, event, cx| this.chat_event(event, cx)),
             cx.subscribe(&editor, |this, editor, event, cx| {
                 if *event == EditorEvent::Edited {
@@ -250,6 +263,8 @@ impl Chrome {
             chat,
             selection,
             preview: None,
+            preview_selection,
+            preview_map: None,
             show_editor: true,
             show_preview: true,
             save_error: None,
@@ -432,7 +447,7 @@ impl Chrome {
     /// Empties the editor after the selected draft left the list.
     fn deselect(&mut self, cx: &mut Context<Self>) {
         self.autosave = Task::ready(());
-        self.preview = None;
+        self.set_preview(None, cx);
         self.editor.update(cx, |editor, cx| editor.set_text("", cx));
         self.chat.update(cx, |chat, cx| chat.set_draft(None, cx));
         self.sync_selection_draft(cx);
@@ -497,10 +512,33 @@ impl Chrome {
         let Some(target) = self.drafts.current().map(|draft| draft.meta.target) else {
             return;
         };
-        self.preview = Some(markup_view::preview(target, &text));
+        self.set_preview(Some(markup_view::preview(target, &text)), cx);
         self.drafts.edited(&text, Instant::now());
         self.schedule_save(cx);
         cx.notify();
+    }
+
+    fn set_preview(&mut self, preview: Option<Document>, cx: &mut Context<Self>) {
+        self.preview = preview;
+        self.preview_map = None;
+        self.preview_selection
+            .update(cx, |selection, cx| selection.reset(cx));
+    }
+
+    /// Selects in the editor the markdown of the text selected in the
+    /// preview, so the chat and selection actions can target it.
+    fn preview_selected(&mut self, cx: &mut Context<Self>) {
+        let selection = self.preview_selection.read(cx);
+        let Some((start, end)) = selection.range() else {
+            return;
+        };
+        let map = self.preview_map.get_or_insert_with(|| {
+            SourceMap::new(self.editor.read(cx).text(), selection.paragraphs())
+        });
+        if let Some(range) = map.range(start, end) {
+            self.editor
+                .update(cx, |editor, cx| editor.select_range(range, cx));
+        }
     }
 
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
@@ -561,7 +599,8 @@ impl Chrome {
             return;
         }
         self.set_plain_text(target, cx);
-        self.preview = Some(markup_view::preview(target, self.editor.read(cx).text()));
+        let preview = markup_view::preview(target, self.editor.read(cx).text());
+        self.set_preview(Some(preview), cx);
         self.sync_selection_draft(cx);
         cx.notify();
     }
@@ -596,6 +635,11 @@ impl Chrome {
                         &style,
                         "preview-body",
                         &self.preview_scroll,
+                        Some(SelectBody {
+                            state: self.preview_selection.clone(),
+                            body: 0,
+                            color: theme.palette.selection,
+                        }),
                         window,
                         cx,
                     ),
@@ -612,7 +656,7 @@ impl Chrome {
             ),
         };
         // The body sits on its platform's own page color, as it does there.
-        div()
+        selectable::area(&self.preview_selection, cx)
             .id("preview")
             .size_full()
             .when_some(background, |this, background| this.bg(background))

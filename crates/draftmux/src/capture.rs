@@ -179,6 +179,7 @@ impl Render for Capture {
                 &self.doc,
                 &self.style,
                 "capture",
+                None,
             )))
     }
 }

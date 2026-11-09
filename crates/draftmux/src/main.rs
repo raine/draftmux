@@ -24,12 +24,14 @@ mod profiles;
 mod resources;
 mod sample;
 mod scrollbar;
+mod selectable;
 mod selection;
 mod selection_popover;
 mod settings_window;
 mod show;
 mod skill;
 mod source;
+mod source_map;
 mod theme;
 mod tooltip;
 
@@ -123,6 +125,7 @@ fn run_app() -> Result<()> {
             app_settings::init(config_dir, cx);
             editor::init(cx);
             markup_view::init(cx);
+            selectable::init(cx);
             format::init(cx);
             copy::init(cx);
             chat::init(cx);

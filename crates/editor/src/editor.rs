@@ -411,6 +411,12 @@ impl Editor {
         self.buffer.selection().range()
     }
 
+    /// Selects `range`, scrolling it into view.
+    pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.buffer.select_range(range, false);
+        self.after_change(None, true, cx);
+    }
+
     /// Window-space rectangles of the selection, one per visual row, for
     /// anchoring popovers. Empty when nothing is selected or the text has
     /// changed since the last frame; query again after the next render.

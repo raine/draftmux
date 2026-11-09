@@ -23,6 +23,7 @@ use crate::assets::{
     LINK_ICON, SLACK_COPY_ICON,
 };
 use crate::inline_text::{Chip, Icon, InlineText, Segment, is_emoji};
+use crate::selectable::{Select, TextSelection};
 use crate::theme::Palette;
 
 /// Visual parameters for one target platform.
@@ -567,10 +568,24 @@ pub fn init(cx: &mut App) {
         .expect("bundled fonts are valid");
 }
 
+/// Makes a body's text selectable as body `body` of a surface's selection,
+/// highlighted in `color`.
+#[derive(Clone)]
+pub struct SelectBody {
+    pub state: Entity<TextSelection>,
+    pub body: usize,
+    pub color: Hsla,
+}
+
 /// Renders `doc` at the width its parent gives it. `id` must be unique among
 /// bodies shown together, such as chat messages in one list.
-pub fn render(doc: &Document, style: &MarkupStyle, id: impl Into<ElementId>) -> AnyElement {
-    let mut renderer = Renderer::new(style);
+pub fn render(
+    doc: &Document,
+    style: &MarkupStyle,
+    id: impl Into<ElementId>,
+    select: Option<SelectBody>,
+) -> AnyElement {
+    let mut renderer = Renderer::new(style, select);
     let blocks = if style.slack_fallbacks {
         let posted = markup::slack::posted(doc);
         renderer.decorated_blocks(
@@ -593,11 +608,12 @@ pub fn render_preview(
     style: &MarkupStyle,
     id: impl Into<ElementId>,
     scroll: &ScrollHandle,
+    select: Option<SelectBody>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (Some(colors), true) = (style.notes, style.slack_fallbacks) else {
-        return render(doc, style, id);
+        return render(doc, style, id, select);
     };
     let state = window.use_keyed_state("footnotes", cx, |_, _| Footnotes::default());
     let flash = state.read(cx).flash;
@@ -608,7 +624,7 @@ pub fn render_preview(
         .enumerate()
         .filter_map(|(ix, (_, note))| note.map(|note| (ix, note)))
         .collect();
-    let mut renderer = Renderer::new(style);
+    let mut renderer = Renderer::new(style, select);
     let blocks = renderer.decorated_blocks(
         posted.iter().map(|(block, _)| block),
         style.block_gap,
@@ -831,17 +847,42 @@ struct Renderer<'a> {
     tight_item: bool,
     /// Font size of the heading whose text is being rendered.
     heading_size: Option<Pixels>,
+    select: Option<SelectBody>,
+    /// Selectable paragraphs rendered so far, which numbers the next.
+    paragraphs: usize,
 }
 
 impl<'a> Renderer<'a> {
-    fn new(style: &'a MarkupStyle) -> Self {
+    fn new(style: &'a MarkupStyle, select: Option<SelectBody>) -> Self {
         Self {
             style,
             next_id: 0,
             list_depth: 0,
             tight_item: false,
             heading_size: None,
+            select,
+            paragraphs: 0,
         }
+    }
+
+    /// What makes the next paragraph selectable, in reading order.
+    fn select(&mut self) -> Option<Select> {
+        let body = self.select.as_ref()?;
+        self.paragraphs += 1;
+        Some(Select {
+            state: body.state.clone(),
+            key: (body.body, self.paragraphs),
+            color: body.color,
+        })
+    }
+
+    /// `text` in the surrounding style, selectable like other paragraphs.
+    fn plain(&mut self, text: &str) -> InlineText {
+        InlineText::new(vec![Segment {
+            text: SharedString::from(text.to_owned()),
+            ..Segment::default()
+        }])
+        .selectable(self.select())
     }
 
     fn id(&mut self) -> ElementId {
@@ -1000,7 +1041,7 @@ impl<'a> Renderer<'a> {
                 .font_family(style.mono_family.clone())
                 .text_size(style.code_text_size)
                 .line_height(relative(style.code_line_height))
-                .child(SharedString::from(text.clone()))
+                .child(self.plain(text))
                 .into_any_element(),
             Block::Code { text, .. } => self
                 .code_box()
@@ -1015,7 +1056,7 @@ impl<'a> Renderer<'a> {
                         .font_family(style.mono_family.clone())
                         .text_size(style.code_text_size)
                         .line_height(relative(style.code_line_height))
-                        .child(SharedString::from(text.clone())),
+                        .child(self.plain(text)),
                 )
                 .into_any_element(),
             Block::Table(table) => self.table(table),
@@ -1027,7 +1068,7 @@ impl<'a> Renderer<'a> {
                 .text_color(style.muted_color)
                 .font_family(style.mono_family.clone())
                 .text_size(style.code_text_size)
-                .child(SharedString::from(html.clone()))
+                .child(self.plain(html))
                 .into_any_element(),
         }
     }
@@ -1365,6 +1406,7 @@ impl<'a> Renderer<'a> {
         }
         InlineText::new(segments)
             .blank_line(style.blank_line)
+            .selectable(self.select())
             .into_any_element()
     }
 }
