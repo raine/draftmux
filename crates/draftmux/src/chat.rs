@@ -26,8 +26,8 @@ use gpui::{
 use shell_env::ShellEnv;
 
 use crate::assets::{
-    CHEVRON_ICON, SEND_ICON, SPARK_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON,
-    TOOL_BASH_ICON, TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
+    CHEVRON_ICON, SEND_ICON, SPINNER_ARC_ICON, SPINNER_TRACK_ICON, STOP_ICON, TOOL_BASH_ICON,
+    TOOL_EDIT_ICON, TOOL_OTHER_ICON, TOOL_READ_ICON, TOOL_WRITE_ICON,
 };
 use crate::chat_model::ChatModel;
 use crate::chrome::shadow;
@@ -85,6 +85,8 @@ struct Session {
     /// Shows and switches the model of the running agent.
     model: Option<Entity<ChatModel>>,
     history_loaded: bool,
+    /// Whether the requested history arrived, or won't.
+    history_ready: bool,
     /// Read-only editors that make the user's messages selectable, by
     /// transcript index, with the text each was made for.
     bubbles: HashMap<usize, (String, Entity<Editor>)>,
@@ -92,6 +94,18 @@ struct Session {
     /// runs.
     activity_row: bool,
     _events: Task<()>,
+}
+
+impl Session {
+    /// Whether pi is still starting or the earlier conversation is still
+    /// loading. A pi that can't start isn't starting.
+    fn starting(&self) -> bool {
+        match &self.agent {
+            None => true,
+            Some(Ok(_)) => !self.history_ready,
+            Some(Err(_)) => false,
+        }
+    }
 }
 
 impl Focusable for Chat {
@@ -153,6 +167,7 @@ impl Chat {
                             list,
                             model: None,
                             history_loaded: false,
+                            history_ready: false,
                             bubbles: HashMap::new(),
                             activity_row: false,
                             _events: Task::ready(()),
@@ -244,7 +259,7 @@ impl Chat {
         if self.current.as_deref() == Some(id) {
             self.focus_agent(id, cx);
         }
-        cx.notify();
+        self.sync_list(id, cx);
         events
     }
 
@@ -259,6 +274,7 @@ impl Chat {
         };
         let agent = agent.clone();
         if let Err(err) = agent.focus() {
+            session.history_ready = true;
             session.transcript.send_failed(err.to_string());
             self.sync_list(id, cx);
             return;
@@ -307,10 +323,12 @@ impl Chat {
         let Some(session) = self.sessions.get_mut(id) else {
             return;
         };
+        session.history_ready = true;
         let messages = match messages {
             Ok(messages) => messages,
             Err(err) => {
                 eprintln!("draftmux: loading the chat history: {err}");
+                self.sync_list(id, cx);
                 return;
             }
         };
@@ -456,7 +474,7 @@ impl Chat {
         };
         let old_len = session.list.item_count();
         let old_items = old_len - usize::from(session.activity_row);
-        let activity_row = session.transcript.busy;
+        let activity_row = session.transcript.busy || session.starting();
         let items = session.transcript.items.len();
         let from = match session.transcript.take_change(old_items) {
             Some(from) => Some(from),
@@ -1001,52 +1019,45 @@ const WAVE_PERIOD: f32 = 1.4;
 /// How far behind its predecessor each letter of the label brightens.
 const WAVE_STAGGER: f32 = 0.045;
 
-/// The last row while the agent runs: "Thinking…", or "Writing…" once its
-/// reply streams in, with letters that brighten in a slow wave. Empty while
-/// a tool runs, since the tool's row shows its own spinner.
+/// The last row while pi starts or runs: "Starting pi…", then "Thinking…",
+/// or "Writing…" once its reply streams in, with letters that brighten in a
+/// slow wave, as chat apps show it. Empty while a tool runs, since the tool's row shows its own
+/// spinner.
 fn activity_row(session: &Session, palette: &Palette, window: &mut Window) -> AnyElement {
     let text = match session.transcript.items.last() {
+        _ if session.starting() => "Starting pi…",
         Some(Item::Tool(tool)) if tool.running() => return div().into_any_element(),
         Some(Item::Assistant { .. }) => "Writing…",
         _ => "Thinking…",
     };
-    let label = if crate::platform::reduce_motion() {
-        div()
-            .text_color(palette.muted)
-            .child(text)
-            .into_any_element()
-    } else {
-        window.request_animation_frame();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            // Reduced in f64: an f32 can't hold the epoch to the frame.
-            .as_secs_f64()
-            .rem_euclid(f64::from(WAVE_PERIOD)) as f32;
-        div()
-            .flex()
-            .children(text.chars().enumerate().map(|(ix, c)| {
-                let lit = wave(now - ix as f32 * WAVE_STAGGER);
-                div()
-                    .text_color(palette.text.opacity(0.4 + 0.5 * lit))
-                    .child(c.to_string())
-            }))
-            .into_any_element()
-    };
-    div()
+    // Inset like the messages: the item padding plus their own 2px.
+    let row = div()
         .pt(px(10.))
-        .px(px(2.))
-        .flex()
-        .items_center()
-        .gap(px(6.))
+        .pb(px(10.))
+        .px(px(16.))
         .text_size(px(13.))
-        .child(
-            svg()
-                .path(SPARK_ICON)
-                .size(px(13.))
-                .text_color(palette.faint),
-        )
-        .child(label)
+        .text_color(palette.muted);
+    if crate::platform::reduce_motion() {
+        return row.child(text).into_any_element();
+    }
+    window.request_animation_frame();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        // Reduced in f64: an f32 can't hold the epoch to the frame.
+        .as_secs_f64()
+        .rem_euclid(f64::from(WAVE_PERIOD)) as f32;
+    // One shaped run with a colour per letter, so the word keeps the
+    // font's spacing.
+    let highlights = text.char_indices().enumerate().map(|(ix, (at, c))| {
+        let lit = wave(now - ix as f32 * WAVE_STAGGER);
+        let style = HighlightStyle {
+            color: Some(palette.text.opacity(0.45 + 0.5 * lit)),
+            ..HighlightStyle::default()
+        };
+        (at..at + c.len_utf8(), style)
+    });
+    row.child(StyledText::new(text).with_highlights(highlights))
         .into_any_element()
 }
 
