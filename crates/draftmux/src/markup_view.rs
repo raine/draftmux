@@ -807,8 +807,6 @@ fn root(style: &MarkupStyle) -> Div {
     div()
         .w_full()
         .min_w_0()
-        .flex()
-        .flex_col()
         .font_family(style.font_family.clone())
         .text_size(style.text_size)
         .line_height(relative(style.line_height))
@@ -939,7 +937,11 @@ impl<'a> Renderer<'a> {
                 after_text = is_text(block);
                 prev = Some(block);
                 let block = self.block(block);
-                div().pt(gap).child(decorate(ix, block)).into_any_element()
+                div()
+                    .w_full()
+                    .pt(gap)
+                    .child(decorate(ix, block))
+                    .into_any_element()
             })
             .collect()
     }
