@@ -85,6 +85,9 @@ struct Session {
     /// Shows and switches the model of the running agent.
     model: Option<Entity<ChatModel>>,
     history_loaded: bool,
+    /// Read-only editors that make the user's messages selectable, by
+    /// transcript index, with the text each was made for.
+    bubbles: HashMap<usize, (String, Entity<Editor>)>,
     _events: Task<()>,
 }
 
@@ -147,6 +150,7 @@ impl Chat {
                             list,
                             model: None,
                             history_loaded: false,
+                            bubbles: HashMap::new(),
                             _events: Task::ready(()),
                         },
                     );
@@ -323,6 +327,8 @@ impl Chat {
             );
         }
         session.transcript.prepend(items);
+        // Prepending moves every item to a new index.
+        session.bubbles.clear();
         self.sync_list(id, cx);
     }
 
@@ -489,8 +495,40 @@ impl Chat {
         }
     }
 
+    /// The selectable text of the user message at `index`.
+    fn bubble(
+        &mut self,
+        index: usize,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Editor>> {
+        let session = self.sessions.get_mut(self.current.as_deref()?)?;
+        if let Some((made_for, editor)) = session.bubbles.get(&index)
+            && made_for == text
+        {
+            return Some(editor.clone());
+        }
+        let editor = theme::editor(bubble_style, cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_markdown(false, cx);
+            editor.set_text(text, cx);
+            editor.set_read_only(true, cx);
+        });
+        session
+            .bubbles
+            .insert(index, (text.to_owned(), editor.clone()));
+        Some(editor)
+    }
+
     fn render_item(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let palette = *theme::palette(cx);
+        let bubble = match self.session().and_then(|s| s.transcript.items.get(index)) {
+            Some(Item::User { text }) => {
+                let text = text.clone();
+                self.bubble(index, &text, cx)
+            }
+            _ => None,
+        };
         let Some(session) = self.session() else {
             return div().into_any_element();
         };
@@ -518,7 +556,10 @@ impl Chat {
                         .text_color(palette.on_accent)
                         .text_size(px(13.))
                         .line_height(px(19.5))
-                        .child(text.clone()),
+                        .map(|bubble_div| match bubble {
+                            Some(editor) => bubble_div.child(editor),
+                            None => bubble_div.child(text.clone()),
+                        }),
                 )
                 .into_any_element(),
             Item::Assistant { doc, .. } => div()
@@ -904,6 +945,26 @@ fn composer_style(palette: &Palette) -> EditorStyle {
         padding_bottom: px(4.),
         text: palette.text,
         heading: palette.text,
+        ..palette.editor_style()
+    }
+}
+
+/// A user message: the UI font in the bubble's colours, selectable but not
+/// editable.
+fn bubble_style(palette: &Palette) -> EditorStyle {
+    EditorStyle {
+        font: font(editor::platform::ui_font()),
+        font_size: px(13.),
+        line_height: px(19.5),
+        padding_x: px(0.),
+        padding_top: px(0.),
+        padding_bottom: px(0.),
+        text: palette.on_accent,
+        read_only_text: palette.on_accent,
+        heading: palette.on_accent,
+        selection: theme::hex(0xffffff59),
+        inactive_selection: theme::hex(0xffffff33),
+        fit_content: true,
         ..palette.editor_style()
     }
 }

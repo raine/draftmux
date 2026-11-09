@@ -191,6 +191,10 @@ pub struct EditorStyle {
     pub caret: Hsla,
     pub selection: Hsla,
     pub inactive_selection: Hsla,
+    /// Size the editor to its text, up to the available width, instead of
+    /// filling its parent and scrolling. Scroll events then pass through to
+    /// what contains it.
+    pub fit_content: bool,
 }
 
 impl Default for EditorStyle {
@@ -212,6 +216,7 @@ impl Default for EditorStyle {
             caret: rgb(0x0a6cf5).into(),
             selection: rgb(0xb3d4ff).into(),
             inactive_selection: rgb(0xdcdce0).into(),
+            fit_content: false,
         }
     }
 }
@@ -878,7 +883,9 @@ impl Render for Editor {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_scroll(cx.listener(Self::on_scroll))
+            .when(!self.style.fit_content, |editor| {
+                editor.on_scroll(cx.listener(Self::on_scroll))
+            })
             .child(EditorElement {
                 editor: cx.entity(),
             })

@@ -4,10 +4,10 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, ContentMask, ElementId, ElementInputHandler, Entity, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, LayoutId, Pixels, Point, SharedString, Style,
-    TextAlign, TextRun, UnderlineStyle, Window, WrappedLine, fill, point, prelude::*, px, relative,
-    size,
+    App, AvailableSpace, Bounds, ContentMask, ElementId, ElementInputHandler, Entity, Font,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Pixels, Point,
+    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WrappedLine, fill, point,
+    prelude::*, px, relative, size,
 };
 
 use crate::buffer::Affinity;
@@ -174,6 +174,20 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
+        if self.editor.read(cx).style.fit_content {
+            let editor = self.editor.clone();
+            let layout = window.request_measured_layout(
+                Style::default(),
+                move |known, available, window, cx| {
+                    let width = known.width.or(match available.width {
+                        AvailableSpace::Definite(width) => Some(width),
+                        _ => None,
+                    });
+                    fit_size(editor.read(cx), width, window)
+                },
+            );
+            return (layout, ());
+        }
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = relative(1.).into();
@@ -292,6 +306,7 @@ impl Element for EditorElement {
         // As in AppKit, an inactive window shows no caret and a gray selection.
         let focused = focus_handle.is_focused(window) && window.is_window_active();
         let caret_on = editor.caret_on;
+        let read_only = editor.read_only;
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.editor.clone()),
@@ -328,7 +343,7 @@ impl Element for EditorElement {
                     .ok();
             }
 
-            if focused && selection.is_empty() && caret_on {
+            if focused && selection.is_empty() && caret_on && !read_only {
                 let caret = layout.caret_bounds(selection.head, selection.affinity);
                 window.paint_quad(fill(
                     Bounds::new(caret.origin, size(px(2.), caret.size.height)),
@@ -341,6 +356,38 @@ impl Element for EditorElement {
                 .update(cx, |editor, cx| editor.painted_focused(cx));
         }
     }
+}
+
+/// The size of `editor`'s text and padding: as wide as its longest line,
+/// up to `max_width`, and as tall as its lines wrapped to that width.
+fn fit_size(editor: &Editor, max_width: Option<Pixels>, window: &mut Window) -> gpui::Size<Pixels> {
+    let style = &editor.style;
+    let text = SharedString::from(editor.buffer.text().to_string());
+    let runs = text_runs(&text, &editor.highlights, None, editor.read_only, style);
+    let pad_x = style.padding_x * 2.;
+    let shape = |wrap: Option<Pixels>, window: &mut Window| {
+        window
+            .text_system()
+            .shape_text(text.clone(), style.font_size, &runs, wrap, None)
+            .unwrap_or_default()
+    };
+    let longest = shape(None, window)
+        .iter()
+        .map(|line| line.unwrapped_layout.width)
+        .fold(Pixels::ZERO, Pixels::max);
+    let width = match max_width {
+        // Rounded up so the measured width doesn't wrap the longest line.
+        Some(max) => (longest.ceil() + pad_x).min(max),
+        None => longest.ceil() + pad_x,
+    };
+    let rows: usize = shape(Some((width - pad_x).max(px(1.))), window)
+        .iter()
+        .map(|line| line.wrap_boundaries().len() + 1)
+        .sum();
+    size(
+        width,
+        style.line_height * rows.max(1) as f32 + style.padding_top + style.padding_bottom,
+    )
 }
 
 /// Text runs covering all of `text`, styled by the markdown highlights, with
