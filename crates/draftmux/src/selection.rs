@@ -1,4 +1,4 @@
-//! Selection actions as one-off pi calls (docs/design.md, Agent interaction).
+//! Selection actions as one-off pi calls (history/docs/design.md, Agent interaction).
 //!
 //! Each call forks the draft's session into a temporary session directory:
 //! `pi -p <prompt> --fork <draft session> --session-dir <temp> -e <ext>`, with

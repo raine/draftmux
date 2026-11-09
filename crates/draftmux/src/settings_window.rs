@@ -1,4 +1,4 @@
-//! The Settings window (docs/prototype/settings.html): scopes in a sidebar.
+//! The Settings window (history/docs/prototype/settings.html): scopes in a sidebar.
 //!
 //! General and Selection actions hold app-wide settings. Under Agent, All
 //! directories holds the defaults and each directory rule its overrides. A

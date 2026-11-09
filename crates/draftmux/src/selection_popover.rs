@@ -1,4 +1,4 @@
-//! The selection actions popover (docs/design.md, Selection menu): actions
+//! The selection actions popover (history/docs/design.md, Selection menu): actions
 //! for the editor selection, then the options pi returns, in a blurred popup
 //! window above the selection.
 //!

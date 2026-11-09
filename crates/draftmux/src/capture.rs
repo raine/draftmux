@@ -1,5 +1,5 @@
 //! `draftmux capture`: renders fixture drafts to PNGs for comparing the
-//! preview with GitHub's and Slack's own rendering (docs/design.md, Testing).
+//! preview with GitHub's and Slack's own rendering (history/docs/design.md, Testing).
 //!
 //! Each fixture is drawn by [`markup_view::render`] in an offscreen window,
 //! light and dark, at a fixed content width on the platform's background,

@@ -1,5 +1,5 @@
 //! Form pieces of the Settings window, drawn like AppKit's grouped forms
-//! (docs/prototype/settings.html).
+//! (history/docs/prototype/settings.html).
 
 use std::ops::Deref;
 

@@ -1,6 +1,6 @@
 //! The main window: unified toolbar, translucent drafts sidebar, editor,
 //! preview and chat columns of the "Native" prototype variant
-//! (docs/prototype/index.html).
+//! (history/docs/prototype/index.html).
 //!
 //! The window uses `WindowBackgroundAppearance::Blurred`, so anything painted
 //! with alpha below 1 shows the blurred desktop. The root paints nothing; the

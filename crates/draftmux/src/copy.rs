@@ -1,5 +1,5 @@
 //! The Copy action: puts the draft on the pasteboard ready for its target
-//! (docs/design.md, Output). Copying never changes the draft.
+//! (history/docs/design.md, Output). Copying never changes the draft.
 
 use draftmux_storage::Target;
 use gpui::{

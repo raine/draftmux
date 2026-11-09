@@ -6,9 +6,7 @@ message next to a GitHub, Slack or email preview with an embedded pi agent and
 steer-style selection actions, then copy it out or let the original agent read
 it back.
 
-Status: early development. See [docs/design.md](docs/design.md) for the design and
-[docs/prototype/](docs/prototype/) for HTML prototypes of the main window and
-settings.
+Status: early development.
 
 ## Install
 
@@ -154,4 +152,3 @@ bump it deliberately:
    (`cargo tree --target aarch64-apple-darwin -i <crate>`).
 4. Run `cargo update -p gpui -p gpui_platform`, build, fix API changes, and
    check the window chrome with `cargo run`.
-5. Update the Zed rev and line references cited in `docs/design.md`.

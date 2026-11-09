@@ -135,7 +135,7 @@ unsafe extern "C" {
     static NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification: &'static NSString;
 }
 
-/// Colours of the "Native" prototype variant (docs/prototype/index.html):
+/// Colours of the "Native" prototype variant (history/docs/prototype/index.html):
 /// `.t-native` for light, `.t-dark` and `body.t-dark-pop` for dark.
 #[derive(Clone, Copy)]
 pub struct Palette {
