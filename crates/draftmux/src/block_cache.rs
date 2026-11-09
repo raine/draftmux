@@ -1,5 +1,5 @@
-//! Measured top-level markdown blocks. Unchanged blocks retain their height;
-//! only blocks intersecting the viewport need layout and prepaint each frame.
+//! Measured top-level markdown blocks. After measurement, unchanged offscreen
+//! blocks reuse their height and text without building or laying out elements.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -12,69 +12,122 @@ use gpui::{
 };
 use markup::Block;
 
-#[derive(Default)]
-pub struct BlockCache {
-    blocks: Vec<Block>,
-    heights: Vec<Rc<Cell<Option<Pixels>>>>,
-    width: Option<Pixels>,
-    /// Scroll offsets must outlive offscreen elements.
+/// Measurements, selection text and scroll state shared by all frames of a block.
+pub struct CachedBlock {
+    pub block: Block,
+    height: Cell<Option<Pixels>>,
+    pub texts: crate::selectable::TextRegistry,
     pub scrolls: Rc<RefCell<BTreeMap<u64, ScrollHandle>>>,
 }
 
+impl CachedBlock {
+    fn new(block: Block) -> Self {
+        Self {
+            block,
+            height: Cell::new(None),
+            texts: Default::default(),
+            scrolls: Default::default(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct BlockCache {
+    blocks: Vec<Rc<CachedBlock>>,
+    width: Option<Pixels>,
+}
+
 impl BlockCache {
+    /// Invalidates appearance-dependent data without losing horizontal offsets.
     pub fn clear(&mut self) {
+        for block in &self.blocks {
+            block.height.set(None);
+            block.texts.borrow_mut().clear();
+        }
+        self.width = None;
+    }
+
+    pub fn reset(&mut self) {
         self.blocks.clear();
-        self.heights.clear();
         self.width = None;
     }
 
     pub fn prepare(&mut self, blocks: &[Block], width: Pixels) {
-        if self.width != Some(width) {
-            self.heights = (0..blocks.len()).map(|_| Rc::default()).collect();
-        } else if self.blocks != blocks {
-            let prefix = self
-                .blocks
-                .iter()
-                .zip(blocks)
-                .take_while(|(a, b)| a == b)
-                .count();
+        let prefix = self
+            .blocks
+            .iter()
+            .zip(blocks)
+            .take_while(|(a, b)| a.block == **b)
+            .count();
+        if prefix != self.blocks.len() || prefix != blocks.len() {
             let suffix = self.blocks[prefix..]
                 .iter()
                 .rev()
                 .zip(blocks[prefix..].iter().rev())
-                .take_while(|(a, b)| a == b)
+                .take_while(|(a, b)| a.block == **b)
                 .count();
-            let mut heights: Vec<Rc<Cell<Option<Pixels>>>> =
-                (0..blocks.len()).map(|_| Rc::default()).collect();
-            heights[..prefix].clone_from_slice(&self.heights[..prefix]);
-            // The first surviving suffix block can have a different preceding
-            // margin, so measure it again even when its own content is unchanged.
-            if suffix > 1 {
-                heights[blocks.len() - suffix + 1..]
-                    .clone_from_slice(&self.heights[self.blocks.len() - suffix + 1..]);
+            let mut next = self.blocks[..prefix].to_vec();
+            next.extend(
+                blocks[prefix..blocks.len() - suffix]
+                    .iter()
+                    .cloned()
+                    .map(|block| Rc::new(CachedBlock::new(block))),
+            );
+            next.extend_from_slice(&self.blocks[self.blocks.len() - suffix..]);
+            // An unchanged suffix can acquire a different preceding margin.
+            if suffix > 0 {
+                next[blocks.len() - suffix].height.set(None);
             }
-            self.heights = heights;
+            self.blocks = next;
         }
-        if self.blocks != blocks {
-            self.blocks = blocks.to_vec();
+        if self.width != Some(width) {
+            for block in &self.blocks {
+                block.height.set(None);
+            }
         }
         self.width = Some(width);
     }
 
-    pub fn wrap(&self, index: usize, child: AnyElement) -> AnyElement {
+    /// Reindexes cached paragraphs after block insertion or deletion.
+    pub fn texts(&self) -> BTreeMap<crate::selectable::Key, gpui::SharedString> {
+        let mut texts = BTreeMap::new();
+        for (body, block) in self.blocks.iter().enumerate() {
+            for (&(_, paragraph), text) in block.texts.borrow().iter() {
+                texts.insert((body, paragraph), text.clone());
+            }
+        }
+        texts
+    }
+
+    pub fn wrap(
+        &self,
+        index: usize,
+        render: impl FnOnce(&CachedBlock) -> AnyElement + 'static,
+    ) -> AnyElement {
         MeasuredBlock {
-            child,
+            block: self.blocks[index].clone(),
+            render: Some(Box::new(render)),
+            child: None,
             width: self.width.expect("prepare blocks before measuring"),
-            height: self.heights[index].clone(),
         }
         .into_any_element()
     }
 }
 
+type RenderBlock = Box<dyn FnOnce(&CachedBlock) -> AnyElement>;
+
 struct MeasuredBlock {
-    child: AnyElement,
+    block: Rc<CachedBlock>,
+    render: Option<RenderBlock>,
+    child: Option<AnyElement>,
     width: Pixels,
-    height: Rc<Cell<Option<Pixels>>>,
+}
+
+impl MeasuredBlock {
+    fn child(&mut self) -> &mut AnyElement {
+        self.child
+            .get_or_insert_with(|| self.render.take().expect("block renders once")(&self.block))
+    }
 }
 
 impl IntoElement for MeasuredBlock {
@@ -102,19 +155,17 @@ impl Element for MeasuredBlock {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        let height = self.height.get().unwrap_or_else(|| {
+        let width = self.width;
+        let height = self.block.height.get().unwrap_or_else(|| {
             let height = self
-                .child
+                .child()
                 .layout_as_root(
-                    size(
-                        AvailableSpace::Definite(self.width),
-                        AvailableSpace::MinContent,
-                    ),
+                    size(AvailableSpace::Definite(width), AvailableSpace::MinContent),
                     window,
                     cx,
                 )
                 .height;
-            self.height.set(Some(height));
+            self.block.height.set(Some(height));
             height
         });
         let mut style = Style::default();
@@ -133,9 +184,9 @@ impl Element for MeasuredBlock {
     ) -> bool {
         let visible = bounds.intersects(&window.content_mask().bounds);
         if visible {
-            self.child
+            self.child()
                 .layout_as_root(Size::from(bounds.size), window, cx);
-            self.child.prepaint_at(bounds.origin, window, cx);
+            self.child().prepaint_at(bounds.origin, window, cx);
         }
         visible
     }
@@ -151,7 +202,7 @@ impl Element for MeasuredBlock {
         cx: &mut App,
     ) {
         if *visible {
-            self.child.paint(window, cx);
+            self.child().paint(window, cx);
         }
     }
 }
@@ -171,14 +222,18 @@ mod tests {
     fn measured(names: &[&str]) -> BlockCache {
         let mut cache = BlockCache::default();
         cache.prepare(&blocks(names), px(400.));
-        for (i, height) in cache.heights.iter().enumerate() {
-            height.set(Some(px((i + 1) as f32 * 10.)));
+        for (i, block) in cache.blocks.iter().enumerate() {
+            block.height.set(Some(px((i + 1) as f32 * 10.)));
         }
         cache
     }
 
     fn heights(cache: &BlockCache) -> Vec<Option<Pixels>> {
-        cache.heights.iter().map(|height| height.get()).collect()
+        cache
+            .blocks
+            .iter()
+            .map(|block| block.height.get())
+            .collect()
     }
 
     #[test]
@@ -202,7 +257,7 @@ mod tests {
         cache.prepare(&blocks(&["c", "d"]), px(400.));
         assert_eq!(heights(&cache), vec![None, Some(px(40.))]);
         cache.prepare(&[], px(400.));
-        assert!(cache.heights.is_empty());
+        assert!(cache.blocks.is_empty());
     }
 
     #[test]
@@ -219,21 +274,74 @@ mod tests {
         let mut cache = measured(&["a", "b"]);
         let scroll = ScrollHandle::new();
         scroll.set_offset(point(px(-30.), px(0.)));
-        cache.scrolls.borrow_mut().insert(1, scroll);
+        cache.blocks[0].scrolls.borrow_mut().insert(1, scroll);
         cache.prepare(&blocks(&["a", "b"]), px(500.));
         assert_eq!(heights(&cache), vec![None, None]);
-        cache.heights[0].set(Some(px(40.)));
+        cache.blocks[0].height.set(Some(px(40.)));
         cache.clear();
         cache.prepare(&blocks(&["a", "b"]), px(500.));
         assert_eq!(heights(&cache), vec![None, None]);
-        assert_eq!(cache.scrolls.borrow()[&1].offset().x, px(-30.));
+        assert_eq!(cache.blocks[0].scrolls.borrow()[&1].offset().x, px(-30.));
     }
 
     #[test]
-    fn identical_documents_keep_the_same_measurement_cells() {
+    fn reindexes_offscreen_paragraphs_and_retains_each_blocks_scroll_state() {
         let mut cache = measured(&["a", "b"]);
-        let first = cache.heights[0].clone();
+        cache.blocks[0]
+            .texts
+            .borrow_mut()
+            .insert((0, 1), "first".into());
+        cache.blocks[1]
+            .texts
+            .borrow_mut()
+            .insert((1, 1), "last 世界".into());
+        let scroll = ScrollHandle::new();
+        scroll.set_offset(point(px(-30.), px(0.)));
+        cache.blocks[1].scrolls.borrow_mut().insert(1, scroll);
+
+        cache.prepare(&blocks(&["new", "a", "b"]), px(400.));
+        assert_eq!(
+            cache.texts().keys().copied().collect::<Vec<_>>(),
+            vec![(1, 1), (2, 1)]
+        );
+        assert_eq!(cache.texts()[&(2, 1)].as_ref(), "last 世界");
+        assert_eq!(cache.blocks[2].scrolls.borrow()[&1].offset().x, px(-30.));
+
+        cache.prepare(&blocks(&["b"]), px(400.));
+        assert_eq!(
+            cache.texts().keys().copied().collect::<Vec<_>>(),
+            vec![(0, 1)]
+        );
+        assert_eq!(cache.texts()[&(0, 1)].as_ref(), "last 世界");
+        cache.clear();
+        assert!(cache.texts().is_empty());
+        assert_eq!(cache.blocks[0].scrolls.borrow()[&1].offset().x, px(-30.));
+        cache.reset();
+        assert!(cache.blocks.is_empty());
+    }
+
+    #[test]
+    fn defers_element_construction_and_builds_a_child_only_once() {
+        let cache = measured(&["a"]);
+        let calls = Rc::new(Cell::new(0));
+        let count = calls.clone();
+        let mut element = cache.wrap(0, move |_| {
+            count.set(count.get() + 1);
+            gpui::div().into_any_element()
+        });
+        assert_eq!(calls.get(), 0);
+        let block = element.downcast_mut::<MeasuredBlock>().unwrap();
+        assert!(block.child.is_none());
+        block.child();
+        block.child();
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn identical_documents_keep_the_same_cached_blocks() {
+        let mut cache = measured(&["a", "b"]);
+        let first = cache.blocks[0].clone();
         cache.prepare(&blocks(&["a", "b"]), px(400.));
-        assert!(Rc::ptr_eq(&first, &cache.heights[0]));
+        assert!(Rc::ptr_eq(&first, &cache.blocks[0]));
     }
 }

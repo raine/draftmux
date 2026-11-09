@@ -1,10 +1,10 @@
 //! Renders a [`markup::Document`] as GPUI elements.
 //!
-//! Rendering is a pure function of the document and a [`MarkupStyle`], so the
-//! preview pane and chat messages draw bodies the same way; only the
-//! preview's footnotes ([`render_preview`]) keep state, for jumping between
-//! them. Callers parse when the text changes and keep the document; they own
-//! scrolling, padding and backgrounds around the body.
+//! The preview pane and chat messages share the same block renderer and
+//! [`MarkupStyle`]. The preview caches measured blocks and selection text;
+//! its footnotes ([`render_preview`]) also keep navigation state. Callers parse
+//! when the text changes and keep the document; they own scrolling, padding
+//! and backgrounds around the body.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -610,7 +610,7 @@ pub fn render(
 /// to its note and highlights it; clicking a note does the same for its block.
 pub fn render_preview(
     doc: &Document,
-    style: &MarkupStyle,
+    style: Rc<MarkupStyle>,
     scroll: &ScrollHandle,
     select: Option<SelectBody>,
     cache: (&mut BlockCache, Pixels),
@@ -619,20 +619,31 @@ pub fn render_preview(
 ) -> AnyElement {
     let (cache, width) = cache;
     let (Some(colors), true) = (style.notes, style.slack_fallbacks) else {
-        cache.prepare(&doc.blocks, width);
-        let mut renderer = Renderer::new(style, select);
-        renderer.scrolls = Some(cache.scrolls.clone());
-        let blocks = renderer
-            .blocks(&doc.blocks, style.block_gap)
-            .into_iter()
+        let posted;
+        let blocks = if style.slack_fallbacks {
+            posted = markup::slack::posted(doc)
+                .into_iter()
+                .map(|(block, _)| block)
+                .collect::<Vec<_>>();
+            &posted
+        } else {
+            &doc.blocks
+        };
+        cache.prepare(blocks, width);
+        let renderer = Renderer::new(&style, None);
+        let blocks = blocks
+            .iter()
             .enumerate()
-            .map(|(ix, block)| cache.wrap(ix, root(style).child(block).into_any_element()))
+            .map(|(ix, block)| {
+                let gap = renderer.gap_before(
+                    block,
+                    ix.checked_sub(1).map(|i| &blocks[i]),
+                    style.block_gap,
+                );
+                cached_block(cache, ix, gap, style.clone(), select.clone(), |block| block)
+            })
             .collect::<Vec<_>>();
-        cache
-            .scrolls
-            .borrow_mut()
-            .retain(|id, _| *id <= renderer.next_id);
-        return root(style)
+        return root(&style)
             .id("preview-body")
             .children(blocks)
             .into_any_element();
@@ -648,59 +659,70 @@ pub fn render_preview(
         .collect();
     let posted: Vec<Block> = posted.into_iter().map(|(block, _)| block).collect();
     cache.prepare(&posted, width);
-    let mut renderer = Renderer::new(style, select);
-    renderer.scrolls = Some(cache.scrolls.clone());
-    let blocks = renderer.decorated_blocks(posted.iter(), style.block_gap, |ix, block| {
-        let Some(n) = noted.iter().position(|&(noted, _)| noted == ix) else {
-            return block;
-        };
-        let state = state.clone();
-        let scroll = scroll.clone();
-        div()
-            .relative()
-            .when(flash == Some(Flash::Block(ix)), |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top(px(-3.))
-                        .bottom(px(-3.))
-                        .left(px(-6.))
-                        .right(px(-6.))
-                        .rounded(px(6.))
-                        .bg(colors.highlight),
-                )
-            })
-            .child(block)
-            .child(
-                div()
-                    .id(("footnote-ref", n))
-                    .absolute()
-                    .top(px(1.))
-                    .right(px(-18.))
-                    .px(px(3.))
-                    .py(px(2.))
-                    .rounded(px(4.))
-                    .font_family(editor::platform::ui_font())
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .line_height(relative(1.))
-                    .text_color(colors.mark)
-                    .cursor_pointer()
-                    .hover(|this| this.bg(colors.highlight))
-                    .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Note(n), cx))
-                    .child(SharedString::from((n + 1).to_string())),
-            )
-            .into_any_element()
-    });
-    let blocks = blocks
-        .into_iter()
+    let renderer = Renderer::new(&style, None);
+    let blocks = posted
+        .iter()
         .enumerate()
-        .map(|(ix, block)| cache.wrap(ix, root(style).child(block).into_any_element()))
+        .map(|(ix, block)| {
+            let gap = renderer.gap_before(
+                block,
+                ix.checked_sub(1).map(|i| &posted[i]),
+                style.block_gap,
+            );
+            let n = noted.iter().position(|&(noted, _)| noted == ix);
+            let state = state.clone();
+            let scroll = scroll.clone();
+            cached_block(
+                cache,
+                ix,
+                gap,
+                style.clone(),
+                select.clone(),
+                move |block| {
+                    let Some(n) = n else {
+                        return block;
+                    };
+                    let state = state.clone();
+                    let scroll = scroll.clone();
+                    div()
+                        .relative()
+                        .when(flash == Some(Flash::Block(ix)), |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .top(px(-3.))
+                                    .bottom(px(-3.))
+                                    .left(px(-6.))
+                                    .right(px(-6.))
+                                    .rounded(px(6.))
+                                    .bg(colors.highlight),
+                            )
+                        })
+                        .child(block)
+                        .child(
+                            div()
+                                .id(("footnote-ref", n))
+                                .absolute()
+                                .top(px(1.))
+                                .right(px(-18.))
+                                .px(px(3.))
+                                .py(px(2.))
+                                .rounded(px(4.))
+                                .font_family(editor::platform::ui_font())
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .line_height(relative(1.))
+                                .text_color(colors.mark)
+                                .cursor_pointer()
+                                .hover(|this| this.bg(colors.highlight))
+                                .on_click(move |_, _, cx| jump(&state, &scroll, Flash::Note(n), cx))
+                                .child(SharedString::from((n + 1).to_string())),
+                        )
+                        .into_any_element()
+                },
+            )
+        })
         .collect::<Vec<_>>();
-    cache
-        .scrolls
-        .borrow_mut()
-        .retain(|id, _| *id <= renderer.next_id);
     let notes = noted.iter().enumerate().map(|(n, &(ix, note))| {
         let state = state.clone();
         let scroll = scroll.clone();
@@ -760,7 +782,7 @@ pub fn render_preview(
                     .children(notes),
             )
     });
-    root(style)
+    root(&style)
         .on_children_prepainted(move |bounds, _, cx| {
             state.update(cx, |this, _| this.blocks = bounds)
         })
@@ -768,6 +790,36 @@ pub fn render_preview(
         .children(blocks)
         .children(section)
         .into_any_element()
+}
+
+/// Each cached top-level block owns a selection body and local element ids.
+fn cached_block(
+    cache: &BlockCache,
+    index: usize,
+    gap: Pixels,
+    style: Rc<MarkupStyle>,
+    select: Option<SelectBody>,
+    decorate: impl FnOnce(AnyElement) -> AnyElement + 'static,
+) -> AnyElement {
+    cache.wrap(index, move |entry| {
+        entry.texts.borrow_mut().clear();
+        let select = select.map(|mut select| {
+            select.body = index;
+            select.registry = Some(entry.texts.clone());
+            select
+        });
+        let mut renderer = Renderer::new(&style, select);
+        renderer.scrolls = Some(entry.scrolls.clone());
+        let block = renderer.block(&entry.block);
+        entry
+            .scrolls
+            .borrow_mut()
+            .retain(|id, _| *id <= renderer.next_id);
+        root(&style)
+            .id(("preview-block", index))
+            .child(div().w_full().pt(gap).child(decorate(block)))
+            .into_any_element()
+    })
 }
 
 /// How long a block or note jumped to stays highlighted.
@@ -932,6 +984,33 @@ impl<'a> Renderer<'a> {
         })
     }
 
+    fn gap_before(&self, block: &Block, prev: Option<&Block>, gap: Pixels) -> Pixels {
+        // Language code blocks retain their own margin next to quotes and code.
+        let separate = |block: &Block| {
+            self.style.language_code.is_some() && matches!(block, Block::Code { lang: Some(_), .. })
+        };
+        let margined = |block: &Block| matches!(block, Block::Code { .. } | Block::Quote(_));
+        match (&self.style.margins, prev) {
+            (Some(margins), Some(prev)) => {
+                self.margin(margins, prev).max(self.margin(margins, block))
+            }
+            (Some(_), None) => px(0.),
+            (None, _) => match block {
+                _ if prev.is_none() && separate(block) => gap,
+                _ if prev.is_none() => px(0.),
+                Block::Heading { .. } => self.style.heading_gap,
+                _ if prev.is_some_and(is_text) && is_text(block) => self.style.text_gap.min(gap),
+                _ if prev.is_some_and(|prev| {
+                    separate(block) && margined(prev) || separate(prev) && margined(block)
+                }) =>
+                {
+                    gap * 2.
+                }
+                _ => gap,
+            },
+        }
+    }
+
     /// Renders sibling blocks, separated by `gap` (wider above headings).
     fn blocks(&mut self, blocks: &[Block], gap: Pixels) -> Vec<AnyElement> {
         self.decorated_blocks(blocks, gap, |_, block| block)
@@ -945,39 +1024,12 @@ impl<'a> Renderer<'a> {
         gap: Pixels,
         mut decorate: impl FnMut(usize, AnyElement) -> AnyElement,
     ) -> Vec<AnyElement> {
-        // Slack posts a code block with a language as a block of its own, so
-        // its margin neither collapses into a neighbour's (code blocks and
-        // quotes have one) nor into the top of the message.
-        let separate = |block: &Block| {
-            self.style.language_code.is_some() && matches!(block, Block::Code { lang: Some(_), .. })
-        };
-        let margined = |block: &Block| matches!(block, Block::Code { .. } | Block::Quote(_));
-        let mut after_text = false;
         let mut prev: Option<&Block> = None;
         blocks
             .into_iter()
             .enumerate()
             .map(|(ix, block)| {
-                let gap = match (&self.style.margins, prev) {
-                    (Some(margins), Some(prev)) => {
-                        self.margin(margins, prev).max(self.margin(margins, block))
-                    }
-                    (Some(_), None) => px(0.),
-                    (None, _) => match block {
-                        _ if ix == 0 && separate(block) => gap,
-                        _ if ix == 0 => px(0.),
-                        Block::Heading { .. } => self.style.heading_gap,
-                        _ if after_text && is_text(block) => self.style.text_gap.min(gap),
-                        _ if prev.is_some_and(|prev| {
-                            separate(block) && margined(prev) || separate(prev) && margined(block)
-                        }) =>
-                        {
-                            gap * 2.
-                        }
-                        _ => gap,
-                    },
-                };
-                after_text = is_text(block);
+                let gap = self.gap_before(block, prev, gap);
                 prev = Some(block);
                 let block = self.block(block);
                 div()

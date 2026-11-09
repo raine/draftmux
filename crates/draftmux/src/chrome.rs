@@ -650,8 +650,7 @@ impl Chrome {
         };
         self.preview.update(cx, |this, cx| {
             if preview.is_none() {
-                this.cache.clear();
-                this.cache.scrolls.borrow_mut().clear();
+                this.cache.reset();
             }
             this.document = preview;
             this.target = target;

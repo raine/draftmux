@@ -30,6 +30,11 @@ impl Render for Preview {
                 let mut body = entity.update(cx, |this, cx| this.body(bounds, window, cx));
                 body.layout_as_root(bounds.size.into(), window, cx);
                 body.prepaint_at(bounds.origin, window, cx);
+                entity.update(cx, |this, cx| {
+                    let texts = this.cache.texts();
+                    this.selection
+                        .update(cx, |selection, _| selection.set_texts(texts));
+                });
                 body
             },
             |_, mut body: AnyElement, window, cx| body.paint(window, cx),
@@ -55,22 +60,28 @@ impl Preview {
             self.cache.clear();
             self.appearance = appearance;
         }
-        let registry = crate::selectable::TextRegistry::default();
+        if self
+            .document
+            .as_ref()
+            .is_none_or(|doc| doc.blocks.is_empty())
+        {
+            self.cache.reset();
+        }
         // px_6 is 1.5 rem on each side of the scrolling viewport.
         let width = (bounds.size.width - window.rem_size() * 3.).max(px(0.));
         let (body, background) = match (&self.document, self.target) {
             (Some(doc), Some(target)) if !doc.blocks.is_empty() => {
-                let style = markup_view::style(target, theme.dark);
+                let style = std::rc::Rc::new(markup_view::style(target, theme.dark));
                 (
                     markup_view::render_preview(
                         doc,
-                        &style,
+                        style.clone(),
                         &self.scroll,
                         Some(SelectBody {
                             state: self.selection.clone(),
                             body: 0,
                             color: theme.palette.selection,
-                            registry: Some(registry.clone()),
+                            registry: None,
                         }),
                         (&mut self.cache, width),
                         window,
@@ -88,9 +99,7 @@ impl Preview {
                 None,
             ),
         };
-        self.selection.update(cx, |selection, _| {
-            selection.set_texts(std::mem::take(&mut *registry.borrow_mut()))
-        });
+
         selectable::area(&self.selection, cx)
             .id("preview")
             .size_full()
