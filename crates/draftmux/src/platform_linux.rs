@@ -42,7 +42,9 @@ struct RichClipboard(arboard::Clipboard);
 impl gpui::Global for RichClipboard {}
 
 pub fn write_flavours(flavours: &crate::copy::Flavours, cx: &mut App) -> bool {
-    let _ = &flavours.rtf; // Linux consumers use HTML rather than RTF.
+    // Linux consumers use HTML rather than RTF, and Slack's own format
+    // needs a clipboard type arboard can't write.
+    let _ = (&flavours.rtf, &flavours.chromium);
     if !cx.has_global::<RichClipboard>() {
         match arboard::Clipboard::new() {
             Ok(clipboard) => cx.set_global(RichClipboard(clipboard)),

@@ -62,6 +62,7 @@ fn write_rich_text(markdown: &str, cx: &mut App) -> bool {
             html: markup::rich_text::html(&doc),
             rtf: markup::rich_text::rtf(&doc),
             plain: markdown.to_owned(),
+            chromium: None,
         },
         cx,
     )
@@ -69,11 +70,13 @@ fn write_rich_text(markdown: &str, cx: &mut App) -> bool {
 
 /// The pasteboard contents for a Slack message: HTML, which Slack's composer
 /// reads, RTF for native apps, and the visible text for pasting without
-/// formatting.
+/// formatting. With user mentions, also Slack's own format, which keeps
+/// them mentions, as Chromium web custom data.
 pub(crate) struct Flavours {
     pub html: String,
     pub rtf: String,
     pub plain: String,
+    pub chromium: Option<Vec<u8>>,
 }
 
 pub(crate) fn slack_flavours(doc: &markup::Document) -> Flavours {
@@ -81,7 +84,34 @@ pub(crate) fn slack_flavours(doc: &markup::Document) -> Flavours {
         html: markup::rich::html(doc),
         rtf: markup::rich::rtf(doc),
         plain: markup::rich::plain(doc),
+        chromium: markup::texty::texty(doc).map(|texty| {
+            web_custom_data(&[
+                ("public.utf8-plain-text", &markup::rich::plain(doc)),
+                ("slack/texty", &texty),
+            ])
+        }),
     }
+}
+
+/// Chromium's pickled web custom data, the clipboard's
+/// `org.chromium.web-custom-data`: a payload length, then the entry count
+/// and each entry's type and value as UTF-16 strings, all little-endian and
+/// each string padded to four bytes.
+fn web_custom_data(entries: &[(&str, &str)]) -> Vec<u8> {
+    fn string(out: &mut Vec<u8>, text: &str) {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        out.extend((units.len() as u32).to_le_bytes());
+        out.extend(units.iter().flat_map(|unit| unit.to_le_bytes()));
+        out.resize(out.len().next_multiple_of(4), 0);
+    }
+    let mut payload = (entries.len() as u32).to_le_bytes().to_vec();
+    for (kind, value) in entries {
+        string(&mut payload, kind);
+        string(&mut payload, value);
+    }
+    let mut out = (payload.len() as u32).to_le_bytes().to_vec();
+    out.extend(payload);
+    out
 }
 
 /// The toolbar's primary Copy button.
@@ -129,4 +159,22 @@ pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl 
                 .text_color(palette.on_accent_muted)
                 .child(editor::by_platform!("⌘⇧C", "Ctrl+Shift+C")),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::web_custom_data;
+
+    #[test]
+    fn pickles_web_custom_data() {
+        assert_eq!(
+            web_custom_data(&[("ab", "é")]),
+            [
+                20, 0, 0, 0, // payload length
+                1, 0, 0, 0, // entries
+                2, 0, 0, 0, b'a', 0, b'b', 0, // "ab"
+                1, 0, 0, 0, 0xe9, 0, 0, 0, // "é", padded
+            ]
+        );
+    }
 }

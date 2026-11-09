@@ -124,6 +124,10 @@ fn write_pasteboard(pasteboard: &NSPasteboard, flavours: &Flavours) {
         pasteboard.setData_forType(Some(&rtf), NSPasteboardTypeRTF);
         pasteboard.setString_forType(&plain, NSPasteboardTypeString);
     }
+    if let Some(chromium) = &flavours.chromium {
+        let kind = NSString::from_str("org.chromium.web-custom-data");
+        pasteboard.setData_forType(Some(&NSData::with_bytes(chromium)), &kind);
+    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ pub mod rich;
 pub mod rich_text;
 mod shiki;
 pub mod slack;
+pub mod texty;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Document {

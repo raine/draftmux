@@ -640,6 +640,22 @@ fn shortcode(text: &str) -> Option<(usize, &'static str)> {
     crate::emoji::lookup(&rest[..end].to_ascii_lowercase()).map(|emoji| (end + 2, emoji))
 }
 
+/// Length, user ID and label of a `<@U123>` or `<@U123|name>` user mention
+/// at the start of `text`.
+pub fn user_mention(text: &str) -> Option<(usize, &str, Option<&str>)> {
+    let rest = text.strip_prefix("<@")?;
+    let end = rest.find(['>', '<', '\n'])?;
+    if !rest[end..].starts_with('>') {
+        return None;
+    }
+    let (id, label) = match rest[..end].split_once('|') {
+        Some((id, label)) => (id, Some(label).filter(|label| !label.is_empty())),
+        None => (&rest[..end], None),
+    };
+    let valid = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric());
+    valid.then_some((end + 3, id, label))
+}
+
 /// Length, target and label of a `<url>` or `<url|label>` link at the start
 /// of `text`. Mentions such as `<@U123>` have no scheme and stay literal.
 fn angle_link(text: &str) -> Option<(usize, &str, &str)> {
