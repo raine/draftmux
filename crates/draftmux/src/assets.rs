@@ -23,6 +23,8 @@ pub const SEND_ICON: &str = "icons/send.svg";
 pub const STOP_ICON: &str = "icons/stop.svg";
 pub const QUOTE_ICON: &str = "icons/quote.svg";
 pub const CLOSE_ICON: &str = "icons/close.svg";
+pub const TOAST_DONE_ICON: &str = "icons/toast-done.svg";
+pub const TOAST_ERROR_ICON: &str = "icons/toast-error.svg";
 pub const GEAR_ICON: &str = "icons/gear.svg";
 pub const SPARK_ICON: &str = "icons/spark.svg";
 pub const GLOBE_ICON: &str = "icons/globe.svg";
@@ -105,6 +107,14 @@ const ASSETS: &[(&str, &[u8])] = &[
     (STOP_ICON, include_bytes!("../assets/icons/stop.svg")),
     (QUOTE_ICON, include_bytes!("../assets/icons/quote.svg")),
     (CLOSE_ICON, include_bytes!("../assets/icons/close.svg")),
+    (
+        TOAST_DONE_ICON,
+        include_bytes!("../assets/icons/toast-done.svg"),
+    ),
+    (
+        TOAST_ERROR_ICON,
+        include_bytes!("../assets/icons/toast-error.svg"),
+    ),
     (GEAR_ICON, include_bytes!("../assets/icons/gear.svg")),
     (SPARK_ICON, include_bytes!("../assets/icons/spark.svg")),
     (GLOBE_ICON, include_bytes!("../assets/icons/globe.svg")),

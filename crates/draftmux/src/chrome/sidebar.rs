@@ -1,21 +1,28 @@
-//! The drafts list and the archive toast.
+//! The drafts list and the toast.
 
 use std::time::Duration;
 
 use chrono::Utc;
 use gpui::{
-    App, ClipboardItem, Context, FontWeight, KeyBinding, MouseButton, MouseDownEvent, Pixels,
-    Point, SharedString, Task, actions, anchored, deferred, div, prelude::*, px, svg,
+    Animation, AnimationExt, App, ClipboardItem, Context, FontWeight, KeyBinding, MouseButton,
+    MouseDownEvent, Pixels, Point, SharedString, Task, actions, anchored, deferred, div,
+    ease_out_quint, prelude::*, px, svg,
 };
 
 use super::{Chrome, shadow, sidebar_column};
-use crate::assets::ARCHIVE_ICON;
+use crate::assets::{ARCHIVE_ICON, TOAST_DONE_ICON, TOAST_ERROR_ICON};
 use crate::drafts::{relative_time, tilde};
 use crate::menu::{MenuItem, menu_panel};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme;
 
 const TOAST_DURATION: Duration = Duration::from_secs(4);
+/// Errors stay longer: they're longer and worth reading.
+const ERROR_TOAST_DURATION: Duration = Duration::from_secs(6);
+const TOAST_FADE_IN: Duration = Duration::from_millis(180);
+const TOAST_FADE_OUT: Duration = Duration::from_millis(150);
+/// How far a toast rises as it fades in.
+const TOAST_RISE: f32 = 6.;
 const KEY_CONTEXT: &str = "DraftSidebar";
 
 actions!(sidebar, [PreviousDraft, NextDraft, ArchiveDraft]);
@@ -46,12 +53,17 @@ fn adjacent_row(current: Option<usize>, len: usize, forward: bool) -> Option<usi
 }
 
 pub(super) struct Toast {
+    /// Distinguishes successive toasts, so each one animates in.
+    serial: usize,
+    error: bool,
     text: SharedString,
     /// Draft to unarchive when Undo is clicked.
     undo: Option<String>,
-    /// Hides the toast when it ends; `None` while the pointer is over the
-    /// toast, so it stays until the pointer leaves.
+    /// Fades the toast out and hides it when it ends; `None` while the
+    /// pointer is over the toast, so it stays until the pointer leaves.
     dismiss: Option<Task<()>>,
+    /// Whether the toast is fading out.
+    leaving: bool,
 }
 
 /// A right-clicked draft row's menu, at the click.
@@ -371,7 +383,7 @@ impl Chrome {
         match action {
             RowAction::CopyId => {
                 cx.write_to_clipboard(ClipboardItem::new_string(id.to_owned()));
-                self.show_toast("Draft ID copied".into(), None, cx);
+                self.show_toast("Draft ID copied", cx);
             }
             RowAction::Reveal => {
                 if let Some(row) = self.drafts.rows().iter().find(|row| row.draft.id == id) {
@@ -388,7 +400,7 @@ impl Chrome {
         let next = match self.drafts.archive(id) {
             Ok(next) => next,
             Err(err) => {
-                self.show_toast(format!("Couldn't archive the draft: {err:#}"), None, cx);
+                self.show_error(format!("Couldn't archive the draft: {err:#}"), cx);
                 return;
             }
         };
@@ -402,13 +414,13 @@ impl Chrome {
                 None => self.deselect(cx),
             }
         }
-        self.show_toast("Draft archived".into(), Some(id.to_owned()), cx);
+        self.present_toast("Draft archived".into(), false, Some(id.to_owned()), cx);
     }
 
     fn undo_archive(&mut self, id: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
         self.toast = None;
         if let Err(err) = self.drafts.unarchive(id) {
-            self.show_toast(format!("Couldn't restore the draft: {err:#}"), None, cx);
+            self.show_error(format!("Couldn't restore the draft: {err:#}"), cx);
             return;
         }
         if self.drafts.current().is_none() {
@@ -417,24 +429,55 @@ impl Chrome {
         cx.notify();
     }
 
-    /// Shows `text` for a few seconds, replacing any earlier toast.
-    pub(super) fn show_toast(
+    /// Confirms that something worked, replacing any earlier toast.
+    pub(super) fn show_toast(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.present_toast(text.into(), false, None, cx);
+    }
+
+    /// Reports a failure, replacing any earlier toast.
+    pub(super) fn show_error(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.present_toast(text.into(), true, None, cx);
+    }
+
+    fn present_toast(
         &mut self,
-        text: String,
+        text: SharedString,
+        error: bool,
         undo: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let serial = self.toast.as_ref().map_or(0, |toast| toast.serial + 1);
         self.toast = Some(Toast {
-            text: text.into(),
+            serial,
+            error,
+            text,
             undo,
-            dismiss: Some(Self::dismiss_toast_later(cx)),
+            dismiss: Some(Self::dismiss_toast_later(error, cx)),
+            leaving: false,
         });
         cx.notify();
     }
 
-    fn dismiss_toast_later(cx: &mut Context<Self>) -> Task<()> {
+    /// Fades the toast out after it has been shown for a while, then hides
+    /// it.
+    fn dismiss_toast_later(error: bool, cx: &mut Context<Self>) -> Task<()> {
+        let duration = if error {
+            ERROR_TOAST_DURATION
+        } else {
+            TOAST_DURATION
+        };
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(TOAST_DURATION).await;
+            cx.background_executor().timer(duration).await;
+            let faded = this.update(cx, |this, cx| {
+                if let Some(toast) = &mut this.toast {
+                    toast.leaving = true;
+                }
+                cx.notify();
+            });
+            if faded.is_err() {
+                return;
+            }
+            cx.background_executor().timer(TOAST_FADE_OUT).await;
             this.update(cx, |this, cx| {
                 this.toast = None;
                 cx.notify();
@@ -446,57 +489,107 @@ impl Chrome {
     /// Pauses the toast's countdown while the pointer is over it, so it
     /// doesn't vanish while the user reaches for Undo, and restarts it after.
     fn toast_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        if self.toast.is_none() {
+        let Some(error) = self.toast.as_ref().map(|toast| toast.error) else {
             return;
-        }
-        let dismiss = (!hovered).then(|| Self::dismiss_toast_later(cx));
+        };
+        let dismiss = (!hovered).then(|| Self::dismiss_toast_later(error, cx));
         if let Some(toast) = &mut self.toast {
             toast.dismiss = dismiss;
+            toast.leaving = false;
         }
+        cx.notify();
     }
 
+    /// The current toast, centred above the bottom of the window. It rises
+    /// slightly as it fades in, unless Reduce Motion is on.
     pub(super) fn toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let toast = self.toast.as_ref()?;
         let palette = *theme::palette(cx);
-        Some(
-            div()
-                .id("toast")
-                .occlude()
-                .on_hover(
-                    cx.listener(|this, hovered: &bool, _, cx| this.toast_hovered(*hovered, cx)),
+        let (icon, icon_color) = if toast.error {
+            (TOAST_ERROR_ICON, palette.danger)
+        } else {
+            (TOAST_DONE_ICON, palette.toast_done)
+        };
+        let card = div()
+            .id("toast")
+            .occlude()
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.toast_hovered(*hovered, cx)))
+            .max_w(px(440.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .py(px(8.))
+            .pl(px(11.))
+            .pr(px(if toast.undo.is_some() { 6. } else { 14. }))
+            .rounded(px(10.))
+            .bg(palette.toast)
+            .text_color(palette.text)
+            .text_size(px(13.))
+            .line_height(px(18.))
+            .shadow(vec![
+                shadow(palette.toast_ring, 0., 0., 0.5),
+                shadow(palette.toast_drop, 8., 24., 0.),
+            ])
+            .child(
+                svg()
+                    .flex_none()
+                    .size(px(16.))
+                    .path(icon)
+                    .text_color(icon_color),
+            )
+            .child(div().min_w_0().child(toast.text.clone()))
+            .children(toast.undo.clone().map(|id| {
+                div()
+                    .id("toast-undo")
+                    .flex_none()
+                    .ml(px(4.))
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded(px(6.))
+                    .text_color(palette.accent)
+                    .font_weight(FontWeight::MEDIUM)
+                    .hover(|style| style.bg(palette.hover))
+                    .active(|style| style.opacity(0.7))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.undo_archive(&id, window, cx)),
+                    )
+                    .child("Undo")
+            }));
+        let rise = if crate::platform::reduce_motion() {
+            0.
+        } else {
+            TOAST_RISE
+        };
+        let layer = div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(card);
+        const BOTTOM: f32 = 20.;
+        Some(if toast.leaving {
+            layer
+                .bottom(px(BOTTOM))
+                .with_animation(
+                    ("toast-out", toast.serial),
+                    Animation::new(TOAST_FADE_OUT),
+                    |layer, delta| layer.opacity(1. - delta),
                 )
-                .absolute()
-                .left(px(16.))
-                .bottom(px(16.))
-                .max_w(px(420.))
-                .flex()
-                .items_center()
-                .gap_3()
-                .py(px(8.))
-                .pl(px(12.))
-                .pr(px(if toast.undo.is_some() { 8. } else { 12. }))
-                .rounded(px(9.))
-                .bg(palette.toast)
-                .text_color(palette.toast_text)
-                .text_size(px(13.))
-                .shadow(vec![shadow(palette.toast_drop, 10., 30., 0.)])
-                .child(div().min_w_0().child(toast.text.clone()))
-                .children(toast.undo.clone().map(|id| {
-                    div()
-                        .id("toast-undo")
-                        .flex_none()
-                        .px(px(9.))
-                        .py(px(3.))
-                        .rounded(px(6.))
-                        .bg(palette.toast_button)
-                        .hover(|style| style.bg(palette.toast_button_hover))
-                        .active(|style| style.opacity(0.8))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.undo_archive(&id, window, cx)
-                        }))
-                        .child("Undo")
-                })),
-        )
+                .into_any_element()
+        } else {
+            layer
+                .with_animation(
+                    ("toast-in", toast.serial),
+                    Animation::new(TOAST_FADE_IN).with_easing(ease_out_quint()),
+                    move |layer, delta| {
+                        layer
+                            .bottom(px(BOTTOM - rise * (1. - delta)))
+                            .opacity(delta)
+                    },
+                )
+                .into_any_element()
+        })
     }
 }
 

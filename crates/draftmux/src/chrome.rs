@@ -324,11 +324,7 @@ impl Chrome {
             Ok(id) => {
                 self.select(&id, window, cx).ok();
             }
-            Err(err) => self.show_toast(
-                format!("Couldn't create the sample draft: {err:#}"),
-                None,
-                cx,
-            ),
+            Err(err) => self.show_error(format!("Couldn't create the sample draft: {err:#}"), cx),
         }
     }
 
@@ -394,7 +390,7 @@ impl Chrome {
         let text = match self.drafts.select(id) {
             Ok(text) => text,
             Err(err) => {
-                self.show_toast(format!("Couldn't open the draft: {err:#}"), None, cx);
+                self.show_error(format!("Couldn't open the draft: {err:#}"), cx);
                 return Err(err);
             }
         };
@@ -629,7 +625,7 @@ impl Chrome {
 
     fn set_target(&mut self, target: Target, cx: &mut Context<Self>) {
         if let Err(err) = self.drafts.set_target(target) {
-            self.show_toast(format!("Couldn't change the target: {err:#}"), None, cx);
+            self.show_error(format!("Couldn't change the target: {err:#}"), cx);
             return;
         }
         self.set_plain_text(target, cx);
@@ -654,7 +650,7 @@ impl Chrome {
         };
         let text = self.editor.read(cx).text().to_owned();
         let confirmation = copy::copy(target, &text, cx);
-        self.show_toast(confirmation.to_owned(), None, cx);
+        self.show_toast(confirmation, cx);
     }
 
     fn preview_body(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
