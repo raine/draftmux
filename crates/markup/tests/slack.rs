@@ -56,6 +56,16 @@ fn bare_urls() {
 }
 
 #[test]
+fn markdown_links() {
+    insta::assert_snapshot!(snapshot(
+        "Adds [Aven](https://github.com/raine/aven) to it, ([wiki](https://en.wikipedia.org/wiki/Foo_(bar))), \
+         *[bold](https://a.b/x_y)* _see [docs](https://a.b/c_d)_ [mail](mailto:a@b.co). \
+         `[code](https://a.b)` [no scheme](example.com) [](https://a.b) [two\nlines](https://a.b) \
+         [spaced](https://a.b c) [unclosed](https://a.b [a [b](https://a.b)\n"
+    ));
+}
+
+#[test]
 fn entities() {
     insta::assert_snapshot!(snapshot(
         "a &amp; b &lt;tag&gt; &amp;lt; `&lt;code&gt;` &gt; not a quote\n"

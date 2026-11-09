@@ -1,7 +1,8 @@
 //! Slack mrkdwn parser.
 //!
 //! Inline syntax follows Slack's mrkdwn: `*bold*`, `_italic_`, `~strike~`,
-//! `` `code` ``, `<url|label>` and bare web URLs, with `&amp;`, `&lt;` and
+//! `` `code` ``, `<url|label>`, Markdown `[label](url)` links, which Slack's
+//! composer turns into links, and bare web URLs, with `&amp;`, `&lt;` and
 //! `&gt;` decoded. `:shortcode:`s Slack knows, outside code and link labels,
 //! become the Unicode emoji Slack shows. Delimiters only apply at word
 //! boundaries and never span a line, so `snake_case` and `2*3*4` stay
@@ -568,6 +569,11 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
                 push_span(out, &decode(label), style, Some(&decode(url)));
                 len
             }),
+            '[' => markdown_link(rest).map(|(len, url, label)| {
+                flush(out);
+                push_span(out, &decode(label), style, Some(&decode(url)));
+                len
+            }),
             'h' if !preceded_by_alnum(text, ix) => bare_url(rest).map(|url| {
                 flush(out);
                 push_span(out, url, style, Some(url));
@@ -654,14 +660,49 @@ fn angle_link(text: &str) -> Option<(usize, &str, &str)> {
     }
     let inner = &rest[..end];
     let (url, label) = inner.split_once('|').unwrap_or((inner, inner));
-    let scheme = url.split_once(':')?.0;
-    let valid = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+    let label = if label.is_empty() { url } else { label };
+    link_target(url).then_some((end + 2, url, label))
+}
+
+/// Length, target and label of a Markdown `[label](url)` link at the start
+/// of `text`. The label is one line without brackets, and the URL may hold
+/// balanced parentheses, as in `[Foo](https://en.wikipedia.org/wiki/Foo_(bar))`.
+fn markdown_link(text: &str) -> Option<(usize, &str, &str)> {
+    let rest = text.strip_prefix('[')?;
+    let label_end = rest.find([']', '[', '\n'])?;
+    let label = &rest[..label_end];
+    let after = rest[label_end..].strip_prefix("](")?;
+    if label.trim().is_empty() {
+        return None;
+    }
+    let mut depth = 0;
+    let url_end = after.char_indices().find_map(|(ix, c)| match c {
+        '(' => {
+            depth += 1;
+            None
+        }
+        ')' if depth == 0 => Some(Some(ix)),
+        ')' => {
+            depth -= 1;
+            None
+        }
+        _ if c.is_whitespace() || c == '<' || c == '>' => Some(None),
+        _ => None,
+    })??;
+    let url = &after[..url_end];
+    link_target(url).then_some((label_end + url_end + 4, url, label))
+}
+
+/// Whether `url` has a scheme and no whitespace, so Slack links it.
+fn link_target(url: &str) -> bool {
+    let Some((scheme, _)) = url.split_once(':') else {
+        return false;
+    };
+    scheme.starts_with(|c: char| c.is_ascii_alphabetic())
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
-        && !url.contains(char::is_whitespace);
-    let label = if label.is_empty() { url } else { label };
-    valid.then_some((end + 2, url, label))
+        && !url.contains(char::is_whitespace)
 }
 
 /// A bare `http://` or `https://` URL at the start of `text`, without
@@ -715,6 +756,12 @@ fn emphasis(text: &str, ix: usize, delim: char) -> Option<usize> {
             }
             '<' => {
                 if let Some((len, ..)) = angle_link(rest) {
+                    jx += len;
+                    continue;
+                }
+            }
+            '[' => {
+                if let Some((len, ..)) = markdown_link(rest) {
                     jx += len;
                     continue;
                 }

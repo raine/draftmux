@@ -26,6 +26,8 @@ paragraph
   "DRAFTMUX_CAPTURE_DIR=/tmp/a-rather-long-directory-name/that-keeps-going" code
   " when capturing.\nLinks: "
   "PR #42" -> https://github.com/raine/draftmux/pull/42
+  ", "
+  "the docs" -> https://example.com/docs
   ", a bare one "
   "https://example.com/docs/setup?ref=slack" -> https://example.com/docs/setup?ref=slack
   " and "
@@ -36,7 +38,7 @@ paragraph
 <meta charset="utf-8"><p>Quick update on the <b>release branch</b>: the <i>flaky</i> upload test is fixed and <s>the retry hack</s> is gone.</p>
 <p>Combined: <b>bold with </b><b><i>italic</i></b><b> inside</b>, <b><s>struck bold</s></b> and <b>bold </b><b><code>code</code></b><b> inside</b>.</p>
 <p>Run <code>cargo test -p markup</code> before pushing, and set <code>DRAFTMUX_CAPTURE_DIR=/tmp/a-rather-long-directory-name/that-keeps-going</code> when capturing.</p>
-<p>Links: <a href="https://github.com/raine/draftmux/pull/42">PR #42</a>, a bare one <a href="https://example.com/docs/setup?ref=slack">https://example.com/docs/setup?ref=slack</a> and <a href="https://example.com">https://example.com</a>.</p>
+<p>Links: <a href="https://github.com/raine/draftmux/pull/42">PR #42</a>, <a href="https://example.com/docs">the docs</a>, a bare one <a href="https://example.com/docs/setup?ref=slack">https://example.com/docs/setup?ref=slack</a> and <a href="https://example.com">https://example.com</a>.</p>
 <p>Emoji: 🎉 ✅ 🤔 and a literal 🚀. Thanks @raine!</p>
 
 
@@ -44,5 +46,5 @@ paragraph
 Quick update on the release branch: the flaky upload test is fixed and the retry hack is gone.
 Combined: bold with italic inside, struck bold and bold code inside.
 Run cargo test -p markup before pushing, and set DRAFTMUX_␣CAPTURE_␣DIR=/tmp/a-rather-long-directory-name/that-keeps-going when capturing.
-Links: PR #42, a bare one https://example.com/docs/setup?ref=slack and https://example.com.
+Links: PR #42, the docs, a bare one https://example.com/docs/setup?ref=slack and https://example.com.
 Emoji: 🎉 ✅ 🤔 and a literal 🚀. Thanks @raine!

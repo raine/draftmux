@@ -1,0 +1,28 @@
+---
+source: crates/markup/tests/slack.rs
+expression: "snapshot(\"Adds [Aven](https://github.com/raine/aven) to it, ([wiki](https://en.wikipedia.org/wiki/Foo_(bar))), \\\n         *[bold](https://a.b/x_y)* _see [docs](https://a.b/c_d)_ [mail](mailto:a@b.co). \\\n         `[code](https://a.b)` [no scheme](example.com) [](https://a.b) [two\\nlines](https://a.b) \\\n         [spaced](https://a.b c) [unclosed](https://a.b [a [b](https://a.b)\\n\")"
+---
+paragraph
+  "Adds "
+  "Aven" -> https://github.com/raine/aven
+  " to it, ("
+  "wiki" -> https://en.wikipedia.org/wiki/Foo_(bar)
+  "), "
+  "bold" strong -> https://a.b/x_y
+  " "
+  "see " emph
+  "docs" emph -> https://a.b/c_d
+  " "
+  "mail" -> mailto:a@b.co
+  ". "
+  "[code](https://a.b)" code
+  " [no scheme](example.com) []("
+  "https://a.b" -> https://a.b
+  ") [two\nlines]("
+  "https://a.b" -> https://a.b
+  ") [spaced]("
+  "https://a.b" -> https://a.b
+  " c) [unclosed]("
+  "https://a.b" -> https://a.b
+  " [a "
+  "b" -> https://a.b
