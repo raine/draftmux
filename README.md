@@ -66,6 +66,9 @@ fonts-dejavu-core fonts-liberation`, plus graphics drivers (Mesa:
 session with a session D-Bus bus. pi and oxfmt are optional external tools,
 just as on macOS.
 
+Toggle the drafts sidebar with the toolbar’s sidebar button or `Cmd+\`
+(`Ctrl+\` on Linux). Draftmux remembers its visibility across restarts.
+
 Linux shortcuts use Ctrl instead of Cmd: Ctrl+Q quits, Ctrl+, opens Settings,
 Ctrl+Shift+C copies for the target, and Ctrl+Shift+F formats. Settings is also
 available in the main toolbar. The editor uses Ctrl+Left/Right for words,

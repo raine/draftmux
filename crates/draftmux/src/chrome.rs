@@ -35,7 +35,7 @@ use crate::selection_popover::SelectionPopover;
 use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
 
-actions!(chrome, [ToggleEditor, TogglePreview]);
+actions!(chrome, [ToggleEditor, TogglePreview, ToggleSidebar]);
 
 const TOOLBAR_HEIGHT: Pixels = px(52.);
 const SIDEBAR_WIDTH: Pixels = px(228.);
@@ -53,6 +53,7 @@ const CLOCK_TICK: Duration = Duration::from_secs(30);
 pub fn init(cx: &mut App) {
     sidebar::init(cx);
     cx.bind_keys([
+        KeyBinding::new(editor::secondary!("\\"), ToggleSidebar, None),
         KeyBinding::new(editor::secondary!("alt-e"), ToggleEditor, None),
         KeyBinding::new(editor::secondary!("alt-p"), TogglePreview, None),
     ]);
@@ -94,6 +95,8 @@ pub struct Chrome {
     row_menu: Option<sidebar::RowMenu>,
     sidebar_scroll: ScrollHandle,
     sidebar_focus: FocusHandle,
+    content_focus: FocusHandle,
+    show_sidebar: bool,
     preview_scroll: ScrollHandle,
     scrollbars: [ScrollbarState; 3],
     /// Wakes up when the pending edit is due to be saved.
@@ -154,6 +157,10 @@ impl Render for Chrome {
             .flex()
             .flex_col()
             .text_color(palette.text)
+            .track_focus(&self.content_focus)
+            .on_action(
+                cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &ToggleEditor, window, cx| this.toggle_editor(window, cx)),
             )
@@ -175,7 +182,10 @@ impl Render for Chrome {
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<ChatResize>, window, cx| {
                     let width = window.viewport_size().width - event.event.position.x;
-                    this.resize_chat(clamp_chat_width(width, window), cx);
+                    this.resize_chat(
+                        clamp_chat_width(width, window.viewport_size().width, this.show_sidebar),
+                        cx,
+                    );
                 }),
             )
             .child(self.toolbar(cx))
@@ -184,11 +194,17 @@ impl Render for Chrome {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(self.sidebar(sidebar_bar, cx))
+                    .when(self.show_sidebar, |row| {
+                        row.child(self.sidebar(sidebar_bar, cx))
+                    })
                     .child(content)
                     .child(
                         pane(palette.chat, &palette)
-                            .w(clamp_chat_width(self.chat_width, window))
+                            .w(clamp_chat_width(
+                                self.chat_width,
+                                window.viewport_size().width,
+                                self.show_sidebar,
+                            ))
                             .flex_none()
                             .relative()
                             .border_l_1()
@@ -275,6 +291,7 @@ impl Chrome {
         });
 
         let chat_width = store.chat_width().map_or(CHAT_WIDTH, px);
+        let show_sidebar = !store.sidebar_hidden();
         let mut chrome = Self {
             should_move: false,
             drafts: Drafts::new(store.clone()),
@@ -296,6 +313,8 @@ impl Chrome {
             row_menu: None,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_focus: cx.focus_handle(),
+            content_focus: cx.focus_handle(),
+            show_sidebar,
             preview_scroll,
             scrollbars: Default::default(),
             autosave: Task::ready(()),
@@ -308,6 +327,7 @@ impl Chrome {
                 eprintln!("draftmux: creating the sample draft: {err:#}");
             }
         }
+        window.focus(&chrome.content_focus, cx);
         if let Some(id) = chrome.drafts.rows().first().map(|row| row.draft.id.clone()) {
             chrome.select(&id, window, cx).ok();
         }
@@ -438,6 +458,22 @@ impl Chrome {
                 eprintln!("draftmux: saving the chat width: {err:#}");
             }
         });
+        cx.notify();
+    }
+
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_sidebar = !self.show_sidebar;
+        self.row_menu = None;
+        if !self.show_sidebar && self.sidebar_focus.contains_focused(window, cx) {
+            if self.show_editor && self.drafts.current().is_some() {
+                window.focus(&self.editor.focus_handle(cx), cx);
+            } else {
+                window.focus(&self.content_focus, cx);
+            }
+        }
+        if let Err(err) = self.store.set_sidebar_hidden(!self.show_sidebar) {
+            eprintln!("draftmux: saving sidebar visibility: {err:#}");
+        }
         cx.notify();
     }
 
@@ -750,7 +786,13 @@ impl Chrome {
                 }
             })
             // macOS traffic lights sit over this segment.
-            .child(sidebar_column(&palette).children(crate::platform::toolbar_items(&palette)))
+            .child(
+                sidebar_column(&palette)
+                    .when(!self.show_sidebar, |bar| {
+                        bar.w(px(100.)).bg(palette.toolbar).border_r_0()
+                    })
+                    .children(crate::platform::toolbar_items(&palette)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -763,6 +805,34 @@ impl Chrome {
                     .bg(palette.toolbar)
                     .border_b_1()
                     .border_color(palette.hairline)
+                    .child(
+                        div()
+                            .id("toggle-sidebar")
+                            .h(px(24.))
+                            .px(px(6.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .rounded(px(6.))
+                            .hover(|style| style.bg(palette.hover))
+                            .active(|style| style.opacity(0.8))
+                            .tooltip(crate::tooltip::text(if self.show_sidebar {
+                                editor::by_platform!("Hide Sidebar (⌘\\)", "Hide Sidebar (Ctrl+\\)")
+                            } else {
+                                editor::by_platform!("Show Sidebar (⌘\\)", "Show Sidebar (Ctrl+\\)")
+                            }))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.toggle_sidebar(window, cx);
+                            }))
+                            .child(
+                                svg()
+                                    .path(crate::assets::SIDEBAR_ICON)
+                                    .size(px(16.))
+                                    .text_color(palette.muted),
+                            ),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -933,9 +1003,28 @@ fn sidebar_column(palette: &Palette) -> gpui::Div {
 
 /// `width` kept within the chat's minimum and the room the window leaves it
 /// beside the sidebar and the content.
-fn clamp_chat_width(width: Pixels, window: &Window) -> Pixels {
-    let max = window.viewport_size().width - SIDEBAR_WIDTH - CONTENT_MIN_WIDTH;
+fn clamp_chat_width(width: Pixels, viewport_width: Pixels, show_sidebar: bool) -> Pixels {
+    let sidebar_width = if show_sidebar { SIDEBAR_WIDTH } else { px(0.) };
+    let max = viewport_width - sidebar_width - CONTENT_MIN_WIDTH;
     width.min(max).max(CHAT_MIN_WIDTH)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_width_reserves_space_only_for_a_visible_sidebar() {
+        assert_eq!(clamp_chat_width(px(900.), px(1000.), true), px(452.));
+        assert_eq!(clamp_chat_width(px(900.), px(1000.), false), px(680.));
+        for visible in [true, false] {
+            assert_eq!(clamp_chat_width(CHAT_WIDTH, px(1200.), visible), CHAT_WIDTH);
+            assert_eq!(
+                clamp_chat_width(px(100.), px(1000.), visible),
+                CHAT_MIN_WIDTH
+            );
+        }
+    }
 }
 
 /// A strip over the chat's left edge that drags to resize it; a double click
@@ -953,7 +1042,10 @@ fn chat_resize_handle(cx: &mut Context<Chrome>) -> impl IntoElement {
         .on_drag(ChatResize, |_, _, _, cx| cx.new(|_| Empty))
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
             if event.click_count() == 2 {
-                this.resize_chat(clamp_chat_width(CHAT_WIDTH, window), cx);
+                this.resize_chat(
+                    clamp_chat_width(CHAT_WIDTH, window.viewport_size().width, this.show_sidebar),
+                    cx,
+                );
             }
         }))
 }

@@ -14,6 +14,7 @@ const SESSION_DIR: &str = "session";
 /// [`Store::scan`] never takes it for a draft.
 const SAMPLE_MARKER: &str = ".sample-created";
 const CHAT_WIDTH: &str = ".chat-width";
+const SIDEBAR_HIDDEN: &str = ".sidebar-hidden";
 
 /// The drafts directory. Stateless: every call reads or writes the files
 /// directly, so the app and the CLI can share it.
@@ -257,6 +258,21 @@ impl Store {
         atomic::write(&self.root.join(CHAT_WIDTH), width.to_string().as_bytes())
     }
 
+    /// Missing or invalid preferences keep the sidebar visible.
+    pub fn sidebar_hidden(&self) -> bool {
+        std::fs::read_to_string(self.root.join(SIDEBAR_HIDDEN))
+            .is_ok_and(|text| text.trim() == "true")
+    }
+
+    pub fn set_sidebar_hidden(&self, hidden: bool) -> Result<()> {
+        std::fs::create_dir_all(&self.root)
+            .with_context(|| format!("creating {}", self.root.display()))?;
+        atomic::write(
+            &self.root.join(SIDEBAR_HIDDEN),
+            hidden.to_string().as_bytes(),
+        )
+    }
+
     fn draft_dir(&self, id: &str) -> Result<PathBuf> {
         validate_id(id)?;
         Ok(self.root.join(id))
@@ -477,6 +493,22 @@ mod tests {
         assert_eq!(ids(scan.drafts.iter()), [&good]);
         assert_eq!(scan.errors.len(), 1);
         assert_eq!(scan.errors[0].0, bad.dir);
+    }
+
+    #[test]
+    fn sidebar_visibility_persists_and_is_not_a_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("drafts");
+        let store = Store::new(&path);
+        assert!(!store.sidebar_hidden());
+        store.set_sidebar_hidden(true).unwrap();
+        assert!(Store::new(&path).sidebar_hidden());
+        store.set_sidebar_hidden(false).unwrap();
+        assert!(!Store::new(&path).sidebar_hidden());
+        std::fs::write(path.join(SIDEBAR_HIDDEN), "invalid").unwrap();
+        assert!(!store.sidebar_hidden());
+        let scan = store.scan().unwrap();
+        assert!(scan.drafts.is_empty() && scan.errors.is_empty());
     }
 
     #[test]
