@@ -59,6 +59,10 @@ pub enum ChatEvent {
     DraftWritten(String),
     /// The selected draft's agent started or finished a run.
     Running(bool),
+    /// The selected draft was handed off and its agent is ready: record
+    /// that the first draft was requested, then send `text` like
+    /// [`ChatEvent::Send`] unless the draft already has text.
+    FirstDraft(String),
 }
 
 impl EventEmitter<ChatEvent> for Chat {}
@@ -265,6 +269,25 @@ impl Chat {
             .detach();
         }
         self.schedule_idle(cx);
+        self.request_first_draft(id, cx);
+    }
+
+    /// Asks the owner to send the first-draft request for a handed-off
+    /// draft whose agent is ready.
+    fn request_first_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.current.as_deref() != Some(id) {
+            return;
+        }
+        let Some(session) = self.sessions.get_mut(id) else {
+            return;
+        };
+        if !session.draft.meta.first_draft_pending || session.transcript.busy {
+            return;
+        }
+        session.draft.meta.first_draft_pending = false;
+        cx.emit(ChatEvent::FirstDraft(first_draft_prompt(
+            session.draft.meta.note.as_deref(),
+        )));
     }
 
     fn history_loaded(
@@ -1009,4 +1032,14 @@ fn tool_body(tool: &Tool, index: usize, palette: &Palette) -> impl IntoElement {
 /// Empty lines would collapse to no height.
 fn blank_as_space(text: String) -> String {
     if text.is_empty() { " ".into() } else { text }
+}
+/// The request that starts a handed-off draft, with the note the handing-off
+/// agent left about what to write.
+fn first_draft_prompt(note: Option<&str>) -> String {
+    let mut text = "Write the first draft of the message from our conversation.".to_owned();
+    if let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) {
+        text.push_str("\n\nWhat to write: ");
+        text.push_str(note);
+    }
+    text
 }

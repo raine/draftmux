@@ -160,6 +160,14 @@ impl Drafts {
         Ok(())
     }
 
+    /// Records that the first draft of `id` was requested.
+    pub fn first_draft_requested(&mut self, id: &str) -> Result<()> {
+        self.store
+            .update_meta(id, |meta| meta.first_draft_pending = false)?;
+        self.refresh();
+        Ok(())
+    }
+
     /// Archives `id`. When it is the selected draft, saves it first, clears
     /// the selection and returns the draft to select next: the row below,
     /// else the row above.

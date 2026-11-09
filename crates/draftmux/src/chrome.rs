@@ -375,6 +375,24 @@ impl Chrome {
                 self.chat
                     .update(cx, |chat, cx| chat.prompt(text, saved, cx));
             }
+            ChatEvent::FirstDraft(text) => {
+                let Some(id) = self.drafts.current_id().map(str::to_owned) else {
+                    return;
+                };
+                if let Err(err) = self.drafts.first_draft_requested(&id) {
+                    eprintln!("draftmux: recording the first-draft request: {err:#}");
+                }
+                // Text the user typed while pi was starting is kept.
+                if self.editor.read(cx).text().trim().is_empty() {
+                    let saved = self
+                        .flush()
+                        .map(|()| self.editor.read(cx).text().to_owned())
+                        .map_err(|err| format!("{err:#}"));
+                    let text = text.clone();
+                    self.chat
+                        .update(cx, |chat, cx| chat.prompt(text, saved, cx));
+                }
+            }
             ChatEvent::DraftWritten(text) => {
                 self.editor
                     .update(cx, |editor, cx| editor.replace_all(text, cx));

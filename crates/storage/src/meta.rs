@@ -25,6 +25,11 @@ pub struct Meta {
     /// (`draftmux open --note`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Whether the app still has to ask pi for the first draft. Set for a
+    /// handed-off draft and cleared once the app sends that request, so it
+    /// is sent once even if the app is restarted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_draft_pending: bool,
     /// Settings resolved for the draft's directory when it was created.
     /// Later settings changes leave them alone.
     #[serde(default)]
@@ -176,6 +181,7 @@ mod tests {
         assert_eq!(meta.title, "");
         assert_eq!(meta.pi_session_file, None);
         assert_eq!(meta.note, None);
+        assert!(!meta.first_draft_pending);
         assert_eq!(meta.settings, DraftSettings::default());
         assert!(meta.settings.context_files);
     }

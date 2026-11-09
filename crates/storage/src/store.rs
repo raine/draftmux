@@ -107,6 +107,7 @@ impl Store {
         std::fs::create_dir_all(&session_dir)
             .with_context(|| format!("creating {}", session_dir.display()))?;
         let now = Utc::now();
+        let handed_off = new.source.is_some();
         let mut draft = Draft {
             id,
             dir,
@@ -119,6 +120,7 @@ impl Store {
                 pi_session_file: None,
                 pi_agent_dir: new.pi_agent_dir,
                 note: new.note,
+                first_draft_pending: handed_off,
                 settings: new.settings,
                 created_at: now,
                 updated_at: now,
@@ -349,6 +351,28 @@ mod tests {
         let loaded = store.load(&draft.id).unwrap();
         assert_eq!(loaded.meta, draft.meta);
         assert_eq!(loaded.dir, draft.dir);
+    }
+
+    #[test]
+    fn handed_off_drafts_start_with_the_first_draft_pending() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let handed_off = store.create(new_draft("a")).unwrap();
+        assert!(handed_off.meta.source.is_some());
+        assert!(handed_off.meta.first_draft_pending);
+
+        let sample = store
+            .create(NewDraft {
+                source: None,
+                ..new_draft("b")
+            })
+            .unwrap();
+        assert!(!sample.meta.first_draft_pending);
+
+        let cleared = store
+            .update_meta(&handed_off.id, |meta| meta.first_draft_pending = false)
+            .unwrap();
+        assert_eq!(store.load(&handed_off.id).unwrap().meta, cleared);
     }
 
     #[test]

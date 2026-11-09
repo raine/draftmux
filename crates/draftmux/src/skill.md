@@ -54,11 +54,13 @@ draftmux open "$@" --target github --note 'PR description for the retry change'
   `rich` for emails and documents with formatting such as bold and lists,
   `plain` for plain text. Leave it out when the user hasn't said where the
   message goes; Draftmux then uses its default for the directory.
-- `--note`: optional. One line saying what message to write, if the
-  conversation doesn't make it obvious. Single-quote it; write `'` as `'\''`.
+- `--note`: one line saying what message to write, such as who it's for and
+  what it should cover. Draftmux's agent writes the first draft from this
+  conversation and the note, so include anything the conversation leaves
+  open. Single-quote it; write `'` as `'\''`.
 
-It prints the draft ID. Tell the user the ID and that the draft is open in
-Draftmux, then stop and wait. Don't write the message yourself.
+It prints the draft ID. Tell the user the ID and that Draftmux is writing the
+first draft, then stop and wait. Don't write the message yourself.
 
 If `open` exits 1 after printing an ID, the draft exists but the app couldn't
 focus it: report the error and the ID, and don't run `open` again (that
