@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Compares Rich text preview captures with their Apple Mail references.
+
+Usage: tools/mail-compare DIR
+
+For each `<name>-<mode>-draftmux.png` from `draftmux capture --target rich`
+with a `<name>-<mode>-mail.png` from `tools/mail-reference` beside it, finds
+the bands of rows with ink (each line of text, rule and border), pairs the
+bands of the two images in order and prints how far each pair's top, height
+and left edge are apart, in points. It writes `<name>-<mode>-overlay.png`,
+the preview in red over the reference in cyan, where matching ink is gray.
+
+Pixel differences are not scored: gpui and WebKit rasterize text
+differently, so no two captures match pixel for pixel, while layout
+(where lines start and how tall they are) can match exactly.
+
+Needs Pillow.
+"""
+
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageChops, ImageOps
+
+SCALE = 2  # Captures are 2x.
+INK = 48  # Summed channel difference from the background that counts as ink.
+
+
+def bands(image):
+    """(top, height, left) of each run of rows with ink, in pixels."""
+    rgb = image.convert("RGB")
+    background = rgb.getpixel((0, 0))
+    diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, background))
+    ink = diff.convert("L").point(lambda v: 255 if v * 3 > INK else 0)
+    out = []
+    top = None
+    for y in range(ink.height + 1):
+        row = ink.crop((0, y, ink.width, y + 1)).getbbox() if y < ink.height else None
+        if row and top is None:
+            top, left = y, row[0]
+        elif row:
+            left = min(left, row[0])
+        elif top is not None:
+            out.append((top, y - top, left))
+            top = None
+    return out
+
+
+def align(a, b):
+    """Pairs bands in order, skipping unmatched ones (edit-distance DP).
+    Pairs are chosen by shape, height and left edge, not position, since one
+    wrong gap shifts every band below it."""
+    gap = 24 * SCALE
+    cost = lambda x, y: abs(x[1] - y[1]) + abs(x[2] - y[2])
+    n, m = len(a), len(b)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        dp[i][0] = i * gap
+    for j in range(1, m + 1):
+        dp[0][j] = j * gap
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            dp[i][j] = min(
+                dp[i - 1][j - 1] + cost(a[i - 1], b[j - 1]),
+                dp[i - 1][j] + gap,
+                dp[i][j - 1] + gap,
+            )
+    pairs, i, j = [], n, m
+    while i or j:
+        if i and j and dp[i][j] == dp[i - 1][j - 1] + cost(a[i - 1], b[j - 1]):
+            pairs.append((a[i - 1], b[j - 1]))
+            i, j = i - 1, j - 1
+        elif i and dp[i][j] == dp[i - 1][j] + gap:
+            pairs.append((a[i - 1], None))
+            i -= 1
+        else:
+            pairs.append((None, b[j - 1]))
+            j -= 1
+    return pairs[::-1]
+
+
+def overlay(ours, reference):
+    """Ours in red, the reference in cyan; where both have ink it is dark."""
+    width = max(ours.width, reference.width)
+    height = max(ours.height, reference.height)
+
+    def gray(image):
+        canvas = Image.new("L", (width, height), 255)
+        opaque = Image.new("RGBA", image.size, "white")
+        opaque.alpha_composite(image.convert("RGBA"))
+        luma = ImageOps.grayscale(opaque)
+        if luma.getpixel((0, 0)) < 128:
+            luma = ImageOps.invert(luma)
+        canvas.paste(luma, (0, 0))
+        return canvas
+
+    a, b = gray(ours), gray(reference)
+    return Image.merge("RGB", (b, a, a))
+
+
+def pt(px):
+    return f"{px / SCALE:+.1f}"
+
+
+def compare(ours_path, reference_path, out_path):
+    ours, reference = Image.open(ours_path), Image.open(reference_path)
+    a, b = bands(ours), bands(reference)
+    pairs = align(a, b)
+    print(f"{ours_path.name.removesuffix('-draftmux.png')}: "
+          f"{len(a)} bands, reference {len(b)}")
+    print("   ours top/h/left     mail top/h/left     Δtop   Δh  Δleft")
+    worst = 0
+    for x, y in pairs:
+        show = lambda band: (f"{band[0] / SCALE:6.1f} {band[1] / SCALE:5.1f} {band[2] / SCALE:5.1f}"
+                             if band else " " * 18)
+        if x and y:
+            dt = x[0] - y[0]
+            worst = max(worst, abs(dt))
+            delta = f"{pt(dt):>6} {pt(x[1] - y[1]):>5} {pt(x[2] - y[2]):>5}"
+        else:
+            delta = "  unmatched"
+        print(f"  {show(x)}  {show(y)}  {delta}")
+    height = (a[-1][0] + a[-1][1]) - (b[-1][0] + b[-1][1]) if a and b else 0
+    matched = sum(1 for x, y in pairs if x and y)
+    print(f"  matched {matched}/{max(len(a), len(b))}, worst Δtop {worst / SCALE:.1f}pt, "
+          f"total height {pt(height)}pt\n")
+    overlay(ours, reference).save(out_path)
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit("usage: mail-compare DIR")
+    found = False
+    for ours in sorted(Path(sys.argv[1]).glob("*-draftmux.png")):
+        stem = ours.name.removesuffix("-draftmux.png")
+        reference = ours.with_name(f"{stem}-mail.png")
+        if reference.exists():
+            found = True
+            compare(ours, reference, ours.with_name(f"{stem}-overlay.png"))
+    if not found:
+        sys.exit("mail-compare: no capture with a reference beside it")
+
+
+main()

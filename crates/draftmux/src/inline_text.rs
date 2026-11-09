@@ -17,8 +17,8 @@ use gpui::{
     App, AvailableSpace, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase, Edges, Element,
     ElementId, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseUpEvent, Pixels, ShapedLine,
-    SharedString, Size, StrikethroughStyle, TextAlign, TextRun, TransformationMatrix, Window,
-    point, px, quad, size,
+    SharedString, Size, StrikethroughStyle, TextAlign, TextRun, TransformationMatrix,
+    UnderlineStyle, Window, point, px, quad, size,
 };
 
 /// Inline text laid out like a browser paragraph, in the surrounding text
@@ -41,6 +41,7 @@ pub struct Segment {
     pub scale: Option<f32>,
     pub color: Option<Hsla>,
     pub strike: bool,
+    pub underline: bool,
     pub chip: Option<Chip>,
     /// Opened on click.
     pub link: Option<SharedString>,
@@ -412,7 +413,11 @@ fn shape(
                 font: font.clone(),
                 color: segment.color.unwrap_or(style.color),
                 background_color: None,
-                underline: None,
+                underline: segment.underline.then_some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: None,
+                    wavy: false,
+                }),
                 strikethrough: segment.strike.then_some(StrikethroughStyle {
                     thickness: px(1.),
                     color: None,

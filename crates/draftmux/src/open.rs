@@ -45,7 +45,9 @@ pub struct Args {
 enum TargetArg {
     Github,
     Slack,
-    Email,
+    Rich,
+    #[value(alias = "email")]
+    Plain,
 }
 
 /// Runs the command and returns the process exit code.
@@ -104,7 +106,8 @@ fn create(
     let target = match args.target {
         Some(TargetArg::Github) => Target::Github,
         Some(TargetArg::Slack) => Target::Slack,
-        Some(TargetArg::Email) => Target::Email,
+        Some(TargetArg::Rich) => Target::Rich,
+        Some(TargetArg::Plain) => Target::Plain,
         None => resolved.target.value,
     };
     let model = resolved.model_override();

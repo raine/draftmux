@@ -38,6 +38,13 @@ pub struct MarkupStyle {
     pub heading_scale: [f32; 6],
     /// Levels up to this one get a rule underneath.
     pub heading_rule_max_level: u8,
+    pub heading_weight: FontWeight,
+    /// Relative to the heading's size.
+    pub heading_line_height: f32,
+    /// Level 6 headings take `muted_color`.
+    pub muted_h6: bool,
+    /// Spaces blocks with collapsing margins instead of the gaps below.
+    pub margins: Option<Margins>,
     pub block_gap: Pixels,
     pub heading_gap: Pixels,
     pub strong_weight: FontWeight,
@@ -54,6 +61,7 @@ pub struct MarkupStyle {
     pub text_color: Hsla,
     pub muted_color: Hsla,
     pub link_color: Hsla,
+    pub link_underline: bool,
     pub border_color: Hsla,
     pub heading_rule_color: Hsla,
     pub inline_code: InlineBox,
@@ -89,6 +97,12 @@ pub struct MarkupStyle {
     /// repeating deeper down.
     pub numbering: [Numbering; 3],
     pub table_stripe: Hsla,
+    /// Horizontal and vertical padding of a table cell.
+    pub table_cell_padding: (Pixels, Pixels),
+    /// Space above and below a thematic break.
+    pub rule_padding: Pixels,
+    pub rule_height: Pixels,
+    pub rule_color: Hsla,
     pub checkbox_checked: Hsla,
     pub checkbox_unchecked_background: Hsla,
     pub checkbox_unchecked_border: Hsla,
@@ -99,6 +113,16 @@ pub struct MarkupStyle {
     /// Colors of the footnotes [`render_preview`] puts on blocks Slack posts
     /// differently; `None` hides them.
     pub notes: Option<NoteColors>,
+}
+
+/// Block margins as a browser gives unstyled HTML: siblings are as far
+/// apart as the larger of their margins. Paragraphs, quotes and top-level
+/// lists have a margin of the text size, code blocks of the code size, and
+/// tables none.
+pub struct Margins {
+    /// Heading margins for levels 1 to 6, relative to the heading's size.
+    pub heading: [f32; 6],
+    pub rule: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -218,6 +242,10 @@ impl MarkupStyle {
             line_height: 1.5,
             heading_scale: [2., 1.5, 1.25, 1., 0.875, 0.85],
             heading_rule_max_level: 2,
+            heading_weight: FontWeight::SEMIBOLD,
+            heading_line_height: 1.25,
+            muted_h6: true,
+            margins: None,
             block_gap: px(16.),
             heading_gap: px(24.),
             strong_weight: FontWeight::SEMIBOLD,
@@ -234,6 +262,7 @@ impl MarkupStyle {
             text_color: c(0x1f2328ff, 0xe6edf3ff),
             muted_color: c(0x59636eff, 0x9198a1ff),
             link_color: c(0x0969daff, 0x4493f8ff),
+            link_underline: false,
             border_color: c(0xd1d9e0ff, 0x3d444dff),
             heading_rule_color: c(0xd1d9e0b3, 0x3d444db3),
             // `code` is 85% with .2em .4em padding in its own size.
@@ -270,6 +299,10 @@ impl MarkupStyle {
             quote_text_color: c(0x59636eff, 0x9198a1ff),
             numbering: [Numbering::Decimal, Numbering::Roman, Numbering::Alpha],
             table_stripe: c(0xf6f8faff, 0x151b23ff),
+            table_cell_padding: (px(13.), px(6.)),
+            rule_padding: px(8.),
+            rule_height: px(1.),
+            rule_color: c(0xd1d9e0ff, 0x3d444dff),
             checkbox_checked: c(0x0969daff, 0x4493f8ff),
             // The browser's own checkbox.
             checkbox_unchecked_background: c(0xffffffff, 0x3b3b3bff),
@@ -283,6 +316,86 @@ impl MarkupStyle {
             },
             slack_fallbacks: false,
             notes: None,
+        }
+    }
+
+    /// A Rich text draft as Apple Mail shows the HTML Copy writes: WebKit's
+    /// default layout in Mail's 13px Helvetica message font, plus the
+    /// HTML's own styles for code, quotes and tables. Dark colors are the
+    /// light ones with their lightness inverted, as Mail shows messages
+    /// that declare no dark colors.
+    pub fn rich_text(dark: bool) -> Self {
+        let c = |light: u32, dark_hex: u32| -> Hsla {
+            rgba(if dark { dark_hex } else { light }).into()
+        };
+        let transparent = gpui::transparent_black();
+        let text_color = c(0x000000ff, 0xffffffff);
+        let border_color = c(0xd0d7deff, 0x21282fff);
+        let github = Self::github(dark);
+        Self {
+            background: c(0xffffffff, 0x000000ff),
+            font_family: "Helvetica".into(),
+            mono_family: "Menlo".into(),
+            text_size: px(13.),
+            // Helvetica's normal line height, 15px at 13px.
+            line_height: 15. / 13.,
+            heading_scale: [2., 1.5, 1.17, 1., 0.83, 0.67],
+            heading_rule_max_level: 0,
+            heading_weight: FontWeight::BOLD,
+            heading_line_height: 1.15,
+            muted_h6: false,
+            margins: Some(Margins {
+                heading: [0.67, 0.83, 1., 1.33, 1.67, 2.33],
+                rule: px(6.5),
+            }),
+            block_gap: px(13.),
+            strong_weight: FontWeight::BOLD,
+            tight_item_gap: px(0.),
+            list_indent: px(40.),
+            bullet: Bullet {
+                size: px(4.),
+                left: px(25.),
+                top: px(5.5),
+                ring_width: px(1.),
+            },
+            text_color,
+            muted_color: text_color,
+            link_color: c(0x0000eeff, 0x1111ffff),
+            link_underline: true,
+            border_color,
+            inline_code: InlineBox {
+                scale: 1.,
+                color: None,
+                chip: Chip {
+                    background: transparent,
+                    border: None,
+                    radius: px(0.),
+                    pad_x: px(0.),
+                    pad_top: px(0.),
+                    pad_bottom: px(0.),
+                    icon: None,
+                },
+            },
+            code_background: transparent,
+            // 90% of the text.
+            code_text_size: px(11.7),
+            // Menlo's normal line height, 14px at 11.7px.
+            code_line_height: 14. / 11.7,
+            code_padding: px(8.),
+            code_border: Some(border_color),
+            code_wraps: true,
+            radius: px(4.),
+            quote_bar_width: px(3.),
+            quote_bar_color: border_color,
+            quote_padding: px(8.),
+            quote_text_color: text_color,
+            numbering: [Numbering::Decimal, Numbering::Alpha, Numbering::Roman],
+            table_stripe: transparent,
+            table_cell_padding: (px(10.), px(4.)),
+            rule_padding: px(0.),
+            rule_height: px(2.),
+            rule_color: c(0x9a9a9aff, 0x656565ff),
+            ..github
         }
     }
 
@@ -324,6 +437,10 @@ impl MarkupStyle {
             // Headings are replaced by bold lines.
             heading_scale: [1.; 6],
             heading_rule_max_level: 0,
+            heading_weight: FontWeight::SEMIBOLD,
+            heading_line_height: 1.25,
+            muted_h6: true,
+            margins: None,
             block_gap: px(4.),
             heading_gap: px(4.),
             strong_weight: FontWeight::BOLD,
@@ -342,6 +459,7 @@ impl MarkupStyle {
             text_color,
             muted_color: c(0x616061ff, 0xababadff),
             link_color,
+            link_underline: false,
             border_color,
             heading_rule_color: border_color,
             // Roboto Mono 12px in a bordered chip.
@@ -404,6 +522,10 @@ impl MarkupStyle {
             quote_text_color: text_color,
             numbering: [Numbering::Decimal, Numbering::Alpha, Numbering::Roman],
             table_stripe: c(0x1d1c1d0a, 0x232529ff),
+            table_cell_padding: (px(13.), px(6.)),
+            rule_padding: px(8.),
+            rule_height: px(1.),
+            rule_color: border_color,
             checkbox_checked: link_color,
             checkbox_unchecked_background: c(0xffffffff, 0x1a1d21ff),
             checkbox_unchecked_border: border_color,
@@ -683,7 +805,8 @@ pub fn preview(target: Target, text: &str) -> Document {
     match target {
         Target::Github => markup::github::parse(text),
         Target::Slack => markup::slack::parse(text),
-        Target::Email => markup::plain::parse(text),
+        Target::Rich => markup::rich_text::pasted(&markup::github::parse(text)),
+        Target::Plain => markup::plain::parse(text),
     }
 }
 
@@ -692,8 +815,9 @@ pub fn style(target: Target, dark: bool) -> MarkupStyle {
     match target {
         Target::Github => MarkupStyle::github(dark),
         Target::Slack => MarkupStyle::slack(dark),
-        // An email body in the system font; nothing in it is styled.
-        Target::Email => MarkupStyle::github(dark),
+        Target::Rich => MarkupStyle::rich_text(dark),
+        // The system font; nothing in plain text is styled.
+        Target::Plain => MarkupStyle::github(dark),
     }
 }
 
@@ -702,6 +826,9 @@ struct Renderer<'a> {
     /// Element ids are scoped by the body's root id, so a counter suffices.
     next_id: u64,
     list_depth: usize,
+    /// Rendering the blocks of a tight list's item, whose text has no
+    /// paragraph margins.
+    tight_item: bool,
     /// Font size of the heading whose text is being rendered.
     heading_size: Option<Pixels>,
 }
@@ -712,6 +839,7 @@ impl<'a> Renderer<'a> {
             style,
             next_id: 0,
             list_depth: 0,
+            tight_item: false,
             heading_size: None,
         }
     }
@@ -747,18 +875,24 @@ impl<'a> Renderer<'a> {
             .into_iter()
             .enumerate()
             .map(|(ix, block)| {
-                let gap = match block {
-                    _ if ix == 0 && separate(block) => gap,
-                    _ if ix == 0 => px(0.),
-                    Block::Heading { .. } => self.style.heading_gap,
-                    _ if after_text && is_text(block) => self.style.text_gap.min(gap),
-                    _ if prev.is_some_and(|prev| {
-                        separate(block) && margined(prev) || separate(prev) && margined(block)
-                    }) =>
-                    {
-                        gap * 2.
+                let gap = match (&self.style.margins, prev) {
+                    (Some(margins), Some(prev)) => {
+                        self.margin(margins, prev).max(self.margin(margins, block))
                     }
-                    _ => gap,
+                    (Some(_), None) => px(0.),
+                    (None, _) => match block {
+                        _ if ix == 0 && separate(block) => gap,
+                        _ if ix == 0 => px(0.),
+                        Block::Heading { .. } => self.style.heading_gap,
+                        _ if after_text && is_text(block) => self.style.text_gap.min(gap),
+                        _ if prev.is_some_and(|prev| {
+                            separate(block) && margined(prev) || separate(prev) && margined(block)
+                        }) =>
+                        {
+                            gap * 2.
+                        }
+                        _ => gap,
+                    },
                 };
                 after_text = is_text(block);
                 prev = Some(block);
@@ -766,6 +900,23 @@ impl<'a> Renderer<'a> {
                 div().pt(gap).child(decorate(ix, block)).into_any_element()
             })
             .collect()
+    }
+
+    /// `block`'s margin among its siblings with [`MarkupStyle::margins`].
+    fn margin(&self, margins: &Margins, block: &Block) -> Pixels {
+        let style = self.style;
+        match block {
+            Block::Heading { level, .. } => {
+                let level = (*level as usize).clamp(1, 6) - 1;
+                style.text_size * style.heading_scale[level] * margins.heading[level]
+            }
+            Block::List(_) if self.list_depth > 0 => px(0.),
+            Block::Paragraph(_) if self.tight_item => px(0.),
+            Block::Code { .. } => style.code_text_size,
+            Block::Table(_) => px(0.),
+            Block::Rule => margins.rule,
+            _ => style.text_size,
+        }
     }
 
     fn block(&mut self, block: &Block) -> AnyElement {
@@ -779,9 +930,11 @@ impl<'a> Renderer<'a> {
                 self.heading_size = None;
                 div()
                     .text_size(style.text_size * scale)
-                    .line_height(relative(1.25))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .when(*level == 6, |this| this.text_color(style.muted_color))
+                    .line_height(relative(style.heading_line_height))
+                    .font_weight(style.heading_weight)
+                    .when(*level == 6 && style.muted_h6, |this| {
+                        this.text_color(style.muted_color)
+                    })
                     .when(*level <= style.heading_rule_max_level, |this| {
                         this.pb(style.text_size * scale * 0.3)
                             .border_b_1()
@@ -867,8 +1020,8 @@ impl<'a> Renderer<'a> {
                 .into_any_element(),
             Block::Table(table) => self.table(table),
             Block::Rule => div()
-                .py(px(8.))
-                .child(div().h(px(1.)).bg(style.border_color))
+                .py(style.rule_padding)
+                .child(div().h(style.rule_height).bg(style.rule_color))
                 .into_any_element(),
             Block::Html(html) => div()
                 .text_color(style.muted_color)
@@ -1008,6 +1161,7 @@ impl<'a> Renderer<'a> {
         let bullet_kind = self.list_depth % 3;
         let numbering = style.numbering[self.list_depth % 3];
         self.list_depth += 1;
+        let outer_tight = std::mem::replace(&mut self.tight_item, list.tight);
         let items = list
             .items
             .iter()
@@ -1043,6 +1197,7 @@ impl<'a> Renderer<'a> {
             })
             .collect::<Vec<_>>();
         self.list_depth -= 1;
+        self.tight_item = outer_tight;
         div().flex().flex_col().children(items).into_any_element()
     }
 
@@ -1087,14 +1242,15 @@ impl<'a> Renderer<'a> {
         let mut cells = Vec::new();
         for (row_ix, row) in rows.enumerate() {
             for (col_ix, spans) in row.iter().enumerate() {
+                let (pad_x, pad_y) = style.table_cell_padding;
                 let cell = div()
-                    .px(px(13.))
-                    .py(px(6.))
+                    .px(pad_x)
+                    .py(pad_y)
                     .border_r_1()
                     .border_b_1()
                     .border_color(style.border_color)
                     .when(row_ix == 0, |this| {
-                        this.border_t_1().font_weight(FontWeight::SEMIBOLD)
+                        this.border_t_1().font_weight(style.strong_weight)
                     })
                     .when(col_ix == 0, |this| this.border_l_1())
                     // Body rows alternate, starting unshaded.
@@ -1186,6 +1342,7 @@ impl<'a> Renderer<'a> {
                     _ => segments.push(Segment {
                         text: span.text.clone().into(),
                         color: Some(style.link_color),
+                        underline: style.link_underline,
                         ..base
                     }),
                 }

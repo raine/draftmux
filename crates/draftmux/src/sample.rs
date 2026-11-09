@@ -20,7 +20,7 @@ This is a sample draft. Real drafts arrive from your coding agent: run `/draftmu
 ### Try it on this draft
 
 - Edit this text; the preview on the right follows as you type
-- Switch the target to Slack or Email above the preview
+- Switch the target to Slack, Rich text or Plain text above the preview
 - Select a sentence for quick rewrites
 - Ask pi on the right to *make it shorter*
 

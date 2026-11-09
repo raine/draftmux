@@ -29,9 +29,13 @@ pub fn copy(target: Target, text: &str, cx: &mut App) -> &'static str {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
             "Copied markdown for GitHub"
         }
-        Target::Email => {
+        Target::Rich => {
+            write_rich_text(text);
+            "Copied as rich text"
+        }
+        Target::Plain => {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
-            "Copied plain text for email"
+            "Copied plain text"
         }
         Target::Slack => {
             write_slack(text);
@@ -47,6 +51,21 @@ fn write_slack(mrkdwn: &str) {
     write_flavours(
         &NSPasteboard::generalPasteboard(),
         &slack_flavours(&markup::slack::parse(mrkdwn)),
+    );
+}
+
+/// Writes a Rich text draft's `markdown` to the general pasteboard: HTML
+/// and RTF for rich-text editors, and the Markdown itself for pasting
+/// without formatting.
+fn write_rich_text(markdown: &str) {
+    let doc = markup::github::parse(markdown);
+    write_flavours(
+        &NSPasteboard::generalPasteboard(),
+        &Flavours {
+            html: markup::rich_text::html(&doc),
+            rtf: markup::rich_text::rtf(&doc),
+            plain: markdown.to_owned(),
+        },
     );
 }
 

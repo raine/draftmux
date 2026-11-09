@@ -51,8 +51,9 @@ draftmux open "$@" --target github --note 'PR description for the retry change'
   Otherwise Draftmux picks the profile from the session file's location or its
   own settings.
 - `--target`: `github` for GitHub markdown, `slack` for Slack messages,
-  `email` for plain-text emails. Leave it out when the user hasn't said where
-  the message goes; Draftmux then uses its default for the directory.
+  `rich` for emails and documents with formatting such as bold and lists,
+  `plain` for plain text. Leave it out when the user hasn't said where the
+  message goes; Draftmux then uses its default for the directory.
 - `--note`: optional. One line saying what message to write, if the
   conversation doesn't make it obvious. Single-quote it; write `'` as `'\''`.
 

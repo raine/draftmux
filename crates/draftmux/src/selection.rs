@@ -199,8 +199,11 @@ fn syntax(target: Target) -> &'static str {
         Target::Slack => {
             "Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text>; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)"
         }
-        Target::Email => {
-            "plain-text email (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)"
+        Target::Rich => {
+            "Markdown, pasted as rich text into an email or document (headings, bold, italic, links, lists, quotes, code and tables carry over; no raw HTML, alerts or @mentions; no subject line)"
+        }
+        Target::Plain => {
+            "plain text, such as an email body (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)"
         }
     }
 }
@@ -328,7 +331,7 @@ mod tests {
     #[test]
     fn syntax_matches_the_draft_prompt() {
         let extension = include_str!("../../../pi-extension/draftmux.ts");
-        for target in [Target::Github, Target::Slack, Target::Email] {
+        for &target in Target::ALL {
             let literal = format!("\"{}\"", syntax(target));
             assert!(extension.contains(&literal), "{literal}");
         }
@@ -339,8 +342,12 @@ mod tests {
         let mut slack = request("Ship it today", "today", Action::Shorter);
         slack.target = Target::Slack;
         assert!(prompt(&slack, 3).unwrap().contains("Slack mrkdwn"));
-        slack.target = Target::Email;
-        assert!(prompt(&slack, 3).unwrap().contains("plain-text email"));
+        slack.target = Target::Plain;
+        assert!(
+            prompt(&slack, 3)
+                .unwrap()
+                .contains("plain text, such as an email")
+        );
 
         let blank = request("a \n b", " \n ", Action::Alternatives);
         assert!(prompt(&blank, 3).is_err());

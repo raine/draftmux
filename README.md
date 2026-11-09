@@ -1,8 +1,8 @@
 # Draftmux
 
-Draftmux is a macOS app for drafting GitHub, Slack and plain-text email
+Draftmux is a macOS app for drafting GitHub, Slack, rich-text and plain-text
 messages with an agent. Hand off from a pi or Claude Code session, polish the
-message next to a GitHub, Slack or email preview with an embedded pi agent and
+message next to a preview of where it goes with an embedded pi agent and
 steer-style selection actions, then copy it out or let the original agent read
 it back.
 

@@ -9,6 +9,7 @@ mod emoji;
 pub mod github;
 pub mod plain;
 pub mod rich;
+pub mod rich_text;
 mod shiki;
 pub mod slack;
 

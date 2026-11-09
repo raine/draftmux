@@ -46,19 +46,24 @@ impl Meta {
 pub enum Target {
     Github,
     Slack,
-    /// A plain-text email body.
-    Email,
+    /// Markdown pasted as rich text, such as into an email or a document.
+    Rich,
+    /// Plain text, such as an email body. `email` also reads as this
+    /// target.
+    #[serde(alias = "email")]
+    Plain,
 }
 
 impl Target {
     /// Every target, in the order the app offers them.
-    pub const ALL: &[Target] = &[Target::Github, Target::Slack, Target::Email];
+    pub const ALL: &[Target] = &[Target::Github, Target::Slack, Target::Rich, Target::Plain];
 
     pub fn label(self) -> &'static str {
         match self {
             Target::Github => "GitHub",
             Target::Slack => "Slack",
-            Target::Email => "Email",
+            Target::Rich => "Rich text",
+            Target::Plain => "Plain text",
         }
     }
 }
@@ -190,10 +195,15 @@ mod tests {
         for (target, json) in [
             (Target::Github, r#""github""#),
             (Target::Slack, r#""slack""#),
-            (Target::Email, r#""email""#),
+            (Target::Rich, r#""rich""#),
+            (Target::Plain, r#""plain""#),
         ] {
             assert_eq!(serde_json::to_string(&target).unwrap(), json);
             assert_eq!(serde_json::from_str::<Target>(json).unwrap(), target);
         }
+        assert_eq!(
+            serde_json::from_str::<Target>(r#""email""#).unwrap(),
+            Target::Plain
+        );
     }
 }

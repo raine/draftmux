@@ -1,0 +1,28 @@
+---
+source: crates/markup/tests/rich_text.rs
+expression: "rich_text::rtf(&github::parse(MESSAGE))"
+---
+{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Helvetica;}{\f1\fmodern Menlo;}}
+\pard\li0\sb180\sa180 {\b\fs36 {Release }{\i notes}}\par
+\pard\li0\sa180 {Hi }{\b team}{, }{\i quick}{ }{\strike old}{ }{\f1 a < b}{ }{\field{\*\fldinst{HYPERLINK "https://a.example?x=1&y=2"}}{\fldrslt {link}}}\line {second line}\par
+\pard\li360\fi-360\tx360\sa60 \u8226?\tab {one}\par
+\pard\li360\fi-360\tx360\sa60 \u8226?\tab {two}\par
+\pard\li720\fi-360\tx720\sa60 1.\tab {nested}\par
+\pard\li360\fi-360\tx360\sa60 \u8226?\tab {\u9745? done}\par
+\pard\li360\sa180 {quoted}\par
+\pard\li360\sa180 {\b Warning}\par
+\pard\li360\sa180 {Careful}\par
+\pard\li0\sa180 {\f1\fs20 let a = b < c;\line   indented \{\}}\par
+\trowd\trgaph108\trleft0\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4500\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx9000
+\pard\intbl\ql {\b {a}}\cell
+\pard\intbl\qr {\b {b}}\cell
+\row
+\trowd\trgaph108\trleft0\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4500\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx9000
+\pard\intbl\ql {{1}}\cell
+\pard\intbl\qr {{\b 22}}\cell
+\row
+\pard\li0\sa0 \par
+\pard\li0\sa180\brdrb\brdrs\brdrw10\brsp20 \par
+\pard\li0\sa180 {<div>raw</div>}\par
+\pard\li0\sa180 {\u220?n\u239?code \u8212? \u-10180?\u-8311? \\path}\par
+}

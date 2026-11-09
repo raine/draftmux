@@ -112,7 +112,7 @@ fn plain_spans(spans: &[Span]) -> String {
 }
 
 /// `spans` split at each `\n` into lines.
-fn lines(spans: &[Span]) -> Vec<Vec<Span>> {
+pub(crate) fn lines(spans: &[Span]) -> Vec<Vec<Span>> {
     let mut lines = vec![Vec::new()];
     for span in spans {
         for (ix, text) in span.text.split('\n').enumerate() {
@@ -260,7 +260,7 @@ fn html_spans(out: &mut String, spans: &[Span]) {
 }
 
 /// Escapes `text` for HTML.
-fn html_escape(out: &mut String, text: &str) {
+pub(crate) fn html_escape(out: &mut String, text: &str) {
     for ch in text.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
@@ -369,7 +369,7 @@ fn rtf_list(out: &mut String, list: &List, indent: u32) {
     }
 }
 
-fn rtf_spans(out: &mut String, spans: &[Span]) {
+pub(crate) fn rtf_spans(out: &mut String, spans: &[Span]) {
     for span in spans {
         if let Some(link) = &span.link {
             out.push_str("{\\field{\\*\\fldinst{HYPERLINK \"");
@@ -402,7 +402,7 @@ fn rtf_spans(out: &mut String, spans: &[Span]) {
 
 /// Escapes `text` for RTF: control characters are backslashed and anything
 /// outside ASCII becomes `\uN?` UTF-16 code units.
-fn rtf_escape(out: &mut String, text: &str) {
+pub(crate) fn rtf_escape(out: &mut String, text: &str) {
     for ch in text.chars() {
         match ch {
             '\\' | '{' | '}' => {

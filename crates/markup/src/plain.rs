@@ -1,4 +1,4 @@
-//! Plain text, as an email body.
+//! Plain text, such as an email body.
 //!
 //! Nothing is interpreted: markdown markers, HTML, entities and URLs stay
 //! literal. The whole text is one unstyled paragraph whose `\n`s are its line

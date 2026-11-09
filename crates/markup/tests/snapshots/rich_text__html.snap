@@ -1,0 +1,15 @@
+---
+source: crates/markup/tests/rich_text.rs
+expression: "html.replace(\"</p>\", \"</p>\\n\").replace(\"</li>\", \"</li>\\n\")"
+---
+<meta charset="utf-8"><h1>Release <i>notes</i></h1><p>Hi <b>team</b>, <i>quick</i> <s>old</s> <code style="font-family:Menlo,Consolas,monospace">a &lt; b</code> <a href="https://a.example?x=1&amp;y=2">link</a><br>second line</p>
+<ul><li>one</li>
+<li>two<ol><li>nested</li>
+</ol></li>
+<li>☑ done</li>
+</ul><blockquote style="margin:0;border-left:3px solid #d0d7de;padding-left:8px"><p>quoted</p>
+</blockquote><blockquote style="margin:0;border-left:3px solid #d0d7de;padding-left:8px"><p><b>Warning</b></p>
+<p>Careful</p>
+</blockquote><pre style="font-family:Menlo,Consolas,monospace;font-size:90%;border:1px solid #d0d7de;border-radius:4px;padding:8px;white-space:pre-wrap">let a = b &lt; c;
+  indented {}</pre><table style="border-collapse:collapse"><thead><tr><th style="border:1px solid #d0d7de;padding:4px 10px">a</th><th style="border:1px solid #d0d7de;padding:4px 10px;text-align:right">b</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:4px 10px">1</td><td style="border:1px solid #d0d7de;padding:4px 10px;text-align:right"><b>22</b></td></tr></tbody></table><hr><p>&lt;div&gt;raw&lt;/div&gt;</p>
+<p>Ünïcode — 🎉 \path</p>

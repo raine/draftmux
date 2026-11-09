@@ -1,5 +1,8 @@
 //! `draftmux capture`: renders fixture drafts to PNGs for comparing the
-//! preview with GitHub's and Slack's own rendering (history/docs/design.md, Testing).
+//! preview with GitHub's, Slack's and Apple Mail's own rendering
+//! (history/docs/design.md, Testing). For Rich text it also writes the HTML
+//! Copy puts on the pasteboard, which `tools/mail-reference` renders the
+//! way Apple Mail does.
 //!
 //! Each fixture is drawn by [`markup_view::render`] in an offscreen window,
 //! light and dark, at a fixed content width on the platform's background,
@@ -28,7 +31,7 @@ const PAD: f32 = 16.;
 /// Render fixture drafts to PNGs (development tool).
 #[derive(clap::Args, Debug)]
 pub struct Args {
-    /// Target whose preview style to use: github or slack.
+    /// Target whose preview style to use: github, slack or rich.
     #[arg(long)]
     target: String,
     /// Directory of `.md` fixture drafts.
@@ -44,6 +47,7 @@ pub fn main(args: Args) -> u8 {
     let target = match args.target.as_str() {
         "github" => Target::Github,
         "slack" => Target::Slack,
+        "rich" => Target::Rich,
         other => {
             eprintln!("draftmux capture: unknown target {other}");
             return 2;
@@ -102,6 +106,11 @@ async fn capture_all(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     for (name, text) in fixtures {
+        if target == Target::Rich {
+            let path = out.join(format!("{name}-{target_name}.html"));
+            std::fs::write(&path, markup::rich_text::html(&markup::github::parse(text)))?;
+            println!("{}", path.display());
+        }
         for dark in [false, true] {
             let doc = markup_view::preview(target, text);
             let style = markup_view::style(target, dark);

@@ -1,0 +1,205 @@
+#!/usr/bin/env swift
+// Renders HTML files the way Apple Mail shows a message, as references for
+// the Rich text preview: WebKit with Mail's own stylesheet
+// (MailUI.framework's MUIWebDocument.css) and the message font from Mail's
+// settings. The dark reference is the light one with each pixel's HSL
+// lightness inverted, which is what Mail's `apple-invert-lightness()` color
+// filter does to messages that declare no dark colors. WebKit leaves that
+// filter out of snapshots, so it is applied here.
+//
+// Usage: tools/mail-reference [--width N] [--pad N] DIR
+//
+// Prints the message font it uses, which follows Mail's Fonts & Colors
+// setting (Helvetica 12 when Mail has none).
+//
+// Writes `<name>-light-mail.png` and `<name>-dark-mail.png` at 2x beside each
+// `<name>.html` in DIR, with the body `width` points wide inside `pad`
+// points of padding; the defaults match `draftmux capture`.
+
+import AppKit
+import WebKit
+
+let stylesheetPath =
+    "/System/Library/PrivateFrameworks/MailUI.framework/Versions/A/Resources/MUIWebDocument.css"
+
+var width = 640
+var pad = 16
+var dir: String?
+var args = CommandLine.arguments.dropFirst()
+while let arg = args.popFirst() {
+    switch arg {
+    case "--width": width = Int(args.popFirst() ?? "") ?? width
+    case "--pad": pad = Int(args.popFirst() ?? "") ?? pad
+    default: dir = arg
+    }
+}
+guard let dir else {
+    FileHandle.standardError.write("usage: mail-reference [--width N] [--pad N] DIR\n".data(using: .utf8)!)
+    exit(2)
+}
+
+/// A value from Mail's settings. Mail is sandboxed, so `UserDefaults` can't
+/// read them; `defaults` finds its container.
+func mailSetting(_ key: String) -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+    process.arguments = ["read", "com.apple.mail", key]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Mail's stylesheet with its message font filled in. Other placeholders
+/// become `initial`, which drops the declarations that use them.
+func mailStylesheet() -> String {
+    guard var css = try? String(contentsOfFile: stylesheetPath, encoding: .utf8) else {
+        FileHandle.standardError.write("mail-reference: can't read \(stylesheetPath)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    let font = mailSetting("NSFont") ?? "Helvetica"
+    let size = mailSetting("NSFontSize").flatMap { Int($0) } ?? 12
+    css = css.replacingOccurrences(of: "@[FONT_NAME]", with: "\"\(font)\"")
+    css = css.replacingOccurrences(of: "@[FONT_SIZE]", with: String(size))
+    FileHandle.standardError.write("mail-reference: message font \(size)px \(font)\n".data(using: .utf8)!)
+    css = css.replacingOccurrences(
+        of: #"@\[[A-Z0-9_]+\]"#, with: "initial", options: .regularExpression)
+    return css
+}
+
+let stylesheet = mailStylesheet()
+
+func page(_ body: String) -> String {
+    """
+    <!DOCTYPE html><html><head><meta charset="utf-8">
+    <style>\(stylesheet)</style>
+    <style>body { margin: \(pad)px; width: \(width)px; }</style>
+    </head><body>\(body)</body></html>
+    """
+}
+
+final class Renderer: NSObject, WKNavigationDelegate {
+    let window: NSWindow
+    let webView: WKWebView
+    var jobs: [URL]
+    var current: URL?
+
+    init(jobs: [URL]) {
+        self.jobs = jobs
+        let config = WKWebViewConfiguration()
+        let frame = NSRect(x: 0, y: 0, width: width + 2 * pad, height: 800)
+        webView = WKWebView(frame: frame, configuration: config)
+        window = NSWindow(
+            contentRect: frame.offsetBy(dx: -10000, dy: -10000),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = webView
+        super.init()
+        webView.navigationDelegate = self
+    }
+
+    func next() {
+        guard !jobs.isEmpty else { exit(0) }
+        let job = jobs.removeFirst()
+        current = job
+        webView.appearance = NSAppearance(named: .aqua)
+        guard let body = try? String(contentsOf: job, encoding: .utf8) else {
+            FileHandle.standardError.write("mail-reference: can't read \(job.path)\n".data(using: .utf8)!)
+            exit(1)
+        }
+        webView.loadHTMLString(page(body), baseURL: nil)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        webView.evaluateJavaScript("Math.ceil(document.body.getBoundingClientRect().bottom) + \(pad)") { height, _ in
+            let height = (height as? Double) ?? 800
+            var frame = self.webView.frame
+            frame.size.height = height
+            self.window.setContentSize(frame.size)
+            self.webView.frame = frame
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.snapshot() }
+        }
+    }
+
+    func snapshot() {
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = true
+        webView.takeSnapshot(with: config) { image, error in
+            guard let image, let job = self.current else {
+                FileHandle.standardError.write("mail-reference: snapshot failed: \(String(describing: error))\n".data(using: .utf8)!)
+                exit(1)
+            }
+            let light = self.bitmap(image)
+            self.write(light, html: job, mode: "light")
+            invertLightness(light)
+            self.write(light, html: job, mode: "dark")
+            self.next()
+        }
+    }
+
+    /// `image` at 2x, whatever the screen's scale.
+    func bitmap(_ image: NSImage) -> NSBitmapImageRep {
+        let size = image.size
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+
+    func write(_ rep: NSBitmapImageRep, html: URL, mode: String) {
+        let name = html.deletingPathExtension().lastPathComponent
+        let out = html.deletingLastPathComponent()
+            .appendingPathComponent("\(name)-\(mode)-mail.png")
+        try! rep.representation(using: .png, properties: [:])!.write(to: out)
+        print(out.path)
+    }
+}
+
+/// Inverts each pixel's HSL lightness in place, keeping hue and saturation.
+func invertLightness(_ rep: NSBitmapImageRep) {
+    let data = rep.bitmapData!
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide {
+            let px = data + y * rep.bytesPerRow + x * 4
+            let r = Double(px[0]) / 255, g = Double(px[1]) / 255, b = Double(px[2]) / 255
+            let maxC = max(r, g, b), minC = min(r, g, b)
+            let l = (maxC + minC) / 2
+            let d = maxC - minC
+            // Lightness l becomes 1 - l: shifting every channel by the same
+            // amount keeps hue, and scaling the spread keeps saturation.
+            let l2 = 1 - l
+            let s = d == 0 ? 0 : d / (1 - abs(2 * l - 1))
+            let d2 = s * (1 - abs(2 * l2 - 1))
+            let scale = d == 0 ? 0 : d2 / d
+            func channel(_ c: Double) -> UInt8 {
+                let v = l2 + (c - l) * scale
+                return UInt8((min(max(v, 0), 1) * 255).rounded())
+            }
+            px[0] = channel(r); px[1] = channel(g); px[2] = channel(b)
+        }
+    }
+}
+
+let files = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+let htmls = files.filter { $0.hasSuffix(".html") }.sorted()
+    .map { URL(fileURLWithPath: dir).appendingPathComponent($0) }
+if htmls.isEmpty {
+    FileHandle.standardError.write("mail-reference: no .html files in \(dir)\n".data(using: .utf8)!)
+    exit(1)
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let renderer = Renderer(jobs: htmls)
+renderer.window.orderFrontRegardless()
+renderer.next()
+app.run()

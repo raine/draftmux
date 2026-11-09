@@ -15,7 +15,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const CONTEXT_MESSAGE_TYPE = "draftmux-context";
 export const TRUST_STATUS_KEY = "draftmux.trust";
 
-type Target = "github" | "slack" | "email";
+type Target = "github" | "slack" | "rich" | "plain";
 
 type Config =
 	| { mode: "selection" }
@@ -26,8 +26,9 @@ const TARGET_SYNTAX: Record<Target, string> = {
 	github: "GitHub-flavored Markdown",
 	slack:
 		"Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text>; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)",
-	email:
-		"plain-text email (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",
+	rich: "Markdown, pasted as rich text into an email or document (headings, bold, italic, links, lists, quotes, code and tables carry over; no raw HTML, alerts or @mentions; no subject line)",
+	plain:
+		"plain text, such as an email body (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",
 };
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
@@ -46,7 +47,9 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
 /** The target in the `meta.json` beside the draft file; undefined if it can't be read. */
 function readTarget(draftPath: string): Target | undefined {
 	try {
-		const target = JSON.parse(readFileSync(join(dirname(draftPath), "meta.json"), "utf8"))?.target;
+		let target = JSON.parse(readFileSync(join(dirname(draftPath), "meta.json"), "utf8"))?.target;
+		// The app reads "email" as the plain target too.
+		if (target === "email") target = "plain";
 		if (typeof target === "string" && Object.hasOwn(TARGET_SYNTAX, target)) return target as Target;
 	} catch {}
 	return undefined;

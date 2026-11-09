@@ -1,0 +1,16 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render rich text)
+---
+<meta charset="utf-8"><p>Hi Sam,</p>
+<p>Thanks for the quick review. I went through your notes and <b>fixed the retry bug</b> before tagging the release, so the build from <i>this morning</i> is the one to test.</p>
+<p>What changed since Friday:</p>
+<ul><li>Retries back off exponentially and stop after five attempts</li>
+<li>The <code style="font-family:Menlo,Consolas,monospace">--dry-run</code> flag prints the plan without touching the database</li>
+<li>Timeouts are configurable per job</li>
+</ul><p>Next steps:</p>
+<ol><li>Run the migration on staging</li>
+<li>Check the dashboards for an hour</li>
+<li>Roll out to production on Thursday</li>
+</ol><p>The full changelog is on <a href="https://example.com/releases/2.4">the release page</a>. Let me know if anything looks off.</p>
+<p>Best,<br>Alex</p>

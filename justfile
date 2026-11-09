@@ -20,6 +20,17 @@ clippy:
 clippy-fix:
     cargo clippy --workspace --fix --allow-dirty --target-dir target/clippy --all-targets -- -D warnings -W clippy::all
 
+# Compare the Rich text preview with Apple Mail's rendering of the fixtures
+mail-parity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -j 2 -p draftmux --features capture
+    out=$(mktemp -d)
+    target/debug/draftmux capture --target rich crates/markup/tests/fixtures/rich "$out" >/dev/null
+    tools/mail-reference "$out" >/dev/null
+    tools/mail-compare "$out"
+    echo "Captures and overlays: $out"
+
 # Build target/release/Draftmux.app, ad-hoc signed
 app:
     scripts/bundle

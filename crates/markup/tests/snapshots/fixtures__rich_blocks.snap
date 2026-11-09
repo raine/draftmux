@@ -1,0 +1,16 @@
+---
+source: crates/markup/tests/fixtures.rs
+expression: fixtures! (@ render rich text)
+---
+<meta charset="utf-8"><h1>Release notes</h1><p>A paragraph before the sections, long enough to wrap onto a second line at the capture width so that the line height shows in the comparison.</p>
+<h2>Highlights</h2><blockquote style="margin:0;border-left:3px solid #d0d7de;padding-left:8px"><p>Quoted text from the previous thread,<br>on two lines.</p>
+</blockquote><blockquote style="margin:0;border-left:3px solid #d0d7de;padding-left:8px"><p><b>Note</b></p>
+<p>Alerts paste as a quote with a bold label.</p>
+</blockquote><h3>Tasks</h3><ul><li>☑ Ship the parser</li>
+<li>☐ Write the docs<ul><li>Nested under the second task<ul><li>And one more level</li>
+</ul></li>
+</ul></li>
+</ul><h4>Code</h4><p>Inline <code style="font-family:Menlo,Consolas,monospace">code</code> in a sentence, and a block:</p>
+<pre style="font-family:Menlo,Consolas,monospace;font-size:90%;border:1px solid #d0d7de;border-radius:4px;padding:8px;white-space:pre-wrap">fn main() {
+    println!(&quot;hello&quot;);
+}</pre><table style="border-collapse:collapse"><thead><tr><th style="border:1px solid #d0d7de;padding:4px 10px">Job</th><th style="border:1px solid #d0d7de;padding:4px 10px;text-align:right">Attempts</th><th style="border:1px solid #d0d7de;padding:4px 10px;text-align:center">Status</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:4px 10px">import</td><td style="border:1px solid #d0d7de;padding:4px 10px;text-align:right">3</td><td style="border:1px solid #d0d7de;padding:4px 10px;text-align:center">ok</td></tr><tr><td style="border:1px solid #d0d7de;padding:4px 10px">export</td><td style="border:1px solid #d0d7de;padding:4px 10px;text-align:right">5</td><td style="border:1px solid #d0d7de;padding:4px 10px;text-align:center">failed</td></tr></tbody></table><hr><h5>Smaller heading</h5><h6>Smallest heading</h6><p>Done.</p>

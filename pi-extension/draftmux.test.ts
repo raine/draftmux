@@ -132,8 +132,14 @@ describe("context message", () => {
 		assert.match(slack, /Slack mrkdwn/);
 		assert.match(slack, /headings and tables are fine/);
 		assert.equal(start([sent(slack)]), undefined);
+		setTarget("rich");
+		const rich = start([sent(slack)]).message.content;
+		assert.match(rich, /Markdown, pasted as rich text/);
+		setTarget("plain");
+		const plain = start([sent(rich)]).message.content;
+		assert.match(plain, /plain text, such as an email body \(no Markdown/);
 		setTarget("email");
-		assert.match(start([sent(slack)]).message.content, /plain-text email \(no Markdown/);
+		assert.equal(start([sent(plain)]), undefined);
 		setTarget("github");
 		assert.equal(start([github]), undefined);
 	});
@@ -155,8 +161,8 @@ describe("context message", () => {
 		const content = start([]).message.content;
 		assert.ok(content.includes(draftPath));
 		assert.doesNotMatch(content, /Target platform/);
-		setTarget("email");
-		assert.match(start([sent(content)]).message.content, /Target platform: plain-text email/);
+		setTarget("plain");
+		assert.match(start([sent(content)]).message.content, /Target platform: plain text/);
 	});
 });
 

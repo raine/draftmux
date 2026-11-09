@@ -461,9 +461,9 @@ impl Chrome {
         cx.notify();
     }
 
-    /// Email drafts are plain text: no markdown highlighting or Format.
+    /// Plain text drafts get no markdown highlighting or Format.
     fn set_plain_text(&mut self, target: Target, cx: &mut Context<Self>) {
-        let plain_text = target == Target::Email;
+        let plain_text = target == Target::Plain;
         self.editor
             .update(cx, |editor, cx| editor.set_markdown(!plain_text, cx));
         self.formatter
@@ -653,7 +653,7 @@ impl Chrome {
     }
 }
 
-/// GitHub/Slack/Email segmented control.
+/// The segmented control with every target.
 fn target_switch(
     selected: Target,
     palette: &Palette,

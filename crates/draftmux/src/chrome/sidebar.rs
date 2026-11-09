@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use super::{Chrome, shadow, sidebar_column};
-use crate::assets::{ARCHIVE_ICON, EMAIL_ICON, GITHUB_ICON, SLACK_ICON};
+use crate::assets::{ARCHIVE_ICON, GITHUB_ICON, PLAIN_TEXT_ICON, RICH_TEXT_ICON, SLACK_ICON};
 use crate::drafts::{relative_time, tilde};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::theme;
@@ -301,8 +301,8 @@ fn sample_badge(palette: &theme::Palette) -> impl IntoElement {
         .child("Sample")
 }
 
-/// The target's mark: GitHub's and the email envelope take the text colour,
-/// Slack's keeps its own.
+/// The target's mark: Slack's keeps its own colours, the others take the
+/// text colour.
 fn platform_icon(target: Target, text: Hsla) -> AnyElement {
     let tinted = |path| {
         svg()
@@ -314,6 +314,7 @@ fn platform_icon(target: Target, text: Hsla) -> AnyElement {
     match target {
         Target::Github => tinted(GITHUB_ICON),
         Target::Slack => img(SLACK_ICON).size(px(15.)).into_any_element(),
-        Target::Email => tinted(EMAIL_ICON),
+        Target::Rich => tinted(RICH_TEXT_ICON),
+        Target::Plain => tinted(PLAIN_TEXT_ICON),
     }
 }
