@@ -8,7 +8,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
-use draftmux_storage::Target;
 use futures::channel::{mpsc, oneshot};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -36,7 +35,6 @@ pub struct LaunchSpec {
     /// The draft's pi profile, set as `PI_CODING_AGENT_DIR`.
     pub agent_dir: PathBuf,
     pub draft_path: PathBuf,
-    pub target: Target,
     pub instructions: Option<String>,
     /// Off runs pi with `--no-context-files`.
     pub context_files: bool,
@@ -62,7 +60,6 @@ impl LaunchSpec {
                 cwd: &self.cwd,
                 agent_dir: &self.agent_dir,
                 draft_path: &self.draft_path,
-                target: self.target,
                 instructions: self.instructions.as_deref(),
             },
         );
@@ -76,7 +73,6 @@ pub(crate) struct DraftProcess<'a> {
     pub cwd: &'a Path,
     pub agent_dir: &'a Path,
     pub draft_path: &'a Path,
-    pub target: Target,
     pub instructions: Option<&'a str>,
 }
 
@@ -88,15 +84,7 @@ pub(crate) fn draft_process(command: &mut Command, draft: &DraftProcess) {
         .current_dir(draft.cwd)
         .env("PI_CODING_AGENT_DIR", draft.agent_dir)
         .env("DRAFTMUX_MODE", "draft")
-        .env("DRAFTMUX_DRAFT_PATH", draft.draft_path)
-        .env(
-            "DRAFTMUX_TARGET",
-            match draft.target {
-                Target::Github => "github",
-                Target::Slack => "slack",
-                Target::Email => "email",
-            },
-        );
+        .env("DRAFTMUX_DRAFT_PATH", draft.draft_path);
     // The captured environment can carry values from a pi session the
     // app was launched from.
     match draft.instructions {

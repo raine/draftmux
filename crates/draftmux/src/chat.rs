@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use draftmux_pi_rpc::{Agent, AgentEvent, Disposition, LaunchSpec};
-use draftmux_storage::{Draft, SourceKind, Target};
+use draftmux_storage::{Draft, SourceKind};
 use editor::{Editor, EditorStyle};
 use futures::StreamExt;
 use gpui::{
@@ -81,9 +81,6 @@ struct Session {
     /// Shows and switches the model of the running agent.
     model: Option<Entity<ChatModel>>,
     history_loaded: bool,
-    /// The target changed while a run was going; start a new process once
-    /// it settles, since the extension reads the target at startup.
-    respawn: bool,
     _events: Task<()>,
 }
 
@@ -146,7 +143,6 @@ impl Chat {
                             list,
                             model: None,
                             history_loaded: false,
-                            respawn: false,
                             _events: Task::ready(()),
                         },
                     );
@@ -158,29 +154,12 @@ impl Chat {
         cx.notify();
     }
 
-    /// The draft's target changed. pi reads it at startup, so the process
-    /// is replaced, after the current run if there is one.
-    pub fn set_target(&mut self, id: &str, target: Target, cx: &mut Context<Self>) {
-        let Some(session) = self.sessions.get_mut(id) else {
-            return;
-        };
-        session.draft.meta.target = target;
-        if session.transcript.busy {
-            session.respawn = true;
-        } else {
-            self.start_agent(id, cx);
-        }
-    }
-
     /// Creates the draft's agent once the shell environment is known, then
     /// focuses it if the draft is still selected.
     fn start_agent(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(session) = self.sessions.get_mut(id) else {
             return;
         };
-        // Dropping the old agent stops its pi.
-        session.agent = None;
-        session.respawn = false;
         let ready = ShellEnv::ready(cx);
         let id = id.to_owned();
         session._events = cx.spawn(async move |this, cx| {
@@ -228,7 +207,6 @@ impl Chat {
                 cwd: draft.meta.cwd.clone(),
                 agent_dir: draft.meta.pi_agent_dir.clone(),
                 draft_path: draft.draft_path(),
-                target: draft.meta.target,
                 instructions: draft.meta.settings.instructions.clone(),
                 context_files: draft.meta.settings.context_files,
             })
@@ -421,9 +399,6 @@ impl Chat {
         session
             .transcript
             .apply(&event, written.as_deref(), Instant::now());
-        if session.respawn && !session.transcript.busy {
-            self.start_agent(id, cx);
-        }
         if self.current.as_deref() == Some(id)
             && let Some(text) = written
         {

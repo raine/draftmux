@@ -19,7 +19,6 @@ pub enum Item {
         text: String,
     },
     Assistant {
-        text: String,
         doc: Document,
     },
     Tool(Box<Tool>),
@@ -67,6 +66,13 @@ pub enum DiffLine {
     Added(String),
 }
 
+/// The assistant message pi is streaming.
+struct Stream {
+    text: String,
+    /// Its row, added once `text` has something to show.
+    index: Option<usize>,
+}
+
 #[derive(Default)]
 pub struct Transcript {
     pub items: Vec<Item>,
@@ -76,7 +82,7 @@ pub struct Transcript {
     last_prompt: Option<String>,
     /// An assistant error pi may still retry; shown once the run settles.
     pending_error: Option<String>,
-    streaming: Option<usize>,
+    streaming: Option<Stream>,
     /// The draft's text before the agent's next write.
     draft_text: Option<String>,
     /// The first item changed since [`Transcript::take_change`], for the
@@ -105,7 +111,13 @@ impl Transcript {
         if items.is_empty() {
             return;
         }
-        self.streaming = self.streaming.map(|index| index + items.len());
+        if let Some(index) = self
+            .streaming
+            .as_mut()
+            .and_then(|stream| stream.index.as_mut())
+        {
+            *index += items.len();
+        }
         self.items.splice(0..0, items);
         self.touch(0);
     }
@@ -204,36 +216,54 @@ impl Transcript {
                     }
                 }
                 "assistant" => {
-                    self.streaming = Some(self.items.len());
-                    self.push(Item::Assistant {
+                    self.streaming = Some(Stream {
                         text: String::new(),
-                        doc: Document::default(),
+                        index: None,
                     });
                 }
                 _ => {}
             },
             Event::MessageUpdate(delta) => {
-                let Some(index) = self.streaming else { return };
-                let Some(Item::Assistant { text, doc, .. }) = self.items.get_mut(index) else {
+                let Some(stream) = &mut self.streaming else {
                     return;
                 };
                 match delta {
-                    AssistantDelta::TextStart { .. } if !text.is_empty() => text.push_str("\n\n"),
-                    AssistantDelta::TextDelta { delta, .. } => text.push_str(delta),
+                    AssistantDelta::TextStart { .. } if !stream.text.is_empty() => {
+                        stream.text.push_str("\n\n")
+                    }
+                    AssistantDelta::TextDelta { delta, .. } => stream.text.push_str(delta),
                     _ => return,
                 }
-                *doc = markup::github::parse(text);
-                self.touch(index);
+                if stream.text.trim().is_empty() {
+                    return;
+                }
+                let item = Item::assistant(&stream.text);
+                match stream.index {
+                    Some(index) => {
+                        self.items[index] = item;
+                        self.touch(index);
+                    }
+                    None => {
+                        stream.index = Some(self.items.len());
+                        self.push(item);
+                    }
+                }
             }
             Event::MessageEnd { message } if role(message) == "assistant" => {
-                if let Some(index) = self.streaming.take() {
+                if let Some(stream) = self.streaming.take() {
                     let text = content_text(&message["content"], "\n\n");
-                    if text.trim().is_empty() {
-                        self.items.remove(index);
-                    } else {
-                        self.items[index] = Item::assistant(text);
+                    match (stream.index, text.trim().is_empty()) {
+                        (Some(index), true) => {
+                            self.items.remove(index);
+                            self.touch(index);
+                        }
+                        (Some(index), false) => {
+                            self.items[index] = Item::assistant(&text);
+                            self.touch(index);
+                        }
+                        (None, false) => self.push(Item::assistant(&text)),
+                        (None, true) => {}
                     }
-                    self.touch(index);
                 }
                 if message["stopReason"] == "error" {
                     self.pending_error = Some(error_message(message));
@@ -294,9 +324,7 @@ impl Transcript {
     /// The run ended: nothing streams or runs any more.
     fn end_run(&mut self) {
         self.busy = false;
-        if let Some(index) = self.streaming.take() {
-            self.touch(index);
-        }
+        self.streaming = None;
         for index in 0..self.items.len() {
             if let Item::Tool(tool) = &mut self.items[index]
                 && matches!(tool.status, ToolStatus::Running { .. })
@@ -321,10 +349,9 @@ impl Transcript {
 }
 
 impl Item {
-    fn assistant(text: String) -> Self {
+    fn assistant(text: &str) -> Self {
         Item::Assistant {
-            doc: markup::github::parse(&text),
-            text,
+            doc: markup::github::parse(text),
         }
     }
 }
@@ -467,7 +494,7 @@ pub fn history(messages: &[Value]) -> (Vec<Item>, usize) {
                     .unwrap_or_default();
                 let text = content_text(&message["content"], "\n\n");
                 if !text.trim().is_empty() {
-                    transcript.push(Item::assistant(text));
+                    transcript.push(Item::assistant(&text));
                 }
                 for call in content.iter().filter(|block| block["type"] == "toolCall") {
                     transcript.push(Tool::item(
@@ -694,7 +721,7 @@ mod tests {
         assert!(transcript.streaming.is_none());
         assert!(matches!(
             transcript.items.last(),
-            Some(Item::Assistant { text, .. }) if !text.is_empty()
+            Some(Item::Assistant { doc }) if !doc.blocks.is_empty()
         ));
     }
 
@@ -802,6 +829,61 @@ mod tests {
     }
 
     #[test]
+    fn assistant_row_waits_for_text() {
+        let mut transcript = Transcript::default();
+        transcript.sent("go".into(), String::new());
+        transcript.take_change(0);
+        let now = Instant::now();
+        let message = |content| serde_json::json!({"role": "assistant", "content": content});
+        let apply = |transcript: &mut Transcript, event| {
+            transcript.apply(&AgentEvent::Pi(event), None, now)
+        };
+        let text = |delta: &str| {
+            Event::MessageUpdate(AssistantDelta::TextDelta {
+                content_index: 1,
+                delta: delta.into(),
+            })
+        };
+
+        // Thinking, then a tool call with no text.
+        for event in [
+            Event::AgentStart,
+            Event::MessageStart {
+                message: message(serde_json::json!([])),
+            },
+            Event::MessageUpdate(AssistantDelta::ThinkingDelta {
+                content_index: 0,
+                delta: "Hmm.".into(),
+            }),
+            Event::MessageUpdate(AssistantDelta::TextStart { content_index: 1 }),
+            text("\n"),
+            Event::MessageEnd {
+                message: message(serde_json::json!([{"type": "toolCall", "id": "1"}])),
+            },
+        ] {
+            apply(&mut transcript, event);
+            assert_eq!(transcript.items.len(), 1);
+            assert_eq!(transcript.take_change(1), None);
+        }
+        assert!(transcript.busy);
+
+        // The reply's row appears with its first text.
+        apply(
+            &mut transcript,
+            Event::MessageStart {
+                message: message(serde_json::json!([])),
+            },
+        );
+        assert_eq!(transcript.items.len(), 1);
+        apply(&mut transcript, text("Do"));
+        apply(&mut transcript, text("ne."));
+        assert_eq!(transcript.take_change(1), Some(1));
+        assert!(
+            matches!(&transcript.items[..], [Item::User { .. }, Item::Assistant { doc }] if *doc == markup::github::parse("Done."))
+        );
+    }
+
+    #[test]
     fn history_starts_at_the_first_draftmux_prompt() {
         let messages: Vec<Value> = serde_json::from_str(
             r#"[
@@ -834,7 +916,9 @@ mod tests {
                 DiffLine::Context("four".into()),
             ]
         );
-        assert!(matches!(&items[2], Item::Assistant { text, .. } if text == "Done."));
+        assert!(
+            matches!(&items[2], Item::Assistant { doc } if *doc == markup::github::parse("Done."))
+        );
         assert!(matches!(
             &items[4],
             Item::Failure { error: None, retry: Some(retry) } if retry == "again"

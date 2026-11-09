@@ -6,7 +6,6 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use draftmux_storage::Target;
 use serde_json::Value;
 
 use crate::agent::{DraftProcess, draft_process};
@@ -27,7 +26,6 @@ pub struct ForkSpec {
     /// The draft's pi profile, set as `PI_CODING_AGENT_DIR`.
     pub agent_dir: PathBuf,
     pub draft_path: PathBuf,
-    pub target: Target,
     /// Without one, the fork continues on the source session's model.
     pub model: Option<ModelOverride>,
     /// How long pi gets to start and answer.
@@ -76,7 +74,6 @@ pub fn fork(mut command: Command, spec: &ForkSpec) -> Result<Forked, String> {
             cwd: &spec.cwd,
             agent_dir: &spec.agent_dir,
             draft_path: &spec.draft_path,
-            target: spec.target,
             instructions: None,
         },
     );

@@ -1,5 +1,6 @@
 //! Opt-in smoke test against the real pi: a prompt round trip through the
-//! bundled extension. It calls the profile's default model.
+//! bundled extension, which reads the target from `meta.json`. It calls the
+//! profile's default model.
 //!
 //! ```sh
 //! cargo test -p draftmux-pi-rpc --test smoke -- --ignored
@@ -14,7 +15,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use draftmux_pi_rpc::{Agent, AgentEvent, Disposition, Event, LaunchSpec};
-use draftmux_storage::Target;
 use futures::executor::block_on;
 
 #[test]
@@ -29,6 +29,7 @@ fn prompt_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let draft_path = dir.path().join("draft.md");
     std::fs::write(&draft_path, "Hello world.\n").unwrap();
+    std::fs::write(dir.path().join("meta.json"), r#"{"target":"slack"}"#).unwrap();
     let session_file = dir.path().join("session/session.jsonl");
 
     let spec = LaunchSpec {
@@ -38,7 +39,6 @@ fn prompt_round_trip() {
         cwd: dir.path().to_path_buf(),
         agent_dir: agent_dir.clone(),
         draft_path,
-        target: Target::Github,
         instructions: None,
         context_files: true,
     };
@@ -84,7 +84,12 @@ fn prompt_round_trip() {
     assert!(!text.trim().is_empty(), "{reply}");
     assert!(ready);
     assert!(matches!(trust.as_deref(), Some("trusted" | "untrusted")));
-    assert!(session_file.exists());
+    let session = std::fs::read_to_string(&session_file).unwrap();
+    assert!(
+        session.lines().any(|line| line.contains("draftmux-context")
+            && line.contains("Target platform: Slack mrkdwn")),
+        "no Slack context message in the session"
+    );
 
     agent.stop();
     assert_eq!(

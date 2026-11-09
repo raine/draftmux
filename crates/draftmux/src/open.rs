@@ -139,7 +139,6 @@ fn create(
                     cwd: meta.cwd.clone(),
                     agent_dir: meta.pi_agent_dir.clone(),
                     draft_path: draft.draft_path(),
-                    target: meta.target,
                     model,
                     timeout: FORK_TIMEOUT,
                 };
@@ -777,7 +776,6 @@ cat > /dev/null
             cwd: cwd.to_owned(),
             agent_dir: profile.to_owned(),
             draft_path: cwd.join("draft.md"),
-            target: Target::Github,
             instructions: None,
             context_files: true,
         };

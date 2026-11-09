@@ -23,6 +23,8 @@ function load(env: Record<string, string>) {
 
 let dir: string;
 let draftPath: string;
+const writeMeta = (content: string) => writeFileSync(join(dir, "Draft Dir", "meta.json"), content);
+const setTarget = (target: string) => writeMeta(JSON.stringify({ target, status: "active" }));
 let handlers: Map<string, Handler>;
 const ctx = (extra: object = {}) => ({ cwd: join(dir, "repo"), ...extra });
 const call = (toolName: string, input: object) =>
@@ -34,7 +36,8 @@ beforeEach(() => {
 	mkdirSync(join(dir, "repo"));
 	draftPath = join(dir, "Draft Dir", "draft.md");
 	writeFileSync(draftPath, "hello\n");
-	handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "github", DRAFTMUX_INSTRUCTIONS: "Be brief." });
+	setTarget("github");
+	handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_INSTRUCTIONS: "Be brief." });
 });
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -113,17 +116,47 @@ describe("context message", () => {
 		}
 	});
 
+	const sent = (content: string) => ({ role: "custom", customType: CONTEXT_MESSAGE_TYPE, content });
+
 	test("is sent once until its content changes", () => {
-		const sent = { role: "custom", customType: CONTEXT_MESSAGE_TYPE, content: start([]).message.content };
-		assert.equal(start([sent, { role: "user", content: "x" }]), undefined);
-		assert.equal(start([{ ...sent, content: [{ type: "text", text: sent.content }] }]), undefined);
-		assert.ok(start([{ ...sent, content: "old instructions" }]).message);
-		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "slack" });
-		const slack = start([sent]).message.content;
+		const github = sent(start([]).message.content);
+		assert.equal(start([github, { role: "user", content: "x" }]), undefined);
+		assert.equal(start([{ ...github, content: [{ type: "text", text: github.content }] }]), undefined);
+		assert.ok(start([{ ...github, content: "old instructions" }]).message);
+	});
+
+	test("follows the target in meta.json from run to run", () => {
+		const github = sent(start([]).message.content);
+		setTarget("slack");
+		const slack = start([github]).message.content;
 		assert.match(slack, /Slack mrkdwn/);
 		assert.match(slack, /headings and tables are fine/);
-		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_TARGET: "email" });
-		assert.match(start([sent]).message.content, /plain-text email \(no Markdown/);
+		assert.equal(start([sent(slack)]), undefined);
+		setTarget("email");
+		assert.match(start([sent(slack)]).message.content, /plain-text email \(no Markdown/);
+		setTarget("github");
+		assert.equal(start([github]), undefined);
+	});
+
+	test("keeps the last target when meta.json can't be read", () => {
+		setTarget("slack");
+		const slack = sent(start([]).message.content);
+		for (const broken of ["{ not json", JSON.stringify({ target: "teams" }), "null"]) {
+			writeMeta(broken);
+			assert.equal(start([slack]), undefined, broken);
+		}
+		rmSync(join(dir, "Draft Dir", "meta.json"));
+		assert.equal(start([slack]), undefined);
+	});
+
+	test("leaves out the target until meta.json has one", () => {
+		rmSync(join(dir, "Draft Dir", "meta.json"));
+		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath });
+		const content = start([]).message.content;
+		assert.ok(content.includes(draftPath));
+		assert.doesNotMatch(content, /Target platform/);
+		setTarget("email");
+		assert.match(start([sent(content)]).message.content, /Target platform: plain-text email/);
 	});
 });
 
@@ -141,9 +174,8 @@ describe("trust status", () => {
 
 describe("config", () => {
 	test("rejects missing or invalid values", () => {
-		assert.throws(() => readConfig({ DRAFTMUX_TARGET: "github" }), /DRAFTMUX_DRAFT_PATH/);
-		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "draft.md", DRAFTMUX_TARGET: "github" }), /absolute/);
-		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "/d.md", DRAFTMUX_TARGET: "teams" }), /DRAFTMUX_TARGET/);
+		assert.throws(() => readConfig({}), /DRAFTMUX_DRAFT_PATH/);
+		assert.throws(() => readConfig({ DRAFTMUX_DRAFT_PATH: "draft.md" }), /absolute/);
 		assert.throws(() => readConfig({ DRAFTMUX_MODE: "chat" }), /DRAFTMUX_MODE/);
 		assert.deepEqual(readConfig({ DRAFTMUX_MODE: "selection" }), { mode: "selection" });
 	});

@@ -13,7 +13,6 @@ fn forked(file: PathBuf) -> Result<draftmux_pi_rpc::Forked, String> {
         warning: None,
     })
 }
-use draftmux_storage::Target;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -34,7 +33,6 @@ impl Harness {
             cwd: dir.path().to_path_buf(),
             agent_dir: PathBuf::from("/profiles/work/agent"),
             draft_path: dir.path().join("draft/draft.md"),
-            target: Target::Slack,
             model: None,
             timeout: Duration::from_secs(10),
         };
@@ -122,7 +120,7 @@ fn forks_into_the_session_dir_with_the_draft_environment() {
     let env = &record["env"];
     assert_eq!(env["PI_CODING_AGENT_DIR"], "/profiles/work/agent");
     assert_eq!(env["DRAFTMUX_MODE"], "draft");
-    assert_eq!(env["DRAFTMUX_TARGET"], "slack");
+    assert!(env.get("DRAFTMUX_TARGET").is_none());
     assert_eq!(
         env["DRAFTMUX_DRAFT_PATH"],
         h.spec.draft_path.to_str().unwrap()

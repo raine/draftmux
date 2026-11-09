@@ -1337,7 +1337,6 @@ dependencies = [
 name = "draftmux-pi-rpc"
 version = "0.1.0"
 dependencies = [
- "draftmux-storage",
  "futures",
  "libc",
  "serde",

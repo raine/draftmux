@@ -457,10 +457,6 @@ impl Chrome {
         }
         self.set_plain_text(target, cx);
         self.preview = Some(markup_view::preview(target, self.editor.read(cx).text()));
-        if let Some(id) = self.drafts.current_id().map(str::to_owned) {
-            self.chat
-                .update(cx, |chat, cx| chat.set_target(&id, target, cx));
-        }
         self.sync_selection_draft(cx);
         cx.notify();
     }

@@ -16,18 +16,24 @@ It has no runtime dependencies; pi loads the TypeScript file directly. Tests:
 ## Configuration
 
 The app sets these environment variables on the pi process. They are read once
-when pi loads the extension, so changing the target or instructions means
-respawning the process. bash commands the agent runs inherit them.
+when pi loads the extension, so changing the instructions means respawning the
+process. bash commands the agent runs inherit them.
 
 | Variable                | Value                                                    |
 | ----------------------- | -------------------------------------------------------- |
 | `DRAFTMUX_MODE`         | `draft` (default when unset) or `selection`              |
 | `DRAFTMUX_DRAFT_PATH`   | Absolute path of the draft's `draft.md`; draft mode only |
-| `DRAFTMUX_TARGET`       | `github`, `slack` or `email`; draft mode only            |
 | `DRAFTMUX_INSTRUCTIONS` | The user's drafting instructions, any text; optional     |
 
 A missing or invalid value makes pi exit with status 1 and an error on stderr
 naming the variable, so pi never runs unguarded.
+
+The target platform comes from the `target` field (`github`, `slack` or
+`email`) of the `meta.json` beside `DRAFTMUX_DRAFT_PATH`, read before every run,
+so the app changes the target by writing `meta.json` without restarting pi.
+When the file can't be read or holds no valid target, the run keeps the last
+target read; before any successful read, the context message has no target
+line. pi may start before `meta.json` exists, as in the handoff fork.
 
 ## Invocations
 
@@ -77,7 +83,7 @@ Before a run, the extension adds a custom message with
 It holds the draft path, target platform, drafting instructions and the
 instruction to edit the file rather than paste drafts in chat. pi saves it in
 the session, and the chat pane should hide it. It is added again only when its
-text changes, for example after a respawn with a different target, so a long
+text changes, for example after the target changes, so a long
 chat holds one copy. Selection calls add none; their prompt carries the draft
 text and selection.
 

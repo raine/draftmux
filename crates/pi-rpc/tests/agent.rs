@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use draftmux_pi_rpc::{
     Agent, AgentEvent, AssistantDelta, Disposition, Error, Event, LaunchSpec, ThinkingLevel,
 };
-use draftmux_storage::Target;
 use futures::channel::mpsc::{TryRecvError, UnboundedReceiver};
 use futures::executor::block_on;
 use serde_json::Value;
@@ -68,7 +67,6 @@ impl Harness {
             cwd: dir.path().to_path_buf(),
             agent_dir: PathBuf::from("/profiles/work/agent"),
             draft_path: dir.path().join("draft.md"),
-            target: Target::Slack,
             instructions: None,
             context_files: true,
         };
@@ -256,7 +254,7 @@ fn spawn_contract() {
     let env = &record["env"];
     assert_eq!(env["PI_CODING_AGENT_DIR"], "/profiles/work/agent");
     assert_eq!(env["DRAFTMUX_MODE"], "draft");
-    assert_eq!(env["DRAFTMUX_TARGET"], "slack");
+    assert!(env.get("DRAFTMUX_TARGET").is_none());
     assert_eq!(
         env["DRAFTMUX_DRAFT_PATH"],
         h.dir.path().join("draft.md").to_str().unwrap()

@@ -184,7 +184,6 @@ fn command(
         // The captured environment can carry values from a pi session the
         // app was launched from; selection mode reads none of them.
         .env_remove("DRAFTMUX_DRAFT_PATH")
-        .env_remove("DRAFTMUX_TARGET")
         .env_remove("DRAFTMUX_INSTRUCTIONS");
     pi
 }

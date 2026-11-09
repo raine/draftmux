@@ -1,11 +1,12 @@
 /**
  * Draftmux extension, shipped inside Draftmux.app and loaded with `-e`.
  *
- * Configured per process through DRAFTMUX_* environment variables; see
- * README.md for the contract with the app.
+ * Configured per process through DRAFTMUX_* environment variables, and per
+ * run through the draft's meta.json; see README.md for the contract with the
+ * app.
  */
 
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +19,7 @@ type Target = "github" | "slack" | "email";
 
 type Config =
 	| { mode: "selection" }
-	| { mode: "draft"; draftPath: string; target: Target; instructions: string };
+	| { mode: "draft"; draftPath: string; instructions: string };
 
 /** The same text as `syntax` in crates/draftmux/src/selection.rs. */
 const TARGET_SYNTAX: Record<Target, string> = {
@@ -39,12 +40,16 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
 	if (!draftPath || !isAbsolute(draftPath)) {
 		throw new Error("DRAFTMUX_DRAFT_PATH must be set to the absolute path of draft.md");
 	}
-	const target = env.DRAFTMUX_TARGET;
-	if (!target || !Object.hasOwn(TARGET_SYNTAX, target)) {
-		const names = Object.keys(TARGET_SYNTAX).map((name) => `"${name}"`).join(", ");
-		throw new Error(`DRAFTMUX_TARGET must be one of ${names}, got "${target ?? ""}"`);
-	}
-	return { mode, draftPath, target: target as Target, instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "" };
+	return { mode, draftPath, instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "" };
+}
+
+/** The target in the `meta.json` beside the draft file; undefined if it can't be read. */
+function readTarget(draftPath: string): Target | undefined {
+	try {
+		const target = JSON.parse(readFileSync(join(dirname(draftPath), "meta.json"), "utf8"))?.target;
+		if (typeof target === "string" && Object.hasOwn(TARGET_SYNTAX, target)) return target as Target;
+	} catch {}
+	return undefined;
 }
 
 /** Resolves a tool's `path` argument the way pi's edit/write tools do (`resolveToCwd`). */
@@ -68,12 +73,12 @@ function canonicalPath(path: string): string {
 	return path;
 }
 
-function contextMessage(config: Extract<Config, { mode: "draft" }>): string {
+function contextMessage(config: Extract<Config, { mode: "draft" }>, target: Target | undefined): string {
 	const lines = [
 		"[Draftmux] You are helping the user polish a message in Draftmux.",
 		"",
 		`Draft file: ${config.draftPath}`,
-		`Target platform: ${TARGET_SYNTAX[config.target]}`,
+		...(target ? [`Target platform: ${TARGET_SYNTAX[target]}`] : []),
 		"",
 		"- Make every change to the draft by editing that file with the edit or write tool; the user sees it in the Draftmux editor. Don't paste drafts or rewritten versions in chat; use chat for discussion.",
 		"- Read the file before editing: the user may have changed it since your last edit.",
@@ -123,8 +128,12 @@ export default function draftmux(pi: ExtensionAPI) {
 		};
 	});
 
+	// The app changes the target without restarting pi, so it is read before
+	// every run; a failed read keeps the last one.
+	let target: Target | undefined;
 	pi.on("before_agent_start", (_event, ctx) => {
-		const content = contextMessage(config);
+		target = readTarget(config.draftPath) ?? target;
+		const content = contextMessage(config, target);
 		const previous = ctx.sessionManager
 			.buildSessionProjection()
 			.messages.findLast((m) => m.role === "custom" && m.customType === CONTEXT_MESSAGE_TYPE);
