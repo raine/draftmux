@@ -63,9 +63,17 @@ impl Chrome {
                 .rounded(px(6.))
                 .when(selected, |row| row.bg(palette.selected_row))
                 // As in Finder and Mail, the right-clicked row gets a ring
-                // without being selected.
+                // without being selected. An overlay, since a shadow would
+                // also fill the row and a border would shift its content.
                 .when(menu_open, |row| {
-                    row.shadow(vec![shadow(palette.accent, 0., 0., 2.)])
+                    row.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(px(6.))
+                            .border_2()
+                            .border_color(palette.accent),
+                    )
                 })
                 .on_mouse_down(
                     MouseButton::Right,

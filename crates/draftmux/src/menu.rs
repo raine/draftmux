@@ -26,6 +26,9 @@ pub fn menu_panel<A: Clone + 'static>(
         .max_w(px(360.))
         .p(px(4.))
         .rounded(px(7.))
+        // AppKit's menu font size, wherever the menu is placed.
+        .text_size(px(13.))
+        .line_height(px(16.))
         .bg(c.menu)
         .shadow(vec![
             shadow(hex(0x00000033), 0., 0., 0.5),
