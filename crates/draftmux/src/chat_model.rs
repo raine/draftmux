@@ -162,21 +162,37 @@ impl ChatModel {
         cx.notify();
     }
 
-    fn label(&self) -> SharedString {
+    /// The model, and the thinking level when there is a model; the model
+    /// is what gets cut short when the row is narrow.
+    fn label(&self) -> (SharedString, Option<SharedString>) {
         match &self.state {
-            None => "π …".into(),
-            Some(State { model: None, .. }) => "π no model".into(),
+            None => ("π …".into(), None),
+            Some(State { model: None, .. }) => ("π no model".into(), None),
+            Some(State {
+                model: Some(model),
+                thinking_level,
+                ..
+            }) => (
+                format!("π {}/{}", model.provider, model.id).into(),
+                Some(format!("thinking {}", thinking_level.as_str()).into()),
+            ),
+        }
+    }
+
+    fn tooltip(&self) -> SharedString {
+        match &self.state {
             Some(State {
                 model: Some(model),
                 thinking_level,
                 ..
             }) => format!(
-                "π {}/{} · thinking {}",
+                "{}/{} with thinking level {}. Click to switch the model.",
                 model.provider,
                 model.id,
                 thinking_level.as_str()
             )
             .into(),
+            _ => "Click to switch the model".into(),
         }
     }
 }
@@ -184,6 +200,7 @@ impl ChatModel {
 impl Render for ChatModel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *theme::palette(cx);
+        let (model, thinking) = self.label();
         div()
             .relative()
             .flex()
@@ -195,13 +212,22 @@ impl Render for ChatModel {
                 div()
                     .id("chat-model")
                     .min_w_0()
-                    .truncate()
+                    .flex()
                     .cursor_pointer()
+                    .tooltip(crate::tooltip::text(self.tooltip()))
                     .when(self.switching, |label| label.opacity(0.5))
                     .when(!self.switching, |label| {
                         label.active(|style| style.opacity(0.8))
                     })
-                    .child(self.label())
+                    .child(div().min_w_0().truncate().child(model))
+                    .when_some(thinking, |label, thinking| {
+                        label.child(
+                            div()
+                                .flex_none()
+                                .whitespace_nowrap()
+                                .child(SharedString::from(format!(" · {thinking}"))),
+                        )
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
