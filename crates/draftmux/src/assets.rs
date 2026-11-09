@@ -6,6 +6,7 @@ use gpui::{AssetSource, Result, SharedString};
 
 pub const ARCHIVE_ICON: &str = "icons/archive.svg";
 pub const PREVIEW_ICON: &str = "icons/preview.svg";
+pub const EDITOR_PANE_ICON: &str = "icons/editor-pane.svg";
 pub const COPY_ICON: &str = "icons/copy.svg";
 /// Slack's orientation of the copy icon, for its code block header.
 pub const SLACK_COPY_ICON: &str = "icons/copy-slack.svg";
@@ -39,6 +40,10 @@ pub const ALERT_CAUTION_ICON: &str = "icons/alert-caution.svg";
 const ASSETS: &[(&str, &[u8])] = &[
     (ARCHIVE_ICON, include_bytes!("../assets/icons/archive.svg")),
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
+    (
+        EDITOR_PANE_ICON,
+        include_bytes!("../assets/icons/editor-pane.svg"),
+    ),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
     (
         SLACK_COPY_ICON,

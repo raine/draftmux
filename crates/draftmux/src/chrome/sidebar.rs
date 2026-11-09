@@ -86,7 +86,7 @@ impl Chrome {
         }
     }
 
-    fn focus_sidebar(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_sidebar(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         window.focus(&self.sidebar_focus, cx);
         if let Some(index) = self
             .drafts

@@ -15,14 +15,14 @@ use anyhow::Result;
 use draftmux_storage::{Store, Target};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    App, BoxShadow, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyBinding,
-    MouseButton, Pixels, Point, ScrollHandle, SharedString, Subscription, Task, Window,
-    WindowControlArea, actions, div, point, prelude::*, px, svg,
+    App, BoxShadow, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
+    FontWeight, Hsla, KeyBinding, MouseButton, Pixels, Point, ScrollHandle, SharedString,
+    Subscription, Task, Window, WindowControlArea, actions, div, point, prelude::*, px, svg,
 };
 use markup::Document;
 
 use crate::app_settings::AppSettings;
-use crate::assets::PREVIEW_ICON;
+use crate::assets::{EDITOR_PANE_ICON, PREVIEW_ICON};
 use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
@@ -32,11 +32,16 @@ use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::selection_popover::SelectionPopover;
 use crate::theme::{self, Palette};
 
-actions!(chrome, [TogglePreview]);
+actions!(chrome, [ToggleEditor, TogglePreview]);
 
 const TOOLBAR_HEIGHT: Pixels = px(52.);
 const SIDEBAR_WIDTH: Pixels = px(228.);
 const CHAT_WIDTH: Pixels = px(340.);
+const CHAT_MIN_WIDTH: Pixels = px(260.);
+/// Room the chat never takes from the editor and preview.
+const CONTENT_MIN_WIDTH: Pixels = px(320.);
+/// How long the chat width settles before it is saved.
+const CHAT_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(300);
 /// Origin of the close button; vertically centres the buttons in the toolbar.
 pub const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(20.), px(19.));
 /// How often relative times in the sidebar are redrawn.
@@ -44,18 +49,23 @@ const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
     sidebar::init(cx);
-    cx.bind_keys([KeyBinding::new(
-        editor::secondary!("alt-p"),
-        TogglePreview,
-        None,
-    )]);
+    cx.bind_keys([
+        KeyBinding::new(editor::secondary!("alt-e"), ToggleEditor, None),
+        KeyBinding::new(editor::secondary!("alt-p"), TogglePreview, None),
+    ]);
 }
+
+/// The drag that resizes the chat column.
+struct ChatResize;
 
 pub struct Chrome {
     /// Set on toolbar mouse-down; the first mouse-move then hands the drag to
     /// the window server, so a plain click never starts a move.
     should_move: bool,
     drafts: Drafts,
+    store: Store,
+    chat_width: Pixels,
+    save_chat_width: Task<()>,
     /// Shows the selected draft; reused across drafts.
     editor: Entity<Editor>,
     formatter: Entity<Formatter>,
@@ -63,6 +73,8 @@ pub struct Chrome {
     selection: Entity<SelectionPopover>,
     /// The selected draft's text parsed for its target.
     preview: Option<Document>,
+    /// At least one of the markdown editor and the preview is shown.
+    show_editor: bool,
     show_preview: bool,
     /// Why the selected draft's last save failed; cleared by the next save.
     save_error: Option<SharedString>,
@@ -88,23 +100,25 @@ impl Render for Chrome {
                 .flex_1()
                 .min_w_0()
                 .flex()
-                .child(
-                    pane(palette.pane, &palette)
-                        .flex_1()
-                        .relative()
-                        .child(SelectionPopover::wrap(
-                            &self.selection,
-                            self.editor.clone(),
-                            cx,
-                        ))
-                        .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),
-                )
+                .when(self.show_editor, |row| {
+                    row.child(
+                        pane(palette.pane, &palette)
+                            .flex_1()
+                            .relative()
+                            .child(SelectionPopover::wrap(
+                                &self.selection,
+                                self.editor.clone(),
+                                cx,
+                            ))
+                            .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),
+                    )
+                })
                 .when(self.show_preview, |row| {
                     row.child(
                         pane(palette.pane, &palette)
                             .flex_1()
                             .relative()
-                            .border_l_1()
+                            .when(self.show_editor, |pane| pane.border_l_1())
                             .child(self.preview_body(window, cx))
                             .child(scrollbar(
                                 Source::Handle(self.preview_scroll.clone()),
@@ -126,7 +140,12 @@ impl Render for Chrome {
             .flex()
             .flex_col()
             .text_color(palette.text)
-            .on_action(cx.listener(|this, _: &TogglePreview, _, cx| this.toggle_preview(cx)))
+            .on_action(
+                cx.listener(|this, _: &ToggleEditor, window, cx| this.toggle_editor(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &TogglePreview, window, cx| this.toggle_preview(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &Format, _, cx| {
                 if this.drafts.current().is_some() {
                     this.formatter
@@ -139,6 +158,12 @@ impl Render for Chrome {
                     cx.quit();
                 }
             }))
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<ChatResize>, window, cx| {
+                    let width = window.viewport_size().width - event.event.position.x;
+                    this.resize_chat(clamp_chat_width(width, window), cx);
+                }),
+            )
             .child(self.toolbar(cx))
             .child(
                 div()
@@ -149,10 +174,12 @@ impl Render for Chrome {
                     .child(content)
                     .child(
                         pane(palette.chat, &palette)
-                            .w(CHAT_WIDTH)
+                            .w(clamp_chat_width(self.chat_width, window))
                             .flex_none()
+                            .relative()
                             .border_l_1()
-                            .child(self.chat.clone()),
+                            .child(self.chat.clone())
+                            .child(chat_resize_handle(cx)),
                     ),
             )
             .children(self.toast(cx));
@@ -211,14 +238,19 @@ impl Chrome {
             }
         });
 
+        let chat_width = store.chat_width().map_or(CHAT_WIDTH, px);
         let mut chrome = Self {
             should_move: false,
-            drafts: Drafts::new(store),
+            drafts: Drafts::new(store.clone()),
+            store,
+            chat_width,
+            save_chat_width: Task::ready(()),
             editor,
             formatter,
             chat,
             selection,
             preview: None,
+            show_editor: true,
             show_preview: true,
             save_error: None,
             toast: None,
@@ -343,7 +375,9 @@ impl Chrome {
         self.chat
             .update(cx, |chat, cx| chat.set_draft(draft.as_ref(), cx));
         self.preview_scroll.set_offset(Point::default());
-        window.focus(&self.editor.focus_handle(cx), cx);
+        if self.show_editor {
+            window.focus(&self.editor.focus_handle(cx), cx);
+        }
         cx.notify();
         Ok(())
     }
@@ -356,7 +390,41 @@ impl Chrome {
             .update(cx, |selection, cx| selection.set_draft(draft, cx));
     }
 
-    fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+    /// Sets the chat column's width and saves it once dragging pauses.
+    fn resize_chat(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if width == self.chat_width {
+            return;
+        }
+        self.chat_width = width;
+        let store = self.store.clone();
+        self.save_chat_width = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(CHAT_WIDTH_SAVE_DELAY).await;
+            if let Err(err) = store.set_chat_width(f32::from(width)) {
+                eprintln!("draftmux: saving the chat width: {err:#}");
+            }
+        });
+        cx.notify();
+    }
+
+    /// Hiding the only visible pane shows the other one instead.
+    fn toggle_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_editor = !self.show_editor;
+        if self.show_editor {
+            window.focus(&self.editor.focus_handle(cx), cx);
+        } else {
+            self.show_preview = true;
+            // Keys would otherwise go on editing text that isn't on screen.
+            if self.editor.focus_handle(cx).contains_focused(window, cx) {
+                self.focus_sidebar(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_preview && !self.show_editor {
+            self.toggle_editor(window, cx);
+        }
         self.show_preview = !self.show_preview;
         cx.notify();
     }
@@ -570,6 +638,8 @@ impl Chrome {
         };
         let subtitle = match (&self.save_error, current) {
             (Some(error), _) => Some((error.clone(), palette.danger)),
+            // The sample's directory is just where it was created.
+            (None, Some(draft)) if draft.meta.is_sample() => None,
             (None, Some(draft)) => Some((
                 tilde(&draft.meta.cwd, std::env::home_dir().as_deref()).into(),
                 palette.faint,
@@ -659,6 +729,35 @@ impl Chrome {
             .child(self.formatter.clone())
             .child(
                 div()
+                    .id("toggle-editor")
+                    .h(px(24.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.))
+                    .group("toggle-editor")
+                    .hover(|style| style.bg(palette.hover))
+                    .active(|style| style.opacity(0.8))
+                    .tooltip(crate::tooltip::text(if self.show_editor {
+                        editor::by_platform!("Hide Markdown (⌥⌘E)", "Hide Markdown (Ctrl+Alt+E)")
+                    } else {
+                        editor::by_platform!("Show Markdown (⌥⌘E)", "Show Markdown (Ctrl+Alt+E)")
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_editor(window, cx)))
+                    .child(
+                        svg()
+                            .path(EDITOR_PANE_ICON)
+                            .size(px(16.))
+                            .text_color(if self.show_editor {
+                                palette.muted
+                            } else {
+                                palette.faint
+                            })
+                            .group_hover("toggle-editor", |style| style.text_color(palette.text)),
+                    ),
+            )
+            .child(
+                div()
                     .id("toggle-preview")
                     .h(px(24.))
                     .px(px(6.))
@@ -673,7 +772,7 @@ impl Chrome {
                     } else {
                         editor::by_platform!("Show Preview (⌥⌘P)", "Show Preview (Ctrl+Alt+P)")
                     }))
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_preview(cx)))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_preview(window, cx)))
                     .child(
                         svg()
                             .path(PREVIEW_ICON)
@@ -756,6 +855,33 @@ fn sidebar_column(palette: &Palette) -> gpui::Div {
         .bg(palette.sidebar)
         .border_r_1()
         .border_color(palette.sidebar_edge)
+}
+
+/// `width` kept within the chat's minimum and the room the window leaves it
+/// beside the sidebar and the content.
+fn clamp_chat_width(width: Pixels, window: &Window) -> Pixels {
+    let max = window.viewport_size().width - SIDEBAR_WIDTH - CONTENT_MIN_WIDTH;
+    width.min(max).max(CHAT_MIN_WIDTH)
+}
+
+/// A strip over the chat's left edge that drags to resize it; a double click
+/// restores the default width.
+fn chat_resize_handle(cx: &mut Context<Chrome>) -> impl IntoElement {
+    div()
+        .id("chat-resize")
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(-3.))
+        .w(px(6.))
+        .cursor(CursorStyle::ResizeLeftRight)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_drag(ChatResize, |_, _, _, cx| cx.new(|_| Empty))
+        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+            if event.click_count() == 2 {
+                this.resize_chat(clamp_chat_width(CHAT_WIDTH, window), cx);
+            }
+        }))
 }
 
 fn pane(bg: Hsla, palette: &Palette) -> gpui::Div {

@@ -13,6 +13,7 @@ const SESSION_DIR: &str = "session";
 /// Records that the sample draft was created. A dot name and a file, so
 /// [`Store::scan`] never takes it for a draft.
 const SAMPLE_MARKER: &str = ".sample-created";
+const CHAT_WIDTH: &str = ".chat-width";
 
 /// The drafts directory. Stateless: every call reads or writes the files
 /// directly, so the app and the CLI can share it.
@@ -240,6 +241,22 @@ impl Store {
         atomic::write(&self.root.join(SAMPLE_MARKER), b"")
     }
 
+    /// The chat column's width in pixels as the user last left it, if it
+    /// was ever resized.
+    pub fn chat_width(&self) -> Option<f32> {
+        let text = std::fs::read_to_string(self.root.join(CHAT_WIDTH)).ok()?;
+        text.trim()
+            .parse()
+            .ok()
+            .filter(|width: &f32| width.is_finite())
+    }
+
+    pub fn set_chat_width(&self, width: f32) -> Result<()> {
+        std::fs::create_dir_all(&self.root)
+            .with_context(|| format!("creating {}", self.root.display()))?;
+        atomic::write(&self.root.join(CHAT_WIDTH), width.to_string().as_bytes())
+    }
+
     fn draft_dir(&self, id: &str) -> Result<PathBuf> {
         validate_id(id)?;
         Ok(self.root.join(id))
@@ -460,6 +477,16 @@ mod tests {
         assert_eq!(ids(scan.drafts.iter()), [&good]);
         assert_eq!(scan.errors.len(), 1);
         assert_eq!(scan.errors[0].0, bad.dir);
+    }
+
+    #[test]
+    fn chat_width_round_trips_and_is_not_a_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        assert_eq!(store.chat_width(), None);
+        store.set_chat_width(412.5).unwrap();
+        assert_eq!(store.chat_width(), Some(412.5));
+        assert!(store.scan().unwrap().drafts.is_empty());
     }
 
     #[test]
