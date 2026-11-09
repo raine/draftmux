@@ -15,8 +15,22 @@ use crate::editor::{Editor, EditorStyle};
 use crate::highlight::Styles;
 use crate::movement::RowGeometry;
 
+/// Inputs that can change shaped text or its row geometry. Selection and scroll
+/// are intentionally absent: they only reposition or decorate that geometry.
+#[derive(Clone, PartialEq)]
+struct LayoutKey {
+    revision: u64,
+    wrap_width: Pixels,
+    style: EditorStyle,
+    marked: Option<Range<usize>>,
+    read_only: bool,
+    markdown: bool,
+}
+
 /// The text as last laid out, in window coordinates.
+#[derive(Clone)]
 pub(crate) struct Layout {
+    key: LayoutKey,
     /// Buffer revision the layout was built from.
     pub revision: u64,
     pub bounds: Bounds<Pixels>,
@@ -26,8 +40,8 @@ pub(crate) struct Layout {
     pub wrap_width: Pixels,
     /// Height of the text plus padding, before scrolling.
     pub content_height: Pixels,
-    lines: Vec<Line>,
-    rows: Vec<Row>,
+    lines: Rc<Vec<Line>>,
+    rows: Rc<Vec<Row>>,
 }
 
 struct Line {
@@ -89,7 +103,7 @@ impl Layout {
     pub fn range_rects(&self, range: Range<usize>, to_edge: bool) -> Vec<Bounds<Pixels>> {
         let range = range.start.min(self.len())..range.end.min(self.len());
         let mut rects = Vec::new();
-        for row in &self.rows {
+        for row in self.rows.iter() {
             if row.range.end < range.start || row.range.start > range.end {
                 continue;
             }
@@ -208,66 +222,82 @@ impl Element for EditorElement {
         let style = editor.style.clone();
         let wrap_width = (bounds.size.width - style.padding_x * 2.).max(px(1.));
 
-        let text = SharedString::from(editor.buffer.text().to_string());
         let revision = editor.buffer.revision();
-        let runs = text_runs(
-            &text,
-            &editor.highlights,
-            editor.buffer.marked(),
-            editor.read_only,
-            &style,
-        );
-        let shaped = window
-            .text_system()
-            .shape_text(text, style.font_size, &runs, Some(wrap_width), None)
-            .unwrap_or_default();
+        let key = LayoutKey {
+            revision,
+            wrap_width,
+            style: style.clone(),
+            marked: editor.buffer.marked(),
+            read_only: editor.read_only,
+            markdown: editor.markdown,
+        };
+        let mut layout = if let Some(previous) =
+            editor.layout.as_ref().filter(|layout| layout.key == key)
+        {
+            (**previous).clone()
+        } else {
+            let text = SharedString::from(editor.buffer.text().to_string());
+            let runs = text_runs(
+                &text,
+                &editor.highlights,
+                editor.buffer.marked(),
+                editor.read_only,
+                &style,
+            );
+            let shaped = window
+                .text_system()
+                .shape_text(text, style.font_size, &runs, Some(wrap_width), None)
+                .unwrap_or_default();
 
-        let mut lines = Vec::with_capacity(shaped.len());
-        let mut rows = Vec::new();
-        let mut start = 0;
-        let mut y = Pixels::ZERO;
-        for (line_ix, shaped) in shaped.into_iter().enumerate() {
-            let layout = &shaped.unwrapped_layout;
-            let mut row_start = start;
-            let mut row_y = y;
-            for boundary in shaped.wrap_boundaries() {
-                let end = start + layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+            let mut lines = Vec::with_capacity(shaped.len());
+            let mut rows = Vec::new();
+            let mut start = 0;
+            let mut y = Pixels::ZERO;
+            for (line_ix, shaped) in shaped.into_iter().enumerate() {
+                let layout = &shaped.unwrapped_layout;
+                let mut row_start = start;
+                let mut row_y = y;
+                for boundary in shaped.wrap_boundaries() {
+                    let end = start + layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                    rows.push(Row {
+                        range: row_start..end,
+                        line: line_ix,
+                        y: row_y,
+                    });
+                    row_start = end;
+                    row_y += style.line_height;
+                }
                 rows.push(Row {
-                    range: row_start..end,
+                    range: row_start..start + shaped.len(),
                     line: line_ix,
                     y: row_y,
                 });
-                row_start = end;
-                row_y += style.line_height;
+                let len = shaped.len();
+                lines.push(Line { start, y, shaped });
+                start += len + 1;
+                y = row_y + style.line_height;
             }
-            rows.push(Row {
-                range: row_start..start + shaped.len(),
-                line: line_ix,
-                y: row_y,
-            });
-            let len = shaped.len();
-            lines.push(Line { start, y, shaped });
-            start += len + 1;
-            y = row_y + style.line_height;
-        }
 
-        // Scroll: clamp, then bring the caret into view if it moved.
-        let content_height = y + style.padding_top + style.padding_bottom;
-        let max_scroll = (content_height - bounds.size.height).max(Pixels::ZERO);
+            let content_height = y + style.padding_top + style.padding_bottom;
+            Layout {
+                key,
+                revision,
+                bounds,
+                origin: Point::default(),
+                line_height: style.line_height,
+                wrap_width,
+                content_height,
+                lines: Rc::new(lines),
+                rows: Rc::new(rows),
+            }
+        };
+        // Scroll and window position can change without reshaping the text.
+        layout.bounds = bounds;
+        layout.origin = Point::default();
+        let max_scroll = (layout.content_height - bounds.size.height).max(Pixels::ZERO);
         let selection = editor.buffer.selection();
         let mut scroll_y = editor.scroll_y;
-        let autoscroll = editor.autoscroll;
-        let mut layout = Layout {
-            revision,
-            bounds,
-            origin: Point::default(),
-            line_height: style.line_height,
-            wrap_width,
-            content_height,
-            lines,
-            rows,
-        };
-        if autoscroll {
+        if editor.autoscroll {
             let caret = layout.caret_bounds(selection.head, selection.affinity);
             let top = caret.origin.y + style.padding_top;
             let bottom = top + style.line_height;
@@ -326,7 +356,7 @@ impl Element for EditorElement {
                 }
             }
 
-            for line in &layout.lines {
+            for line in layout.lines.iter() {
                 let top = layout.origin.y + line.y;
                 let height = layout.line_height * (line.shaped.wrap_boundaries().len() + 1);
                 if top + height < bounds.top() || top > bounds.bottom() {
@@ -474,5 +504,65 @@ fn color_for(styles: Styles, read_only: bool, style: &EditorStyle) -> Hsla {
         style.muted
     } else {
         style.text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key() -> LayoutKey {
+        LayoutKey {
+            revision: 1,
+            wrap_width: px(400.),
+            style: EditorStyle::default(),
+            marked: None,
+            read_only: false,
+            markdown: true,
+        }
+    }
+
+    #[test]
+    fn invalidates_geometry_for_every_shaping_input() {
+        let original = key();
+        let changes: [fn(&mut LayoutKey); 9] = [
+            |key| key.revision += 1,
+            |key| key.wrap_width += px(1.),
+            |key| key.marked = Some(0..1),
+            |key| key.read_only = true,
+            |key| key.markdown = false,
+            |key| key.style.font_size += px(1.),
+            |key| key.style.line_height += px(1.),
+            |key| key.style.padding_top += px(1.),
+            |key| key.style.text = gpui::red(),
+        ];
+        assert!(original == original.clone());
+        for change in changes {
+            let mut changed = original.clone();
+            change(&mut changed);
+            assert!(original != changed);
+        }
+    }
+
+    #[test]
+    fn repositioning_shares_rows_and_shaped_lines() {
+        let layout = Layout {
+            key: key(),
+            revision: 1,
+            bounds: Bounds::default(),
+            origin: point(px(12.), px(-20.)),
+            line_height: px(20.),
+            wrap_width: px(400.),
+            content_height: px(100.),
+            lines: Rc::new(Vec::new()),
+            rows: Rc::new(Vec::new()),
+        };
+        let mut moved = layout.clone();
+        moved.bounds.origin = point(px(100.), px(200.));
+        moved.origin = Point::default();
+        assert!(Rc::ptr_eq(&layout.lines, &moved.lines));
+        assert!(Rc::ptr_eq(&layout.rows, &moved.rows));
+        assert_eq!(layout.origin, point(px(12.), px(-20.)));
+        assert_eq!(layout.bounds.origin, Point::default());
     }
 }

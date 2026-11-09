@@ -210,7 +210,7 @@ pub enum EditorEvent {
 }
 
 /// Fonts, colours and metrics. The default is the light draft editor.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct EditorStyle {
     pub font: Font,
     pub font_size: Pixels,
@@ -270,7 +270,7 @@ pub struct Editor {
     /// Markdown style spans over the buffer text, in byte offsets; empty
     /// when markdown highlighting is off.
     pub(crate) highlights: Vec<(Range<usize>, Styles)>,
-    markdown: bool,
+    pub(crate) markdown: bool,
     /// A mouse drag selection is in progress.
     selecting: bool,
     /// What the drag selects by, and the unit it started on.
