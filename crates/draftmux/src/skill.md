@@ -67,30 +67,51 @@ focus it: report the error and the ID, and don't run `open` again (that
 creates a second draft). If it exits 1 without an ID, nothing was created;
 report the error.
 
+## Draft fields
+
+Write a `title:` field for PRs and issues, or `subject:`, `to:` and `cc:`
+for emails, in YAML frontmatter at the top of the draft file. Only include
+known recipients; do not invent addresses. When handing off, include these
+requirements in the note for Draftmux's drafting agent.
+
+```markdown
+---
+title: Add Aven to the app showcase
+---
+
+Adds [Aven](https://github.com/raine/aven) to the app showcase.
+```
+
+Any key is allowed. Fields keep their file order. Use string values (quote
+values containing YAML punctuation); use comma-separated strings for recipients
+or labels, not YAML lists or nested objects. Empty values are allowed.
+The preview shows fields separately, and Copy in every format copies only the
+body. The editor keeps the raw frontmatter.
+
 ## Read it back
 
 When the user says the draft is done, run the locator again, then read the
 draft from Draftmux. Use the text exactly as it is: the user has already
 polished it, so don't rewrite, reformat, shorten or fix it.
 
-For a command that takes a file, pass the draft's path. This keeps backticks,
-`$` and quotes in the body intact. Always quote the path, which can contain
-spaces, and check `show` succeeded before using it:
+Use `--json` to read the ordered `fields` map and the `body` without
+frontmatter. The top-level `title` is the stored metadata title, not the
+frontmatter title; use `fields.title` for a PR or issue.
 
 ```sh
-p=$(draftmux show --source "$f" --path) || exit 1
-gh pr create --title 'Retry failed uploads' --body-file "$p"
+draft=$(draftmux show --source "$f" --json) || exit 1
+title=$(printf '%s' "$draft" | jq -er '.fields.title | select(length > 0)') || exit 1
+printf '%s' "$draft" | jq -j '.body' | gh pr create --title "$title" --body-file -
 ```
 
-Other file-taking commands work the same way: `gh pr comment --body-file "$p"`,
-`gh issue comment --body-file "$p"`, `git commit -F "$p"`.
+For email, read `fields.subject`, `fields.to` and `fields.cc` separately
+from `body`. Other keys are returned unchanged. For a Slack tool call, pass
+the JSON `body` as-is. Do not send or post until the user asks.
 
-Only when the destination has no file option (for example a Slack tool call),
-print the text and pass it on character for character:
-
-```sh
-draftmux show --source "$f"
-```
+Plain `draftmux show` returns the complete file, including frontmatter.
+`--path` returns the raw file's path: use it for editing, not as a
+`--body-file` when fields are present. Malformed frontmatter is kept as body,
+with an empty fields map, so no text is lost.
 
 If several drafts came from this session, `show` uses the most recently active
 one and lists the others on stderr; mention them to the user. If it finds no

@@ -117,6 +117,32 @@ Alternatives remains available. Manage the list in Settings → Selection
 actions. For anything else, keep the text selected and ask the draft's agent in
 the chat: the selection is attached to your next message.
 
+### Draft fields
+
+Drafts can start with YAML frontmatter for fields separate from the message:
+
+```markdown
+---
+title: Add Aven to the app showcase
+---
+
+Adds [Aven](https://github.com/raine/aven) to the app showcase.
+```
+
+Use `title` for PRs and issues, or `subject`, `to` and `cc` for emails.
+Other keys are allowed. Values are strings; use comma-separated text for
+recipients or labels rather than YAML lists. The preview shows fields in file
+order, with a copy button for each. Copy (⌘⇧C) in every format excludes the
+frontmatter. Edit the fields as raw text in the editor.
+
+The sidebar and header use `title`, then `subject`, then the first body line.
+An explicitly stored metadata title takes precedence. Invalid frontmatter stays
+part of the body so no text is lost.
+
+`draftmux show --json` returns an ordered `fields` map and the body without
+frontmatter. Plain `show` and the file returned by `show --path` retain the
+frontmatter. The JSON top-level `title` remains the stored metadata title.
+
 ### Draftmux skill
 
 Agents hand messages off to Draftmux with the `draftmux` skill: it opens the

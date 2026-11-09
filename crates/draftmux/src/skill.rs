@@ -243,6 +243,15 @@ fn create(path: &Path, want: &Want) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn embedded_instructions_cover_fields_and_safe_readback() {
+        assert!(super::BODY.contains("YAML frontmatter"));
+        assert!(super::BODY.contains("fields.title"));
+        assert!(super::BODY.contains("fields.subject"));
+        assert!(super::BODY.contains("--json"));
+        assert!(!super::BODY.contains("--body-file \"$p\""));
+    }
+
     use super::*;
 
     fn profile(home: &Path, name: &str) -> Profile {

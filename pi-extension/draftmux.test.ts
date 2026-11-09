@@ -160,6 +160,9 @@ describe("context message", () => {
 		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath });
 		const content = start([]).message.content;
 		assert.ok(content.includes(draftPath));
+		assert.match(content, /YAML frontmatter/);
+		assert.match(content, /title: for PRs and issues/);
+		assert.match(content, /subject:, to: and cc: for emails/);
 		assert.doesNotMatch(content, /Target platform/);
 		setTarget("plain");
 		assert.match(start([sent(content)]).message.content, /Target platform: plain text/);

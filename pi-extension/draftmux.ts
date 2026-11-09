@@ -85,6 +85,7 @@ function contextMessage(config: Extract<Config, { mode: "draft" }>, target: Targ
 		"",
 		"- Make every change to the draft by editing that file with the edit or write tool; the user sees it in the Draftmux editor. Don't paste drafts or rewritten versions in chat; use chat for discussion.",
 		"- Read the file before editing: the user may have changed it since your last edit.",
+		"- Put fields in YAML frontmatter at the very top of the draft, between --- lines: title: for PRs and issues; subject:, to: and cc: for emails (only known recipients). Any other key is allowed. Use string values, quoting YAML punctuation as needed; use comma-separated strings rather than lists. Keep these fields separate from the message body. Draftmux displays them separately and copies only the body.",
 		"- Change only what the user asks for; keep the rest of the draft, including its formatting, as it is.",
 		"- edit and write only work on the draft file. read, bash and other tools work as usual for checking facts.",
 	];
