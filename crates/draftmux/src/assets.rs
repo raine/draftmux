@@ -4,11 +4,6 @@ use std::borrow::Cow;
 
 use gpui::{AssetSource, Result, SharedString};
 
-pub const GITHUB_ICON: &str = "icons/github.svg";
-pub const PLAIN_TEXT_ICON: &str = "icons/plain-text.svg";
-pub const RICH_TEXT_ICON: &str = "icons/rich-text.svg";
-/// 48px, drawn at 16px: `img()` rasterizes SVGs at 1x, which blurs on Retina.
-pub const SLACK_ICON: &str = "icons/slack.png";
 pub const ARCHIVE_ICON: &str = "icons/archive.svg";
 pub const PREVIEW_ICON: &str = "icons/preview.svg";
 pub const COPY_ICON: &str = "icons/copy.svg";
@@ -42,16 +37,6 @@ pub const ALERT_WARNING_ICON: &str = "icons/alert-warning.svg";
 pub const ALERT_CAUTION_ICON: &str = "icons/alert-caution.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
-    (GITHUB_ICON, include_bytes!("../assets/icons/github.svg")),
-    (
-        PLAIN_TEXT_ICON,
-        include_bytes!("../assets/icons/plain-text.svg"),
-    ),
-    (
-        RICH_TEXT_ICON,
-        include_bytes!("../assets/icons/rich-text.svg"),
-    ),
-    (SLACK_ICON, include_bytes!("../assets/icons/slack.png")),
     (ARCHIVE_ICON, include_bytes!("../assets/icons/archive.svg")),
     (PREVIEW_ICON, include_bytes!("../assets/icons/preview.svg")),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),

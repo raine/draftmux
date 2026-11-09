@@ -3,15 +3,13 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use draftmux_storage::Target;
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, FontWeight, Hsla, KeyBinding, MouseButton,
-    MouseDownEvent, Pixels, Point, SharedString, Task, actions, anchored, deferred, div, img,
-    prelude::*, px, svg,
+    App, ClipboardItem, Context, FontWeight, KeyBinding, MouseButton, MouseDownEvent, Pixels,
+    Point, SharedString, Task, actions, anchored, deferred, div, prelude::*, px, svg,
 };
 
 use super::{Chrome, shadow, sidebar_column};
-use crate::assets::{ARCHIVE_ICON, GITHUB_ICON, PLAIN_TEXT_ICON, RICH_TEXT_ICON, SLACK_ICON};
+use crate::assets::ARCHIVE_ICON;
 use crate::drafts::{relative_time, tilde};
 use crate::menu::{MenuItem, menu_panel};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
@@ -168,16 +166,6 @@ impl Chrome {
                 }))
                 .child(
                     div()
-                        .size(px(16.))
-                        .h(px(18.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(platform_icon(row.draft.meta.target, palette.text)),
-                )
-                .child(
-                    div()
                         .flex_1()
                         .min_w_0()
                         .flex()
@@ -198,9 +186,14 @@ impl Chrome {
                                         .font_weight(FontWeight::MEDIUM)
                                         .child(row.title.clone()),
                                 )
+                                // Wide enough that the title stops short of the
+                                // archive button, which replaces the time on hover.
                                 .child(
                                     div()
                                         .flex_none()
+                                        .min_w(px(20.))
+                                        .flex()
+                                        .justify_end()
                                         .text_size(px(11.))
                                         .text_color(palette.faint)
                                         .group_hover(group.clone(), |style| style.opacity(0.))
@@ -212,17 +205,22 @@ impl Chrome {
                                 .flex()
                                 .items_center()
                                 .gap(px(6.))
-                                .when(row.draft.meta.is_sample(), |line| {
-                                    line.child(sample_badge(&palette))
-                                })
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(12.))
-                                        .text_color(palette.muted)
-                                        .child(tilde(&row.draft.meta.cwd, home.as_deref())),
-                                ),
+                                // The sample's directory is just where it was
+                                // created, not a project it came from.
+                                .map(|line| {
+                                    if row.draft.meta.is_sample() {
+                                        line.child(sample_badge(&palette))
+                                    } else {
+                                        line.child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(12.))
+                                                .text_color(palette.muted)
+                                                .child(tilde(&row.draft.meta.cwd, home.as_deref())),
+                                        )
+                                    }
+                                }),
                         ),
                 )
                 .child(
@@ -236,14 +234,10 @@ impl Chrome {
                         .items_center()
                         .justify_center()
                         .rounded(px(5.))
-                        .bg(if selected {
-                            palette.archive_button_selected
-                        } else {
-                            palette.archive_button
-                        })
                         .opacity(0.)
                         .group_hover(group, |style| style.opacity(1.))
-                        .hover(|style| style.bg(palette.archive_button_hover))
+                        // Translucent, so it darkens whatever the row shows.
+                        .hover(|style| style.bg(palette.selected_row))
                         .active(|style| style.opacity(0.8))
                         .tooltip(crate::tooltip::text("Archive"))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -519,24 +513,6 @@ fn sample_badge(palette: &theme::Palette) -> impl IntoElement {
         .line_height(px(13.))
         .font_weight(FontWeight::SEMIBOLD)
         .child("Sample")
-}
-
-/// The target's mark: Slack's keeps its own colours, the others take the
-/// text colour.
-fn platform_icon(target: Target, text: Hsla) -> AnyElement {
-    let tinted = |path| {
-        svg()
-            .path(path)
-            .size(px(15.))
-            .text_color(text)
-            .into_any_element()
-    };
-    match target {
-        Target::Github => tinted(GITHUB_ICON),
-        Target::Slack => img(SLACK_ICON).size(px(15.)).into_any_element(),
-        Target::Rich => tinted(RICH_TEXT_ICON),
-        Target::Plain => tinted(PLAIN_TEXT_ICON),
-    }
 }
 
 #[cfg(test)]
