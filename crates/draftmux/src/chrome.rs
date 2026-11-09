@@ -789,7 +789,11 @@ impl Chrome {
             .child(
                 sidebar_column(&palette)
                     .when(!self.show_sidebar, |bar| {
-                        bar.w(px(100.)).bg(palette.toolbar).border_r_0()
+                        bar.w(px(100.))
+                            .bg(palette.toolbar)
+                            .border_r_0()
+                            .border_b_1()
+                            .border_color(palette.hairline)
                     })
                     .children(crate::platform::toolbar_items(&palette)),
             )
