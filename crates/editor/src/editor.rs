@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, EventEmitter,
@@ -234,7 +235,19 @@ pub struct Editor {
     /// What the last events reported, to emit only real changes.
     reported_revision: u64,
     reported_selection: Range<usize>,
+    /// Whether the blinking caret is in its visible phase.
+    pub(crate) caret_on: bool,
+    /// Set by each paint of the focused editor; the blink stops when a
+    /// period passes without one.
+    painted_focused: bool,
+    blinking: bool,
+    /// Bumped when the caret moves or the text changes, which ends the
+    /// running blink so the caret stays solid while the user types.
+    blink_epoch: u64,
 }
+
+/// How long the caret stays on, and then off, while blinking.
+const BLINK_PERIOD: Duration = Duration::from_millis(530);
 
 impl EventEmitter<EditorEvent> for Editor {}
 
@@ -260,7 +273,57 @@ impl Editor {
             layout: None,
             selecting: false,
             reported_selection: 0..0,
+            caret_on: true,
+            painted_focused: false,
+            blinking: false,
+            blink_epoch: 0,
         }
+    }
+
+    /// Called by each paint of the focused editor: starts the caret
+    /// blinking after a period without caret movement or edits.
+    pub(crate) fn painted_focused(&mut self, cx: &mut Context<Self>) {
+        self.painted_focused = true;
+        if self.blinking {
+            return;
+        }
+        self.blinking = true;
+        let epoch = self.blink_epoch;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(BLINK_PERIOD).await;
+                let go = this
+                    .update(cx, |this, cx| this.blink(epoch, cx))
+                    .unwrap_or(false);
+                if !go {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Toggles the caret; false ends the blink.
+    fn blink(&mut self, epoch: u64, cx: &mut Context<Self>) -> bool {
+        if epoch != self.blink_epoch {
+            return false;
+        }
+        if !self.painted_focused {
+            self.blinking = false;
+            self.caret_on = true;
+            return false;
+        }
+        self.painted_focused = false;
+        self.caret_on = !self.caret_on;
+        cx.notify();
+        true
+    }
+
+    /// Shows the caret solid and restarts the blink from the beginning.
+    fn reset_blink(&mut self) {
+        self.blink_epoch += 1;
+        self.blinking = false;
+        self.caret_on = true;
     }
 
     pub fn text(&self) -> &str {
@@ -397,6 +460,9 @@ impl Editor {
                 window.notify_text_selection_changed(&self.focus_handle);
             }
             window.invalidate_character_coordinates();
+        }
+        if edited || selection_changed {
+            self.reset_blink();
         }
         self.autoscroll |= autoscroll;
         cx.notify();

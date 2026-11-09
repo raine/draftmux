@@ -289,7 +289,9 @@ impl Element for EditorElement {
         let style = editor.style.clone();
         let focus_handle = editor.focus_handle.clone();
         let selection = editor.buffer.selection();
-        let focused = focus_handle.is_focused(window);
+        // As in AppKit, an inactive window shows no caret and a gray selection.
+        let focused = focus_handle.is_focused(window) && window.is_window_active();
+        let caret_on = editor.caret_on;
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.editor.clone()),
@@ -326,7 +328,7 @@ impl Element for EditorElement {
                     .ok();
             }
 
-            if focused && selection.is_empty() {
+            if focused && selection.is_empty() && caret_on {
                 let caret = layout.caret_bounds(selection.head, selection.affinity);
                 window.paint_quad(fill(
                     Bounds::new(caret.origin, size(px(2.), caret.size.height)),
@@ -334,6 +336,10 @@ impl Element for EditorElement {
                 ));
             }
         });
+        if focused {
+            self.editor
+                .update(cx, |editor, cx| editor.painted_focused(cx));
+        }
     }
 }
 
