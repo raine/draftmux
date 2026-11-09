@@ -58,6 +58,12 @@ pub fn system_dark(_cx: &App) -> bool {
     best.is_some_and(|name| &*name == dark_aqua)
 }
 
+/// Whether this app is the active one. Focus moving between its own
+/// windows, such as into a popup panel, leaves it active.
+pub fn app_active(_cx: &mut App) -> bool {
+    MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).isActive())
+}
+
 pub fn reduce_transparency() -> bool {
     // objc2-app-kit declares this under its NSAccessibility feature, which
     // gpui's dependency graph doesn't enable.

@@ -25,7 +25,7 @@ use gpui::{
 
 actions!(selectable, [CopySelection, SelectAllText]);
 
-const KEY_CONTEXT: &str = "SelectableText";
+pub const KEY_CONTEXT: &str = "SelectableText";
 /// How often a drag past the edge scrolls.
 const AUTOSCROLL_TICK: Duration = Duration::from_millis(16);
 /// The most a drag past the edge scrolls in one tick.
@@ -99,6 +99,9 @@ pub struct TextSelection {
     texts: BTreeMap<Key, SharedString>,
     /// Paragraphs painted in the current frame, in paint order.
     painted: Vec<Painted>,
+    /// Where the current frame painted the selection, one rectangle per
+    /// line fragment.
+    rects: Vec<Bounds<Pixels>>,
     anchor: Option<Pos>,
     head: Option<Pos>,
     /// While the button is down: what the drag extends by and the unit it
@@ -109,6 +112,8 @@ pub struct TextSelection {
     pointer: Point<Pixels>,
     /// Whether a drag past the edge is scrolling.
     autoscrolling: bool,
+    /// Whether a press outside the area keeps the selection.
+    sticky: bool,
 }
 
 struct Painted {
@@ -132,13 +137,22 @@ impl TextSelection {
             focus: cx.focus_handle(),
             texts: BTreeMap::new(),
             painted: Vec::new(),
+            rects: Vec::new(),
             anchor: None,
             head: None,
             dragging: None,
             scroller: None,
             pointer: Point::default(),
             autoscrolling: false,
+            sticky: false,
         }
+    }
+
+    /// Keeps the selection when the user presses outside the area, so it
+    /// can be used from elsewhere; a press inside or [`Self::clear`] still
+    /// clears it.
+    pub fn set_sticky(&mut self, sticky: bool) {
+        self.sticky = sticky;
     }
 
     /// Lets a drag past the surface's edge scroll it with `scroller`.
@@ -171,6 +185,21 @@ impl TextSelection {
     ) {
         self.texts.insert(key, text);
         self.painted.push(Painted { key, bounds, hit });
+    }
+
+    pub(crate) fn painted_selection(&mut self, rect: Bounds<Pixels>) {
+        self.rects.push(rect);
+    }
+
+    /// Window-space rectangles of the selection as last painted, in
+    /// reading order, for anchoring popovers.
+    pub fn selection_rects(&self) -> &[Bounds<Pixels>] {
+        &self.rects
+    }
+
+    /// Whether the mouse button is down on a selection being made.
+    pub fn is_dragging(&self) -> bool {
+        self.dragging.is_some()
     }
 
     /// The selected start and end, in reading order; `None` when nothing is
@@ -422,7 +451,13 @@ pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
         })
         .on_mouse_down_out({
             let state = state.clone();
-            move |_, _, cx| state.update(cx, |this, cx| this.clear(cx))
+            move |_, _, cx| {
+                state.update(cx, |this, cx| {
+                    if !this.sticky {
+                        this.clear(cx);
+                    }
+                })
+            }
         })
         // Laid out first, so it forgets the last frame's paragraphs before
         // this frame's register; while dragging it follows the pointer
@@ -431,7 +466,12 @@ pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
             canvas(
                 {
                     let state = frame.clone();
-                    move |_, _, cx| state.update(cx, |this, _| this.painted.clear())
+                    move |_, _, cx| {
+                        state.update(cx, |this, _| {
+                            this.painted.clear();
+                            this.rects.clear();
+                        })
+                    }
                 },
                 move |_, _, window, cx| {
                     if frame.read(cx).dragging.is_none() {

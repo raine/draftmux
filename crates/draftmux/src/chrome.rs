@@ -9,6 +9,7 @@
 
 mod sidebar;
 
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -81,6 +82,8 @@ pub struct Chrome {
     /// Lines the preview's text up with the markdown; built on demand and
     /// dropped when the preview changes.
     preview_map: Option<SourceMap>,
+    /// The editor selection last set from the preview's.
+    mirrored: Option<Range<usize>>,
     /// At least one of the markdown editor and the preview is shown.
     show_editor: bool,
     show_preview: bool,
@@ -127,7 +130,10 @@ impl Render for Chrome {
                             .flex_1()
                             .relative()
                             .when(self.show_editor, |pane| pane.border_l_1())
-                            .child(self.preview_body(window, cx))
+                            .child({
+                                let body = self.preview_body(window, cx).into_any_element();
+                                SelectionPopover::wrap_preview(&self.selection, body, cx)
+                            })
                             .child(scrollbar(
                                 Source::Handle(self.preview_scroll.clone()),
                                 preview_bar,
@@ -206,22 +212,34 @@ impl Chrome {
         let editor = theme::editor(Palette::editor_style, cx);
         let formatter = cx.new(|cx| Formatter::new(editor.clone(), cx));
         let chat = cx.new(|cx| Chat::new(editor.clone(), cx));
-        let selection = cx.new(|cx| SelectionPopover::new(editor.clone(), window, cx));
         let preview_scroll = ScrollHandle::new();
         let preview_selection = cx.new(|cx| {
             let mut selection = TextSelection::new(cx);
             selection.set_scroller(Some(Scroller::Handle(preview_scroll.clone())));
+            // It stays selected while the user writes about it in the chat.
+            selection.set_sticky(true);
             selection
         });
+        let selection = cx
+            .new(|cx| SelectionPopover::new(editor.clone(), preview_selection.clone(), window, cx));
         let subscriptions = vec![
             cx.observe(&preview_selection, |_, _, cx| cx.notify()),
             cx.subscribe(&preview_selection, |this, _, _: &SelectionChanged, cx| {
                 this.preview_selected(cx)
             }),
             cx.subscribe(&chat, |this, _, event, cx| this.chat_event(event, cx)),
-            cx.subscribe(&editor, |this, editor, event, cx| {
-                if *event == EditorEvent::Edited {
-                    this.edited(editor.read(cx).text().to_owned(), cx);
+            cx.subscribe(&editor, |this, editor, event, cx| match event {
+                EditorEvent::Edited => this.edited(editor.read(cx).text().to_owned(), cx),
+                // Selecting something else in the editor replaces the
+                // preview's selection.
+                EditorEvent::SelectionChanged(range) => {
+                    if this.mirrored.as_ref() != Some(range)
+                        && this.preview_selection.read(cx).range().is_some()
+                    {
+                        this.mirrored = None;
+                        this.preview_selection
+                            .update(cx, |selection, cx| selection.clear(cx));
+                    }
                 }
             }),
             // Appearance is app-wide, and this window lives as long as the
@@ -270,6 +288,7 @@ impl Chrome {
             preview: None,
             preview_selection,
             preview_map: None,
+            mirrored: None,
             show_editor: true,
             show_preview: true,
             save_error: None,
@@ -535,12 +554,22 @@ impl Chrome {
     fn preview_selected(&mut self, cx: &mut Context<Self>) {
         let selection = self.preview_selection.read(cx);
         let Some((start, end)) = selection.range() else {
+            // Clearing the preview's selection clears the editor's copy of
+            // it, unless the editor has selected something else since.
+            if let Some(mirrored) = self.mirrored.take()
+                && self.editor.read(cx).selected_range() == mirrored
+            {
+                self.editor.update(cx, |editor, cx| {
+                    editor.select_range(mirrored.start..mirrored.start, cx)
+                });
+            }
             return;
         };
         let map = self.preview_map.get_or_insert_with(|| {
             SourceMap::new(self.editor.read(cx).text(), selection.paragraphs())
         });
         if let Some(range) = map.range(start, end) {
+            self.mirrored = Some(range.clone());
             self.editor
                 .update(cx, |editor, cx| editor.select_range(range, cx));
         }

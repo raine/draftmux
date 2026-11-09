@@ -1,6 +1,8 @@
 //! The selection actions popover (history/docs/design.md, Selection menu): actions
 //! for the editor selection, then the options pi returns, in a blurred popup
-//! window above the selection.
+//! window above the selection. A selection made in the preview selects its
+//! markdown in the editor, and the popover then sits above the preview's
+//! selection instead.
 //!
 //! gpui can't anchor a popup to its parent on macOS, so the popover is a
 //! `WindowKind::PopUp` panel placed in screen coordinates. It holds no state
@@ -32,6 +34,7 @@ use shell_env::ShellEnv;
 
 use crate::app_settings::AppSettings;
 use crate::resources;
+use crate::selectable::TextSelection;
 use crate::selection::{self, Action as SelectionAction, Request, SelectionConfig};
 use crate::theme::{self, Palette};
 
@@ -60,22 +63,26 @@ const ITEM_RADIUS: Pixels = px(crate::platform::POPUP_RADIUS - 5.);
 const RESULTS_WIDTH: Pixels = px(380.);
 
 pub fn init(cx: &mut App) {
-    let popover = Some(format!("{POPOVER_CONTEXT} > Editor"));
-    let results = Some(format!("{RESULTS_CONTEXT} > Editor"));
-    let mut bindings = vec![
-        KeyBinding::new("escape", Dismiss, popover.as_deref()),
-        KeyBinding::new("up", Previous, popover.as_deref()),
-        KeyBinding::new("down", Next, popover.as_deref()),
-        KeyBinding::new("enter", Confirm, popover.as_deref()),
-        KeyBinding::new("up", Previous, results.as_deref()),
-        KeyBinding::new("down", Next, results.as_deref()),
-        KeyBinding::new("enter", Confirm, results.as_deref()),
-    ];
-    for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
-        .into_iter()
-        .enumerate()
-    {
-        bindings.push(KeyBinding::new(key, Pick(index), results.as_deref()));
+    let mut bindings = Vec::new();
+    // The editor, or the preview when the selection was made there.
+    for focused in ["Editor", crate::selectable::KEY_CONTEXT] {
+        let popover = Some(format!("{POPOVER_CONTEXT} > {focused}"));
+        let results = Some(format!("{RESULTS_CONTEXT} > {focused}"));
+        bindings.extend([
+            KeyBinding::new("escape", Dismiss, popover.as_deref()),
+            KeyBinding::new("up", Previous, popover.as_deref()),
+            KeyBinding::new("down", Next, popover.as_deref()),
+            KeyBinding::new("enter", Confirm, popover.as_deref()),
+            KeyBinding::new("up", Previous, results.as_deref()),
+            KeyBinding::new("down", Next, results.as_deref()),
+            KeyBinding::new("enter", Confirm, results.as_deref()),
+        ]);
+        for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+            .into_iter()
+            .enumerate()
+        {
+            bindings.push(KeyBinding::new(key, Pick(index), results.as_deref()));
+        }
     }
     // Bound after the editor's keys, so these win at the same depth.
     cx.bind_keys(bindings);
@@ -92,6 +99,11 @@ pub struct SelectionPopover {
     content_size: Option<Size<Pixels>>,
     /// The editor pane in window coordinates, measured by [`Self::wrap`].
     pane: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The preview's selection, which the editor's mirrors while it has one.
+    preview: Entity<TextSelection>,
+    /// The preview pane in window coordinates, measured by
+    /// [`Self::wrap_preview`].
+    preview_pane: Rc<Cell<Option<Bounds<Pixels>>>>,
     pending_show: Option<Task<()>>,
     reconcile_scheduled: bool,
     /// The panel is being opened; it is set once it has.
@@ -113,6 +125,8 @@ enum Mode {
     Actions(Vec<draftmux_settings::SelectionAction>),
     /// Dropping it cancels the call and kills pi.
     Running {
+        /// What is being done, shown beside the spinner.
+        label: SharedString,
         _cancel: CancelOnDrop,
         _task: Task<()>,
     },
@@ -137,7 +151,12 @@ struct Panel {
 }
 
 impl SelectionPopover {
-    pub fn new(editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        editor: Entity<Editor>,
+        preview: Entity<TextSelection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscriptions = vec![
             cx.subscribe(&editor, |this, _, event, cx| this.editor_event(event, cx)),
             cx.observe(&editor, |this, _, cx| this.schedule_reconcile(cx)),
@@ -177,6 +196,8 @@ impl SelectionPopover {
             panel: None,
             content_size: None,
             pane: Rc::new(Cell::new(None)),
+            preview,
+            preview_pane: Rc::new(Cell::new(None)),
             pending_show: None,
             reconcile_scheduled: false,
             opening: false,
@@ -193,8 +214,26 @@ impl SelectionPopover {
     /// Wraps the editor pane: adds the popover's key contexts and actions,
     /// and measures the pane for placing the popover.
     pub fn wrap(this: &Entity<Self>, editor: impl IntoElement, cx: &App) -> AnyElement {
+        let pane = this.read(cx).pane.clone();
+        Self::wrap_pane(this, editor, pane, false, cx)
+    }
+
+    /// Wraps the preview pane like [`Self::wrap`] wraps the editor's. The
+    /// preview scrolls without the editor knowing, so while the popover is
+    /// over the preview it is placed again after every frame.
+    pub fn wrap_preview(this: &Entity<Self>, preview: impl IntoElement, cx: &App) -> AnyElement {
+        let pane = this.read(cx).preview_pane.clone();
+        Self::wrap_pane(this, preview, pane, true, cx)
+    }
+
+    fn wrap_pane(
+        this: &Entity<Self>,
+        child: impl IntoElement,
+        pane: Rc<Cell<Option<Bounds<Pixels>>>>,
+        preview: bool,
+        cx: &App,
+    ) -> AnyElement {
         let popover = this.read(cx);
-        let pane = popover.pane.clone();
         let context = match &popover.open {
             Some(Open {
                 mode: Mode::Results(_),
@@ -231,13 +270,15 @@ impl SelectionPopover {
                 let this = this.clone();
                 move |pick: &Pick, _, cx| this.update(cx, |this, cx| this.apply(pick.0, cx))
             })
-            .child(editor)
+            .child(child)
             .child(
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
                         pane.set(Some(bounds));
-                        if entity.read(cx).reconcile_scheduled {
+                        let popover = entity.read(cx);
+                        let follow = preview && popover.open.is_some() && popover.in_preview(cx);
+                        if popover.reconcile_scheduled || follow {
                             let this = entity.clone();
                             window.defer(cx, move |window, cx| {
                                 this.update(cx, |this, cx| this.reconcile(window, cx))
@@ -251,6 +292,12 @@ impl SelectionPopover {
                 .size_full(),
             )
             .into_any_element()
+    }
+
+    /// Whether the selection was made in the preview, so the popover goes
+    /// there.
+    fn in_preview(&self, cx: &App) -> bool {
+        self.preview.read(cx).range().is_some()
     }
 
     /// Whether a draft is focused that selection calls can fork.
@@ -285,7 +332,9 @@ impl SelectionPopover {
                 cx.background_executor().timer(SHOW_DELAY).await;
                 let Ok(selecting) = this.update(cx, |this, cx| {
                     let editor = this.editor.read(cx);
-                    editor.is_selecting() || editor.is_context_menu_open()
+                    editor.is_selecting()
+                        || editor.is_context_menu_open()
+                        || this.preview.read(cx).is_dragging()
                 }) else {
                     return;
                 };
@@ -336,33 +385,18 @@ impl SelectionPopover {
         }
     }
 
-    /// The app lost focus: hide the popover, unless the focus went to the
-    /// popover's own panel (a click on it).
+    /// A window lost focus: hide the popover if the focus left the app.
+    /// Clicking the panel moves focus from the main window to the panel and
+    /// back without the app losing it; checking either window's focus while
+    /// that settles would catch both inactive and hide the popover under
+    /// the click.
     fn dismiss_unless_panel_active(&mut self, cx: &mut Context<Self>) {
-        if self.panel.is_none() && !self.opening {
-            return self.dismiss(cx);
-        }
-        // The panel becomes key after the main window resigns. A resize can
-        // replace the panel meanwhile, so check whichever one is current.
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
             this.update(cx, |this, cx| {
-                if this.opening {
-                    return this.dismiss_unless_panel_active(cx);
-                }
-                let panel_active = this.panel.as_ref().is_some_and(|panel| {
-                    panel
-                        .handle
-                        .update(cx, |_, window, _| window.is_window_active())
-                        .unwrap_or(false)
-                });
-                let main_active = this
-                    .main
-                    .update(cx, |_, window, _| window.is_window_active())
-                    .unwrap_or(false);
-                if !panel_active && !main_active {
+                if !crate::platform::app_active(cx) {
                     this.dismiss(cx);
                 }
             })
@@ -453,9 +487,18 @@ impl SelectionPopover {
             return;
         };
         if index == 0 {
-            self.run(SelectionAction::Alternatives, cx);
+            self.run(
+                SelectionAction::Alternatives,
+                "Generating alternatives…".into(),
+                cx,
+            );
         } else if let Some(action) = actions.get(index - 1) {
-            self.run(SelectionAction::Instruction(action.prompt.clone()), cx);
+            let label = format!("{}…", action.name).into();
+            self.run(
+                SelectionAction::Instruction(action.prompt.clone()),
+                label,
+                cx,
+            );
         }
     }
 
@@ -467,7 +510,7 @@ impl SelectionPopover {
         });
     }
 
-    fn run(&mut self, action: SelectionAction, cx: &mut Context<Self>) {
+    fn run(&mut self, action: SelectionAction, label: SharedString, cx: &mut Context<Self>) {
         let Some(open) = &self.open else { return };
         let Some(meta) = self.draft.as_ref().map(|draft| &draft.meta) else {
             return;
@@ -520,6 +563,7 @@ impl SelectionPopover {
         });
         self.set_mode(
             Mode::Running {
+                label,
                 _cancel: CancelOnDrop(cancel),
                 _task: task,
             },
@@ -597,11 +641,13 @@ impl SelectionPopover {
     /// `None` when the popover is hidden or the selection is scrolled away.
     fn placement(&self, window: &Window, cx: &App) -> Option<Bounds<Pixels>> {
         self.open.as_ref()?;
-        let pane = self.pane.get()?;
-        let rows: Vec<_> = self
-            .editor
-            .read(cx)
-            .selection_bounds()
+        let (pane, rows) = if self.in_preview(cx) {
+            let rows = self.preview.read(cx).selection_rects().to_vec();
+            (self.preview_pane.get()?, rows)
+        } else {
+            (self.pane.get()?, self.editor.read(cx).selection_bounds())
+        };
+        let rows: Vec<_> = rows
             .into_iter()
             .filter(|row| row.bottom() > pane.top() && row.top() < pane.bottom())
             .collect();
@@ -757,12 +803,16 @@ impl SelectionPopover {
                     )
                     .into_any_element()
             }
-            Mode::Running { .. } => div()
+            Mode::Running { label, .. } => div()
                 .px(px(10.))
                 .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
                 .text_color(palette.muted)
                 .whitespace_nowrap()
-                .child("Generating alternatives…")
+                .child(crate::chat::spinner(&palette))
+                .child(label.clone())
                 .into_any_element(),
             Mode::Results(options) => {
                 let keys = format!("1–{} or ↵ apply", options.len());

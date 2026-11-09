@@ -299,13 +299,16 @@ impl Element for InlineText {
                             x + piece.line.x_for_index(ix - piece.start)
                                 - piece.line.x_for_index(frag.range.start)
                         };
-                        window.paint_quad(fill(
-                            Bounds::from_corners(
-                                point(at(start), top),
-                                point(at(end), top + shaped.line_height),
-                            ),
-                            *color,
-                        ));
+                        let rect = Bounds::from_corners(
+                            point(at(start), top),
+                            point(at(end), top + shaped.line_height),
+                        );
+                        window.paint_quad(fill(rect, *color));
+                        if let Some(select) = &self.select {
+                            select
+                                .state
+                                .update(cx, |state, _| state.painted_selection(rect));
+                        }
                     }
                 }
                 // `paint` centers the text's own ascent and descent in the

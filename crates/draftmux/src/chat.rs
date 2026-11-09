@@ -1340,7 +1340,7 @@ fn wave(time: f32) -> f32 {
 }
 
 /// A grey ring with a turning accent arc.
-fn spinner(palette: &Palette) -> impl IntoElement {
+pub(crate) fn spinner(palette: &Palette) -> impl IntoElement {
     div()
         .size(px(11.))
         .relative()

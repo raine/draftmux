@@ -28,6 +28,15 @@ pub fn reduce_motion() -> bool {
     false
 }
 
+/// Whether one of the app's windows has focus.
+pub fn app_active(cx: &mut gpui::App) -> bool {
+    cx.windows().into_iter().any(|window| {
+        window
+            .update(cx, |_, window, _| window.is_window_active())
+            .unwrap_or(false)
+    })
+}
+
 /// Retaining the clipboard keeps X11 selection ownership alive.
 struct RichClipboard(arboard::Clipboard);
 impl gpui::Global for RichClipboard {}
