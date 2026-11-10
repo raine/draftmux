@@ -62,6 +62,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: draftmux-${{ needs.macos.outputs.version }}-macos
@@ -70,8 +71,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The release notes are the tag's CHANGELOG.md section.
+          awk -v heading="## $GITHUB_REF_NAME " '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md >notes.md
+          if grep -q '[^[:space:]]' notes.md; then
+            notes=(--notes-file notes.md)
+          else
+            notes=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" "${notes[@]}"
 
   update-tap:
     needs: [macos, publish]

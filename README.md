@@ -284,12 +284,21 @@ the disk image is published and may use `#{version}`.
 The Release workflow runs `scripts/release-macos` on GitHub Actions with the
 variables above as repository secrets. Pushing a `vVERSION` tag that matches
 the version in `crates/draftmux/Cargo.toml` publishes the disk image, the app
-archive and their checksums as a GitHub release, then writes the cask to
+archive and their checksums as a GitHub release, with that version's
+`CHANGELOG.md` section as its notes, then writes the cask to
 `Casks/draftmux.rb` in
 [raine/homebrew-draftmux](https://github.com/raine/homebrew-draftmux), using
 the `RELEASE_TOKEN` secret, a token that can push to that repository. Running
 the workflow by hand builds, signs and notarizes the same files as workflow
 artifacts without publishing anything.
+
+`just release` cuts a release with `cargo-release` from
+[rust-release-tools](https://github.com/raine/rust-release-tools): it bumps
+the patch version (or `minor`, `major`, or `current` to release the version
+as is) in `crates/draftmux/Cargo.toml`, writes the `CHANGELOG.md` entry and
+opens it for review, then commits, tags and pushes, which starts the Release
+workflow. Pass `--skip-changelog` to release the `## Unreleased` section as
+written.
 
 The bundle ID is `CFBundleIdentifier` in `macos/Info.plist`, which every
 script reads; the updater's `BUNDLE_ID` in `crates/draftmux/src/update.rs`

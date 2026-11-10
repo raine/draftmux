@@ -55,6 +55,10 @@ linux-app:
 linux-install:
     scripts/bundle-linux --install
 
+# Tag and push a release (patch, minor, major or current) for CI to publish
+release BUMP="patch" *ARGS:
+    cargo-release --skip-publish "$@"
+
 # Build a signed, notarized release disk image (needs Apple credentials)
 release-macos:
     scripts/release-macos
