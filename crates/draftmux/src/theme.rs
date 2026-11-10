@@ -1,5 +1,5 @@
 //! The app's colours and the system state that picks them: light or dark
-//! appearance, and the Reduce Transparency accessibility setting.
+//! appearance, Reduce Transparency, and Reduce Motion.
 //!
 //! [`Theme`] is a gpui global read at render time, so any window can use it
 //! with [`get`] or [`palette`]. Appearance changes call [`sync_window`], which
@@ -22,7 +22,7 @@ pub struct Theme {
     pub dark: bool,
     pub reduce_transparency: bool,
     pub palette: Palette,
-    /// Keeps the Reduce Transparency observer registered.
+    /// Keeps the accessibility display options observer registered.
     _observer: platform::AppearanceObserver,
 }
 
@@ -36,9 +36,10 @@ pub fn palette(cx: &App) -> &Palette {
     &get(cx).palette
 }
 
-/// Reads the system state and starts following Reduce Transparency. Call
-/// before opening windows so their first frame has the right colours.
+/// Reads the system appearance and accessibility settings before opening
+/// windows, and starts following accessibility display option changes.
 pub fn init(cx: &mut App) {
+    cx.set_reduce_motion(platform::reduce_motion());
     let observer = platform::observe_appearance(cx);
     let (dark, reduce_transparency) = (platform::system_dark(cx), platform::reduce_transparency());
     cx.set_global(Theme {
@@ -49,8 +50,8 @@ pub fn init(cx: &mut App) {
     });
 }
 
-/// Re-reads the system appearance and Reduce Transparency, refreshing every
-/// window if either changed. Call when a window's appearance changes.
+/// Re-reads the system appearance and accessibility display options,
+/// refreshing windows if they changed.
 #[cfg(target_os = "macos")]
 pub fn sync(cx: &mut App) {
     update(platform::system_dark(cx), cx);
@@ -61,6 +62,7 @@ pub fn sync_window(window: &gpui::Window, cx: &mut App) {
 }
 
 fn update(dark: bool, cx: &mut App) {
+    cx.set_reduce_motion(platform::reduce_motion());
     let reduce_transparency = platform::reduce_transparency();
     let theme = get(cx);
     if theme.dark == dark && theme.reduce_transparency == reduce_transparency {

@@ -132,7 +132,13 @@ impl Render for Chrome {
                             .relative()
                             .child(SelectionPopover::wrap(
                                 &self.selection,
-                                self.editor.clone(),
+                                self.editor.clone().cached(
+                                    StyleRefinement::default()
+                                        .absolute()
+                                        .top_0()
+                                        .left_0()
+                                        .size_full(),
+                                ),
                                 cx,
                             ))
                             .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),

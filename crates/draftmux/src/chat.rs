@@ -701,7 +701,7 @@ impl Chat {
         if let Some(session) = self.session()
             && index == session.transcript.items.len()
         {
-            return activity_row(session, &palette, window);
+            return activity_row(session, &palette);
         }
         let bubble = match self.session().and_then(|s| s.transcript.items.get(index)) {
             Some(Item::User { text, .. }) => {
@@ -1353,15 +1353,14 @@ fn tool_icon(name: &str) -> &'static str {
 }
 
 /// How long the brightness wave takes to cross the activity label.
-const WAVE_PERIOD: f32 = 1.4;
+const WAVE_PERIOD: f32 = 1.8;
 /// How far behind its predecessor each letter of the label brightens.
 const WAVE_STAGGER: f32 = 0.045;
 
 /// The last row while pi starts or runs: "Starting pi…", then "Thinking…",
-/// or "Writing…" once its reply streams in, with letters that brighten in a
-/// slow wave, as chat apps show it. Empty while a tool runs, since the tool's row shows its own
-/// spinner.
-fn activity_row(session: &Session, palette: &Palette, window: &mut Window) -> AnyElement {
+/// or "Writing…" once its reply streams in. Empty while a tool runs, since
+/// the tool's row shows its own spinner.
+fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
     let text = match session.transcript.items.last() {
         _ if session.starting() => "Starting pi…",
         Some(Item::Tool(tool)) if tool.running() => return div().into_any_element(),
@@ -1374,29 +1373,32 @@ fn activity_row(session: &Session, palette: &Palette, window: &mut Window) -> An
         .pb(px(10.))
         .px(px(16.))
         .text_size(px(13.))
-        .text_color(palette.muted);
-    if crate::platform::reduce_motion() {
-        return row.child(text).into_any_element();
-    }
-    window.request_animation_frame();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        // Reduced in f64: an f32 can't hold the epoch to the frame.
-        .as_secs_f64()
-        .rem_euclid(f64::from(WAVE_PERIOD)) as f32;
-    // One shaped run with a colour per letter, so the word keeps the
-    // font's spacing.
-    let highlights = text.char_indices().enumerate().map(|(ix, (at, c))| {
-        let lit = wave(now - ix as f32 * WAVE_STAGGER);
-        let style = HighlightStyle {
-            color: Some(palette.text.opacity(0.45 + 0.5 * lit)),
-            ..HighlightStyle::default()
-        };
-        (at..at + c.len_utf8(), style)
-    });
-    row.child(StyledText::new(text).with_highlights(highlights))
-        .into_any_element()
+        // Highlight blending preserves the base alpha. Resolve the muted
+        // colour onto the chat background so the wave can reach full contrast.
+        .text_color(palette.chat.blend(palette.muted));
+    // GPUI freezes repeating animations at phase zero for Reduce Motion.
+    let palette = *palette;
+    // Animate inside the element: list rows may be reused without calling
+    // their renderer. No chat-model or preview invalidation is needed.
+    row.with_animation(
+        "activity-shimmer",
+        Animation::new(Duration::from_secs_f32(WAVE_PERIOD))
+            .repeat_synced()
+            .with_max_fps(30.),
+        move |row, phase| {
+            // One shaped run preserves kerning and a fixed label width.
+            let highlights = text.char_indices().enumerate().map(|(ix, (at, c))| {
+                let lit = wave(phase * WAVE_PERIOD - ix as f32 * WAVE_STAGGER);
+                let style = HighlightStyle {
+                    color: Some(palette.text.opacity(lit)),
+                    ..HighlightStyle::default()
+                };
+                (at..at + c.len_utf8(), style)
+            });
+            row.child(StyledText::new(text).with_highlights(highlights))
+        },
+    )
+    .into_any_element()
 }
 
 /// The wave's brightness at `time` seconds: rises over the first 15% of
@@ -1573,6 +1575,35 @@ mod tests {
             Some("/home/user/.pi/agent".into())
         );
         assert_eq!(profile_label(Path::new(""), home), None);
+    }
+
+    #[test]
+    fn shimmer_can_reach_full_contrast_in_both_themes() {
+        for dark in [false, true] {
+            let palette = Palette::resolve(dark, false);
+            let base = palette.chat.blend(palette.muted);
+            assert_eq!(base.a, 1.);
+            assert_eq!(base.blend(palette.text.opacity(wave(0.))), base);
+            assert_eq!(base.blend(palette.text.opacity(1.)), palette.text);
+            assert_ne!(base, palette.text);
+        }
+    }
+
+    #[test]
+    fn activity_labels_rest_at_the_reduced_motion_phase() {
+        for text in ["Starting pi…", "Thinking…", "Writing…"] {
+            for (ix, _) in text.chars().enumerate() {
+                assert_eq!(wave(-(ix as f32) * WAVE_STAGGER), 0.);
+            }
+        }
+    }
+
+    #[test]
+    fn wave_is_bounded_and_continuous_at_the_loop() {
+        for step in -1800..3600 {
+            assert!((0.0..=1.0).contains(&wave(step as f32 / 1000.)));
+        }
+        assert!((wave(WAVE_PERIOD - 0.0001) - wave(0.0001)).abs() < 0.001);
     }
 
     #[test]
