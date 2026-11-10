@@ -1,0 +1,74 @@
+name: Release
+
+# A v* tag publishes a GitHub release of the signed, notarized macOS build,
+# which installed copies pick up through the app's automatic updates. Running
+# the workflow by hand builds, signs and notarizes the same files and keeps
+# them as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/draftmux/Cargo.toml | head -n 1)"
+          if [[ $GITHUB_REF_TYPE == tag && $GITHUB_REF_NAME != "v$version" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match crates/draftmux/Cargo.toml version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: Build, sign and notarize
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: scripts/release-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draftmux-${{ steps.version.outputs.version }}-macos
+          path: |
+            target/macos-release/${{ steps.version.outputs.version }}/*.dmg
+            target/macos-release/${{ steps.version.outputs.version }}/*.tar.gz
+            target/macos-release/${{ steps.version.outputs.version }}/*.sha256
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push'
+    needs: macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: draftmux-${{ needs.macos.outputs.version }}-macos
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
