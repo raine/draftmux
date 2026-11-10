@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
-    Animation, AnimationExt, App, Context, Entity, FontWeight, KeyBinding, SharedString,
-    Subscription, Task, Window, actions, div, prelude::*, px,
+    Animation, AnimationExt, App, Context, ElementId, Entity, FontWeight, KeyBinding, SharedString,
+    Subscription, Task, Window, actions, div, ease_out_quint, prelude::*, px,
 };
 use shell_env::ShellEnv;
 
@@ -169,10 +169,11 @@ impl Render for Formatter {
                     .max_w(px(360.))
                     .truncate()
                     .text_color(palette.muted)
-                    .child(message)
+                    .child(message.clone())
+                    // Keyed by the text, so a different message fades in too.
                     .with_animation(
-                        "format-message",
-                        Animation::new(MESSAGE_FADE),
+                        ElementId::Name(message),
+                        Animation::new(MESSAGE_FADE).with_easing(ease_out_quint()),
                         |message, delta| message.opacity(delta),
                     )
             }))
