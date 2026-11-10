@@ -29,9 +29,10 @@ use std::time::Duration;
 use draftmux_storage::Draft;
 use editor::{Editor, EditorEvent};
 use gpui::{
-    Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, KeyBinding, Pixels,
-    SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions, actions, canvas, div, point,
+    Action, Animation, AnimationExt, AnyElement, AnyWindowHandle, App, Bounds, Context, Div,
+    Entity, KeyBinding, Pixels, SharedString, Size, Stateful, Subscription, Task, Window,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, canvas, div, ease_out_quint,
+    point,
     popup::{
         PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
     },
@@ -69,6 +70,8 @@ const PADDING: Pixels = px(5.);
 /// them, inset by the padding.
 const ITEM_RADIUS: Pixels = px(crate::platform::POPUP_RADIUS - 5.);
 const RESULTS_WIDTH: Pixels = px(380.);
+/// How long a newly highlighted item takes to fade in.
+const HIGHLIGHT_FADE: Duration = Duration::from_millis(120);
 
 pub fn init(cx: &mut App) {
     let mut bindings = Vec::new();
@@ -824,30 +827,40 @@ impl SelectionPopover {
         };
         let palette = *theme::palette(cx);
         let item = |index: usize| {
-            let highlighted = open.highlighted == Some(index);
             div()
                 .id(("item", index))
                 .active(|style| style.opacity(0.8))
                 .rounded(ITEM_RADIUS)
-                .when(highlighted, |item| {
-                    item.bg(palette.accent).text_color(palette.on_accent)
-                })
                 .on_mouse_move({
                     let this = this.clone();
                     move |_, _, cx| this.update(cx, |this, cx| this.set_highlight(index, cx))
                 })
         };
+        // The highlight fades in when it lands on an item and drops off when
+        // it leaves, so sweeping across items doesn't leave a trail.
+        let highlight = |index: usize, item: Stateful<Div>| -> AnyElement {
+            if open.highlighted != Some(index) {
+                return item.into_any_element();
+            }
+            item.text_color(palette.on_accent)
+                .with_animation(
+                    ("item-highlight", index),
+                    Animation::new(HIGHLIGHT_FADE).with_easing(ease_out_quint()),
+                    move |item, delta| item.bg(palette.accent.opacity(delta)),
+                )
+                .into_any_element()
+        };
         match &open.mode {
-            Mode::Actions(actions) => {
-                div()
-                    .flex()
-                    .gap(px(2.))
-                    .flex_nowrap()
-                    .children(
-                        std::iter::once(("Alternatives", Some("✦")))
-                            .chain(actions.iter().map(|action| (action.name.as_str(), None)))
-                            .enumerate()
-                            .map(|(index, (label, icon))| {
+            Mode::Actions(actions) => div()
+                .flex()
+                .gap(px(2.))
+                .flex_nowrap()
+                .children(
+                    std::iter::once(("Alternatives", Some("✦")))
+                        .chain(actions.iter().map(|action| (action.name.as_str(), None)))
+                        .enumerate()
+                        .map(|(index, (label, icon))| {
+                            let item =
                                 item(index)
                                     .flex_none()
                                     .flex()
@@ -865,11 +878,11 @@ impl SelectionPopover {
                                         move |_, _, cx| {
                                             this.update(cx, |this, cx| this.pick_action(index, cx))
                                         }
-                                    })
-                            }),
-                    )
-                    .into_any_element()
-            }
+                                    });
+                            highlight(index, item)
+                        }),
+                )
+                .into_any_element(),
             Mode::Running { label, .. } => div()
                 .px(px(10.))
                 .py(px(8.))
@@ -890,7 +903,7 @@ impl SelectionPopover {
                     .gap(px(2.))
                     .children(options.iter().enumerate().map(|(index, option)| {
                         let highlighted = open.highlighted == Some(index);
-                        item(index)
+                        let item = item(index)
                             .flex()
                             .gap(px(8.))
                             .px(px(8.))
@@ -912,7 +925,8 @@ impl SelectionPopover {
                             .on_click({
                                 let this = this.clone();
                                 move |_, _, cx| this.update(cx, |this, cx| this.apply(index, cx))
-                            })
+                            });
+                        highlight(index, item)
                     }))
                     .child(footer(&[keys.as_str(), "↑↓ move", "esc cancel"], &palette))
                     .into_any_element()
