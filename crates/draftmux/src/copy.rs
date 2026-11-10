@@ -1,16 +1,23 @@
 //! The Copy action: puts the draft on the pasteboard ready for its target
 //! (history/docs/design.md, Output). Copying never changes the draft.
 
-use crate::assets::COPY_ICON;
+use std::time::Duration;
+
+use crate::assets::{CHECK_ICON, COPY_ICON};
 use crate::chrome::shadow;
 use crate::theme::Palette;
 use draftmux_storage::Target;
 use gpui::{
-    App, ClipboardItem, FontWeight, KeyBinding, actions, div, linear_color_stop, linear_gradient,
-    prelude::*, px, svg,
+    Animation, AnimationExt, App, ClipboardItem, ElementId, FontWeight, KeyBinding, actions, div,
+    ease_out_quint, linear_color_stop, linear_gradient, prelude::*, px, svg,
 };
 
 actions!(copy, [Copy]);
+
+/// How long the Copy button shows its checkmark after a copy.
+pub const CONFIRMATION: Duration = Duration::from_millis(1200);
+/// How long the Copy button's icons take to cross-fade.
+const ICON_FADE: Duration = Duration::from_millis(120);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(editor::secondary!("shift-c"), Copy, None)]);
@@ -120,8 +127,22 @@ fn web_custom_data(entries: &[(&str, &str)]) -> Vec<u8> {
     out
 }
 
-/// The toolbar's primary Copy button.
-pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl IntoElement {
+/// The toolbar's primary Copy button. `copied` is the serial of the copy
+/// it is confirming, if any.
+pub fn button(
+    palette: &Palette,
+    copied: Option<usize>,
+    on_click: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    let (from, to) = match copied {
+        Some(_) => (COPY_ICON, CHECK_ICON),
+        None => (CHECK_ICON, COPY_ICON),
+    };
+    let key: ElementId = match copied {
+        Some(serial) => ("copy-done", serial).into(),
+        None => "copy-idle".into(),
+    };
+    let color = palette.on_accent;
     div()
         .id("copy")
         .h(px(24.))
@@ -151,12 +172,21 @@ pub fn button(palette: &Palette, on_click: impl Fn(&mut App) + 'static) -> impl 
         .text_color(palette.on_accent)
         .active(|style| style.opacity(0.8))
         .on_click(move |_, _, cx| on_click(cx))
-        .child(
-            svg()
-                .path(COPY_ICON)
-                .size(px(14.))
-                .text_color(palette.on_accent),
-        )
+        .child(div().relative().size(px(14.)).with_animation(
+            key,
+            Animation::new(ICON_FADE).with_easing(ease_out_quint()),
+            move |icon, delta| {
+                let layer = |path, opacity| {
+                    svg()
+                        .absolute()
+                        .size_full()
+                        .path(path)
+                        .text_color(color)
+                        .opacity(opacity)
+                };
+                icon.child(layer(from, 1. - delta)).child(layer(to, delta))
+            },
+        ))
         .child("Copy")
         .child(
             div()

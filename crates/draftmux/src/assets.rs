@@ -10,6 +10,7 @@ pub const PREVIEW_ICON: &str = "icons/preview.svg";
 pub const EDITOR_PANE_ICON: &str = "icons/editor-pane.svg";
 pub const SIDEBAR_ICON: &str = "icons/sidebar.svg";
 pub const COPY_ICON: &str = "icons/copy.svg";
+pub const CHECK_ICON: &str = "icons/check.svg";
 /// Slack's orientation of the copy icon, for its code block header.
 pub const SLACK_COPY_ICON: &str = "icons/copy-slack.svg";
 pub const TOOL_BASH_ICON: &str = "icons/tool-bash.svg";
@@ -51,6 +52,7 @@ const ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/editor-pane.svg"),
     ),
     (COPY_ICON, include_bytes!("../assets/icons/copy.svg")),
+    (CHECK_ICON, include_bytes!("../assets/icons/check.svg")),
     (
         SLACK_COPY_ICON,
         include_bytes!("../assets/icons/copy-slack.svg"),

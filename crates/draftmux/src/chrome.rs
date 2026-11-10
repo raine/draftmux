@@ -103,6 +103,9 @@ pub struct Chrome {
     /// Why the selected draft's last save failed; cleared by the next save.
     save_error: Option<SharedString>,
     toast: Option<sidebar::Toast>,
+    /// The Copy button shows a checkmark while this is set, with a serial
+    /// so each copy replays it; the task clears it.
+    copied: Option<(usize, Task<()>)>,
     /// The sidebar row context menu, while it is open.
     row_menu: Option<sidebar::RowMenu>,
     sidebar_scroll: ScrollHandle,
@@ -360,6 +363,7 @@ impl Chrome {
             show_preview: true,
             save_error: None,
             toast: None,
+            copied: None,
             row_menu: None,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_focus: cx.focus_handle(),
@@ -817,6 +821,17 @@ impl Chrome {
         let text = self.editor.read(cx).text().to_owned();
         let confirmation = copy::copy(target, &text, cx);
         self.show_toast(confirmation, cx);
+        let serial = self.copied.as_ref().map_or(0, |(serial, _)| serial + 1);
+        let reset = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(copy::CONFIRMATION).await;
+            this.update(cx, |this, cx| {
+                this.copied = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.copied = Some((serial, reset));
+        cx.notify();
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1064,12 +1079,16 @@ impl Chrome {
                     ),
             )
             .child(target_switch(target, palette, cx))
-            .child(copy::button(palette, {
-                let this = cx.weak_entity();
-                move |cx| {
-                    this.update(cx, |this, cx| this.copy(cx)).ok();
-                }
-            }))
+            .child(copy::button(
+                palette,
+                self.copied.as_ref().map(|(serial, _)| *serial),
+                {
+                    let this = cx.weak_entity();
+                    move |cx| {
+                        this.update(cx, |this, cx| this.copy(cx)).ok();
+                    }
+                },
+            ))
     }
 }
 
