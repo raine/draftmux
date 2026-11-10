@@ -4,8 +4,9 @@
 //! taken before gpui starts and held for the process lifetime, so only one app
 //! runs and a stale socket left by a crash is safe to replace. Each connection
 //! carries one JSON request line and gets one JSON reply line, sent after the
-//! window has handled the request. Requests name drafts by ID only; the app
-//! reads the draft from disk.
+//! window has handled the request, or an error if it hasn't within
+//! `REPLY_TIMEOUT`. Requests name drafts by ID only; the app reads the draft
+//! from disk.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -13,10 +14,11 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use draftmux_storage::{CONFIG_DIR_VAR, DATA_DIR_VAR, data_dir};
 use gpui::{App, AsyncApp, WindowHandle};
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,10 @@ const LOG: &str = "draftmux.log";
 /// How long the CLI waits for a launched app to start listening, and for a
 /// reply.
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the app waits for the window to handle a request before replying
+/// with an error. Shorter than `TIMEOUT`, so a CLI whose request is read
+/// promptly gets that error rather than timing out itself.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(50);
 const MAX_REQUEST: u64 = 4096;
 
@@ -91,28 +97,25 @@ pub fn claim() -> Result<Claim> {
     Ok(Claim::Owner(Server { lock, listener }))
 }
 
+/// A request on its way to the main thread, with where to send its reply.
+type Requests = async_channel::Sender<(Request, SyncSender<Reply>)>;
+
 impl Server {
-    /// Answers requests for the app's lifetime. Connections are accepted on a
-    /// background thread and handled one at a time on the main thread.
+    /// Answers requests for the app's lifetime. Each connection is read on its
+    /// own thread, so one waiting on the main thread doesn't hold up the rest;
+    /// the main thread handles requests one at a time.
     pub fn serve(self, window: WindowHandle<Chrome>, cx: &mut App) {
-        let (requests, received) =
-            async_channel::unbounded::<(Request, async_channel::Sender<Reply>)>();
+        let (requests, received) = async_channel::unbounded();
         thread::spawn(move || {
             let _lock = self.lock;
-            for stream in self.listener.incoming() {
-                let result = stream
-                    .map_err(anyhow::Error::from)
-                    .and_then(|stream| answer(stream, &requests));
-                if let Err(err) = result {
-                    eprintln!("draftmux: request failed: {err:#}");
-                }
-            }
+            accept(&self.listener, &requests, REPLY_TIMEOUT);
         });
         cx.spawn(async move |cx| {
             while let Ok((request, reply)) = received.recv().await {
                 let error = handle(request, window, cx)
                     .err()
                     .map(|err| format!("{err:#}"));
+                // The connection's thread may have stopped waiting.
                 reply.try_send(Reply { error }).ok();
             }
         })
@@ -120,19 +123,44 @@ impl Server {
     }
 }
 
-fn answer(
-    stream: UnixStream,
-    requests: &async_channel::Sender<(Request, async_channel::Sender<Reply>)>,
-) -> Result<()> {
+fn accept(listener: &UnixListener, requests: &Requests, reply_timeout: Duration) {
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let requests = requests.clone();
+                thread::spawn(move || {
+                    if let Err(err) = answer(stream, &requests, reply_timeout) {
+                        eprintln!("draftmux: request failed: {err:#}");
+                    }
+                });
+            }
+            Err(err) => eprintln!("draftmux: request failed: {err:#}"),
+        }
+    }
+}
+
+fn answer(stream: UnixStream, requests: &Requests, reply_timeout: Duration) -> Result<()> {
     stream.set_read_timeout(Some(TIMEOUT))?;
     let mut line = String::new();
     BufReader::new((&stream).take(MAX_REQUEST)).read_line(&mut line)?;
     let reply = match serde_json::from_str::<Request>(&line) {
         Ok(request) => {
-            let (send, recv) = async_channel::bounded(1);
-            requests.send_blocking((request, send))?;
-            recv.recv_blocking()
-                .map_err(|_| anyhow!("the app is shutting down"))?
+            let (send, recv) = mpsc::sync_channel(1);
+            // If the main thread is gone, the failed send drops `send` and
+            // `recv` disconnects.
+            requests.send_blocking((request, send)).ok();
+            match recv.recv_timeout(reply_timeout) {
+                Ok(reply) => reply,
+                Err(RecvTimeoutError::Timeout) => Reply {
+                    error: Some(format!(
+                        "the app didn't respond within {}s",
+                        reply_timeout.as_secs_f32()
+                    )),
+                },
+                Err(RecvTimeoutError::Disconnected) => Reply {
+                    error: Some("the app is shutting down".into()),
+                },
+            }
         }
         Err(err) => Reply {
             error: Some(format!("invalid request: {err}")),
@@ -287,4 +315,63 @@ fn not_listening(err: &io::Error) -> bool {
         err.kind(),
         io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Received = async_channel::Receiver<(Request, SyncSender<Reply>)>;
+
+    /// Serves a socket in a temporary directory, with requests left to the
+    /// returned receiver.
+    fn serve(reply_timeout: Duration) -> (tempfile::TempDir, std::path::PathBuf, Received) {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join(SOCKET);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (requests, received) = async_channel::unbounded();
+        thread::spawn(move || accept(&listener, &requests, reply_timeout));
+        (dir, socket, received)
+    }
+
+    fn request(socket: &Path) -> thread::JoinHandle<Result<()>> {
+        let stream = UnixStream::connect(socket).unwrap();
+        thread::spawn(move || exchange(stream, &Request::Activate))
+    }
+
+    #[test]
+    fn unanswered_requests_get_an_error_and_later_ones_are_served() {
+        let (_dir, socket, received) = serve(Duration::from_millis(100));
+        let err = request(&socket).join().unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "the app didn't respond within 0.1s");
+
+        let answered = request(&socket);
+        // The timed-out request is still queued; the reply to it is dropped.
+        for _ in 0..2 {
+            let (_, reply) = received.recv_blocking().unwrap();
+            reply.try_send(Reply { error: None }).ok();
+        }
+        answered.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn requests_reach_the_app_while_another_is_waiting() {
+        let (_dir, socket, received) = serve(Duration::from_secs(5));
+        let first = request(&socket);
+        let (_, first_reply) = received.recv_blocking().unwrap();
+        let second = request(&socket);
+        let (_, second_reply) = received.recv_blocking().unwrap();
+        first_reply.try_send(Reply { error: None }).unwrap();
+        second_reply.try_send(Reply { error: None }).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn requests_after_the_app_stops_get_an_error() {
+        let (_dir, socket, received) = serve(Duration::from_secs(5));
+        drop(received);
+        let err = request(&socket).join().unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "the app is shutting down");
+    }
 }
