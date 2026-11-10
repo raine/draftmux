@@ -57,6 +57,22 @@ echo keep >"$tmp/file/bin/draftmux"
 reject --app "$tmp/v2/Draftmux.app" --app-dir "$tmp/file/apps" --bin-dir "$tmp/file/bin"
 [[ $(<"$tmp/file/bin/draftmux") == keep && ! -e $tmp/file/apps ]] || fail "replaced a regular file"
 
+# So does a link to another command, even a dangling one.
+for target in /usr/bin/true "$tmp/nowhere/draftmux"; do
+  rm -rf "$tmp/link"
+  mkdir -p "$tmp/link/bin"
+  ln -s "$target" "$tmp/link/bin/draftmux"
+  reject --app "$tmp/v2/Draftmux.app" --app-dir "$tmp/link/apps" --bin-dir "$tmp/link/bin"
+  [[ $(readlink "$tmp/link/bin/draftmux") == "$target" && ! -e $tmp/link/apps ]] ||
+    fail "replaced a link to $target"
+done
+
+# A link into a Draftmux.app elsewhere is a previous install and is moved.
+mkdir -p "$tmp/moved/bin"
+ln -s "$tmp/old/Draftmux.app/Contents/MacOS/draftmux" "$tmp/moved/bin/draftmux"
+install_into "$tmp/v2/Draftmux.app" moved || fail "refused a previous install's link: $(<"$tmp/install.log")"
+[[ $("$tmp/moved/bin/draftmux" x) == "v2 x" ]] || fail "did not relink a previous install"
+
 # --app must be a Draftmux bundle.
 cp -R "$tmp/foreign/apps/Draftmux.app" "$tmp/Other.app"
 reject --app "$tmp/Other.app" --app-dir "$tmp/other/apps" --bin-dir "$tmp/other/bin"
@@ -64,4 +80,4 @@ reject --app "$tmp/missing.app" --app-dir "$tmp/other/apps" --bin-dir "$tmp/othe
 [[ ! -e $tmp/other ]] || fail "refused install wrote files"
 reject --bogus
 
-echo "ok: installs and updates the app and command link; foreign apps, regular files and non-Draftmux bundles left alone"
+echo "ok: installs and updates the app and command link; foreign apps, regular files, foreign links and non-Draftmux bundles left alone"

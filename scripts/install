@@ -43,7 +43,12 @@ check_targets() {
     echo "install: $app exists and isn't Draftmux; not replacing it" >&2
     exit 1
   fi
-  if [[ -e "$link" && ! -L "$link" ]]; then
+  if [[ -L "$link" ]]; then
+    if [[ "$(readlink "$link")" != */Draftmux.app/Contents/MacOS/draftmux ]]; then
+      echo "install: $link links somewhere other than Draftmux; not replacing it" >&2
+      exit 1
+    fi
+  elif [[ -e "$link" ]]; then
     echo "install: $link exists and isn't a symlink; not replacing it" >&2
     exit 1
   fi
