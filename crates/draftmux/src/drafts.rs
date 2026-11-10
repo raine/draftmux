@@ -288,7 +288,11 @@ fn strip_markers(line: &str) -> String {
     let mut line = line.trim();
     loop {
         let before = line;
-        line = line.trim_start_matches(['#', '>']).trim_start();
+        line = line.trim_start_matches('>').trim_start();
+        let unhashed = line.trim_start_matches('#');
+        if unhashed.is_empty() || unhashed.starts_with([' ', '\t']) {
+            line = unhashed.trim_start();
+        }
         for bullet in ["- ", "* ", "+ ", "[ ] ", "[x] ", "[X] "] {
             line = line.strip_prefix(bullet).unwrap_or(line);
         }
@@ -304,7 +308,7 @@ fn strip_markers(line: &str) -> String {
     }
     markup::rich::plain(&markup::github::parse(line))
         .chars()
-        .filter(|c| !matches!(c, '*' | '_' | '`' | '~'))
+        .filter(|&c| c != markup::rich::GUARD)
         .collect::<String>()
         .trim()
         .to_owned()
@@ -671,6 +675,8 @@ mod tests {
             "Fix the cache"
         );
         assert_eq!(title("", "> - [ ] 1. item"), "item");
+        assert_eq!(title("", "Rename `foo_bar` to ~x"), "Rename foo_bar to ~x");
+        assert_eq!(title("", "#define FOO"), "#define FOO");
         assert_eq!(title("", "  \n"), "Untitled draft");
         assert_eq!(title("", &"x".repeat(100)).len(), TITLE_MAX_CHARS);
     }

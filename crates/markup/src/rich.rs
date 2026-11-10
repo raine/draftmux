@@ -60,7 +60,7 @@ pub fn plain(doc: &Document) -> String {
 }
 
 /// Whitespace to Slack's Markdown detector, invisible when shown.
-const GUARD: char = '\u{feff}';
+pub const GUARD: char = '\u{feff}';
 
 fn plain_blocks(out: &mut Vec<String>, blocks: &[Block], indent: &str) {
     for block in blocks {
