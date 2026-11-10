@@ -37,6 +37,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release
+      # The cache restores target/, including an earlier run's release
+      # output, which scripts/release-macos refuses to replace.
+      - run: rm -rf target/macos-release
       - name: Build, sign and notarize
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
@@ -82,6 +85,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.runner }}
+      # Keeps earlier runs' release output out of the cache.
+      - run: rm -rf target/linux-release
       - name: Build
         run: scripts/release-linux
       - uses: actions/upload-artifact@v4
