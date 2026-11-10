@@ -55,7 +55,7 @@ actions!(draftmux, [Quit]);
 
 /// Draftmux: polish messages handed off from coding agents.
 #[derive(Parser)]
-#[command(name = "draftmux")]
+#[command(name = "draftmux", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
