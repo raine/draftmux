@@ -299,6 +299,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundle_id_matches_info_plist() {
+        let plist = include_str!("../../../macos/Info.plist");
+        let key = "<key>CFBundleIdentifier</key>";
+        let value = plist[plist.find(key).unwrap() + key.len()..]
+            .trim_start()
+            .strip_prefix("<string>")
+            .and_then(|rest| rest.split_once("</string>"))
+            .map(|(id, _)| id);
+        assert_eq!(value, Some(BUNDLE_ID));
+    }
+
+    #[test]
     fn env_var_disables_checks() {
         assert!(env_disables(Some("1")));
         assert!(env_disables(Some("YES")));
