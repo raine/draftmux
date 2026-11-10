@@ -18,15 +18,19 @@ pub const CONFIG_FILES: [&str; 2] = ["settings.json", "profiles.json"];
 /// `$DRAFTMUX_DATA_DIR` when set, so a development build keeps its own
 /// settings beside its own drafts, else `$XDG_CONFIG_HOME/draftmux`
 /// (normally `~/.config/draftmux`) on every platform.
-///
-/// Configuration files still in the data directory are moved here first.
 pub fn config_dir() -> Result<PathBuf> {
-    let dir = config_dir_from(
+    config_dir_from(
         std::env::var_os(CONFIG_DIR_VAR),
         std::env::var_os(DATA_DIR_VAR),
         std::env::var_os("XDG_CONFIG_HOME"),
         std::env::home_dir(),
-    )?;
+    )
+}
+
+/// [`config_dir`], after moving configuration files still in the data
+/// directory into it. Entry points that read configuration call this once.
+pub fn prepare_config_dir() -> Result<PathBuf> {
+    let dir = config_dir()?;
     if let Ok(data) = data_dir() {
         adopt(&data, &dir);
     }

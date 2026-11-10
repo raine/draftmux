@@ -118,7 +118,7 @@ fn run_app() -> Result<()> {
         ipc::Claim::Taken => return ipc::activate_running(),
     };
     let data_dir = draftmux_storage::data_dir()?;
-    let config_dir = draftmux_storage::config_dir()?;
+    let config_dir = draftmux_storage::prepare_config_dir()?;
     let store = Store::open_default()?;
 
     gpui_platform::application()

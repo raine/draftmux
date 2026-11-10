@@ -58,7 +58,7 @@ pub fn main(args: Args) -> Result<u8> {
     // which has the PATH and API keys the source session used.
     let pi = || Command::new("pi");
     // A settings problem never blocks a handoff.
-    let settings = draftmux_storage::config_dir()
+    let settings = draftmux_storage::prepare_config_dir()
         .and_then(|dir| Settings::load(&dir))
         .unwrap_or_else(|err| {
             eprintln!("draftmux: ignoring Draftmux's settings: {err:#}");

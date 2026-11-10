@@ -49,7 +49,7 @@ fn install_main() -> Result<u8> {
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".claude"));
-    let added = draftmux_storage::config_dir()
+    let added = draftmux_storage::prepare_config_dir()
         .and_then(|dir| AddedProfiles::new(&dir).load())
         .unwrap_or_default();
     let profiles = detect(&home, &added);
