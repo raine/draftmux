@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 
 use crate::atomic;
-use crate::meta::{DraftSettings, Meta, Source, Status, Target};
+use crate::meta::{DraftSettings, Meta, Source, Status, Syntax, Target};
 
 const DRAFT_FILE: &str = "draft.md";
 const META_FILE: &str = "meta.json";
@@ -115,6 +115,7 @@ impl Store {
             dir,
             meta: Meta {
                 target: new.target,
+                syntax: Some(Syntax::Markdown),
                 status: Status::Active,
                 title: new.title,
                 source: new.source,
@@ -166,6 +167,36 @@ impl Store {
         let path = self.draft_dir(id)?.join(DRAFT_FILE);
         atomic::write(&path, text.as_bytes())?;
         self.update_meta(id, |meta| meta.updated_at = Utc::now())
+    }
+
+    /// Rewrites the text in `syntax` with `convert`, and records the syntax.
+    /// The text as it was is kept as `backup` in the draft directory, and a
+    /// conversion interrupted before the syntax was recorded starts again
+    /// from it. Not counted as activity.
+    pub fn convert_text(
+        &self,
+        id: &str,
+        backup: &str,
+        syntax: Syntax,
+        convert: impl FnOnce(&str) -> String,
+    ) -> Result<(Meta, String)> {
+        let dir = self.draft_dir(id)?;
+        let backup = dir.join(backup);
+        let original = match std::fs::read_to_string(&backup) {
+            Ok(original) => original,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                let original = self.read_text(id)?;
+                atomic::write(&backup, original.as_bytes())?;
+                original
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", backup.display()));
+            }
+        };
+        let text = convert(&original);
+        atomic::write(&dir.join(DRAFT_FILE), text.as_bytes())?;
+        let meta = self.update_meta(id, |meta| meta.syntax = Some(syntax))?;
+        Ok((meta, text))
     }
 
     /// Hides the draft from the list. Leaves `updated_at` alone so unarchiving
@@ -449,6 +480,66 @@ mod tests {
         assert_eq!(store.read_text(&draft.id).unwrap(), "Hello `world`\n");
         assert!(meta.updated_at > before);
         assert_eq!(store.load(&draft.id).unwrap().meta, meta);
+    }
+
+    #[test]
+    fn new_drafts_record_their_syntax() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = store.create(new_draft("a")).unwrap();
+        assert_eq!(
+            store.load(&draft.id).unwrap().meta.syntax,
+            Some(Syntax::Markdown)
+        );
+    }
+
+    #[test]
+    fn convert_text_keeps_a_backup_and_resumes_from_it() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = store.create(new_draft("a")).unwrap();
+        store
+            .update_meta(&draft.id, |meta| meta.syntax = None)
+            .unwrap();
+        store.save_text(&draft.id, "*old*").unwrap();
+        set_updated(&store, &draft.id, 0);
+        let before = store.load(&draft.id).unwrap().meta;
+
+        // An interrupted conversion left the backup and a converted text.
+        std::fs::write(draft.dir.join("draft.old.md"), "*old*").unwrap();
+        store.save_text(&draft.id, "**old**").unwrap();
+        set_updated(&store, &draft.id, 0);
+
+        let (meta, text) = store
+            .convert_text(&draft.id, "draft.old.md", Syntax::Markdown, |old| {
+                format!("*{old}*")
+            })
+            .unwrap();
+        assert_eq!(text, "**old**");
+        assert_eq!(store.read_text(&draft.id).unwrap(), "**old**");
+        assert_eq!(
+            std::fs::read_to_string(draft.dir.join("draft.old.md")).unwrap(),
+            "*old*"
+        );
+        assert_eq!(meta.syntax, Some(Syntax::Markdown));
+        assert_eq!(meta.updated_at, before.updated_at);
+        assert_eq!(store.load(&draft.id).unwrap().meta, meta);
+
+        let fresh = store.create(new_draft("b")).unwrap();
+        store.save_text(&fresh.id, "x").unwrap();
+        store
+            .convert_text(
+                &fresh.id,
+                "draft.old.md",
+                Syntax::Markdown,
+                str::to_uppercase,
+            )
+            .unwrap();
+        assert_eq!(store.read_text(&fresh.id).unwrap(), "X");
+        assert_eq!(
+            std::fs::read_to_string(fresh.dir.join("draft.old.md")).unwrap(),
+            "x"
+        );
     }
 
     #[test]

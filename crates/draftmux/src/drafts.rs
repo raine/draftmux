@@ -10,12 +10,15 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Local, Utc};
 use draftmux_settings::Settings;
-use draftmux_storage::{Autosave, Draft, Store, Target};
+use draftmux_storage::{Autosave, Draft, Store, Syntax, Target};
 
 use crate::sample;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
 const TITLE_MAX_CHARS: usize = 80;
+/// Where a Slack draft's mrkdwn text is kept once it is rewritten as
+/// Markdown.
+const MRKDWN_BACKUP: &str = "draft.mrkdwn.md";
 
 /// One sidebar row.
 pub struct Row {
@@ -89,12 +92,25 @@ impl Drafts {
         }
     }
 
-    /// Makes `id` the selected draft and returns its text. Saves the previous
-    /// draft first and stays on it if that fails.
+    /// Makes `id` the selected draft and returns its text, rewriting a
+    /// Slack draft written in mrkdwn as Markdown. Saves the previous draft
+    /// first and stays on it if that fails.
     pub fn select(&mut self, id: &str) -> Result<String> {
         self.flush()?;
-        let draft = self.store.load(id)?;
-        let text = self.store.read_text(id)?;
+        let mut draft = self.store.load(id)?;
+        let converted = draft.meta.is_mrkdwn();
+        let text = if converted {
+            let (meta, text) = self.store.convert_text(
+                id,
+                MRKDWN_BACKUP,
+                Syntax::Markdown,
+                markup::slack::from_mrkdwn,
+            )?;
+            draft.meta = meta;
+            text
+        } else {
+            self.store.read_text(id)?
+        };
         let autosave = Autosave::new(
             self.store.clone(),
             draft.id.clone(),
@@ -102,6 +118,9 @@ impl Drafts {
             AUTOSAVE_DELAY,
         );
         self.current = Some(Current { draft, autosave });
+        if converted {
+            self.refresh();
+        }
         Ok(text)
     }
 
@@ -148,14 +167,17 @@ impl Drafts {
         Ok(())
     }
 
-    /// Changes the selected draft's target. Not counted as activity.
+    /// Changes the selected draft's target. The text is left as it is, since
+    /// every target other than plain text reads Markdown. Not counted as
+    /// activity.
     pub fn set_target(&mut self, target: Target) -> Result<()> {
         let Some(current) = &mut self.current else {
             return Ok(());
         };
-        current.draft.meta = self
-            .store
-            .update_meta(&current.draft.id, |meta| meta.target = target)?;
+        current.draft.meta = self.store.update_meta(&current.draft.id, |meta| {
+            meta.target = target;
+            meta.syntax = Some(Syntax::Markdown);
+        })?;
         self.refresh();
         Ok(())
     }
@@ -506,6 +528,40 @@ mod tests {
         assert_eq!(meta.updated_at, before);
         assert_eq!(drafts.current().unwrap().meta.target, Target::Slack);
         assert_eq!(drafts.rows()[0].draft.meta.target, Target::Slack);
+        assert_eq!(meta.syntax, Some(Syntax::Markdown));
+    }
+
+    #[test]
+    fn selecting_a_mrkdwn_slack_draft_rewrites_it_as_markdown() {
+        let (_root, store) = store();
+        let a = create(&store, "*Ship* it <https://a.b|now>", TimeDelta::hours(1));
+        store
+            .update_meta(&a, |meta| {
+                meta.target = Target::Slack;
+                meta.syntax = None;
+            })
+            .unwrap();
+        let before = store.load(&a).unwrap().meta.updated_at;
+        let mut drafts = Drafts::new(store.clone());
+
+        let text = drafts.select(&a).unwrap();
+        assert_eq!(text, "**Ship** it [now](https://a.b)");
+        assert_eq!(store.read_text(&a).unwrap(), text);
+        let draft = store.load(&a).unwrap();
+        assert_eq!(draft.meta.syntax, Some(Syntax::Markdown));
+        assert_eq!(draft.meta.updated_at, before);
+        assert_eq!(
+            std::fs::read_to_string(draft.dir.join(MRKDWN_BACKUP)).unwrap(),
+            "*Ship* it <https://a.b|now>"
+        );
+        assert_eq!(drafts.current().unwrap().meta, draft.meta);
+        assert_eq!(drafts.rows()[0].draft.meta, draft.meta);
+
+        // Drafts of other targets are Markdown already.
+        let b = create(&store, "*it*", TimeDelta::hours(2));
+        store.update_meta(&b, |meta| meta.syntax = None).unwrap();
+        assert_eq!(drafts.select(&b).unwrap(), "*it*");
+        assert_eq!(store.load(&b).unwrap().meta.syntax, None);
     }
 
     #[test]

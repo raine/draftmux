@@ -1,7 +1,8 @@
 //! `draftmux show`: reads a draft back for the agent that started it.
 //!
 //! Reads the draft directory directly, so it works whether or not the app is
-//! running, and never modifies the draft. The sample draft has no source
+//! running, and never modifies the draft. A Slack draft still in mrkdwn is
+//! shown as the Markdown the app would rewrite it to. The sample draft has no source
 //! session to read back for, so it is never shown.
 
 use std::io::{self, Write};
@@ -53,7 +54,10 @@ fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -
     let output = if args.path {
         format!("{}\n", path.display())
     } else {
-        let body = store.read_text(&draft.id)?;
+        let mut body = store.read_text(&draft.id)?;
+        if draft.meta.is_mrkdwn() {
+            body = markup::slack::from_mrkdwn(&body);
+        }
         if args.json {
             let parsed = markup::frontmatter::parse(&body);
             let json = JsonOutput {
@@ -204,6 +208,25 @@ mod tests {
         output.result.unwrap();
         assert_eq!(output.out, BODY);
         assert_eq!(output.err, "");
+    }
+
+    #[test]
+    fn shows_a_mrkdwn_slack_draft_as_markdown_without_changing_it() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = create(&store, "Slack", "/s/a.jsonl", "*Ship* it", 0);
+        store
+            .update_meta(&draft.id, |meta| {
+                meta.target = Target::Slack;
+                meta.syntax = None;
+            })
+            .unwrap();
+
+        let output = show(&store, &[&draft.id]);
+        output.result.unwrap();
+        assert_eq!(output.out, "**Ship** it");
+        assert_eq!(store.read_text(&draft.id).unwrap(), "*Ship* it");
+        assert_eq!(store.load(&draft.id).unwrap().meta.syntax, None);
     }
 
     #[test]

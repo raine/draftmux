@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meta {
     pub target: Target,
+    /// The markup the text is written in. A Slack draft without it is in
+    /// Slack's mrkdwn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax: Option<Syntax>,
     pub status: Status,
     #[serde(default)]
     pub title: String,
@@ -44,6 +48,11 @@ impl Meta {
     pub fn is_sample(&self) -> bool {
         self.source.is_none()
     }
+
+    /// Whether the text is in Slack's mrkdwn rather than Markdown.
+    pub fn is_mrkdwn(&self) -> bool {
+        self.target == Target::Slack && self.syntax.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +80,15 @@ impl Target {
             Target::Plain => "Plain text",
         }
     }
+}
+
+/// The markup of a draft's text (see [`Meta::syntax`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Syntax {
+    /// Markdown, read with Slack's line and block rules in a Slack draft,
+    /// or plain text in a plain-text draft.
+    Markdown,
 }
 
 /// The settings a draft keeps from its creation (see [`Meta::settings`]).
@@ -179,6 +197,7 @@ mod tests {
 
         let meta: Meta = serde_json::from_value(value).unwrap();
         assert_eq!(meta.title, "");
+        assert_eq!(meta.syntax, None);
         assert_eq!(meta.pi_session_file, None);
         assert_eq!(meta.note, None);
         assert!(!meta.first_draft_pending);
@@ -194,6 +213,16 @@ mod tests {
         assert!(json.get("source").is_none());
         let back: Meta = serde_json::from_value(json).unwrap();
         assert!(back.is_sample());
+    }
+
+    #[test]
+    fn syntax_is_stored_by_name_when_known() {
+        let mut meta: Meta = serde_json::from_str(FIXTURE).unwrap();
+        assert!(serde_json::to_value(&meta).unwrap().get("syntax").is_none());
+        meta.syntax = Some(Syntax::Markdown);
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["syntax"], "markdown");
+        assert_eq!(serde_json::from_value::<Meta>(json).unwrap(), meta);
     }
 
     #[test]
