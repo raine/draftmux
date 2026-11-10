@@ -20,6 +20,23 @@ const TITLE_MAX_CHARS: usize = 80;
 /// Markdown.
 const MRKDWN_BACKUP: &str = "draft.mrkdwn.md";
 
+/// Rewrites `draft`, if it is a Slack draft written in mrkdwn, as Markdown
+/// on disk, keeping the original in [`MRKDWN_BACKUP`], and returns the new
+/// text. `None` when the draft is Markdown already.
+pub fn convert_mrkdwn(store: &Store, draft: &mut Draft) -> Result<Option<String>> {
+    if !draft.meta.is_mrkdwn() {
+        return Ok(None);
+    }
+    let (meta, text) = store.convert_text(
+        &draft.id,
+        MRKDWN_BACKUP,
+        Syntax::Markdown,
+        markup::slack::from_mrkdwn,
+    )?;
+    draft.meta = meta;
+    Ok(Some(text))
+}
+
 /// One sidebar row.
 pub struct Row {
     pub draft: Draft,
@@ -98,18 +115,10 @@ impl Drafts {
     pub fn select(&mut self, id: &str) -> Result<String> {
         self.flush()?;
         let mut draft = self.store.load(id)?;
-        let converted = draft.meta.is_mrkdwn();
-        let text = if converted {
-            let (meta, text) = self.store.convert_text(
-                id,
-                MRKDWN_BACKUP,
-                Syntax::Markdown,
-                markup::slack::from_mrkdwn,
-            )?;
-            draft.meta = meta;
-            text
-        } else {
-            self.store.read_text(id)?
+        let converted = convert_mrkdwn(&self.store, &mut draft)?;
+        let text = match &converted {
+            Some(text) => text.clone(),
+            None => self.store.read_text(id)?,
         };
         let autosave = Autosave::new(
             self.store.clone(),
@@ -118,7 +127,7 @@ impl Drafts {
             AUTOSAVE_DELAY,
         );
         self.current = Some(Current { draft, autosave });
-        if converted {
+        if converted.is_some() {
             self.refresh();
         }
         Ok(text)

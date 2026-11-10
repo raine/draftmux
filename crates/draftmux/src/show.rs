@@ -1,9 +1,10 @@
 //! `draftmux show`: reads a draft back for the agent that started it.
 //!
 //! Reads the draft directory directly, so it works whether or not the app is
-//! running, and never modifies the draft. A Slack draft still in mrkdwn is
-//! shown as the Markdown the app would rewrite it to. The sample draft has no source
-//! session to read back for, so it is never shown.
+//! running. A Slack draft still in mrkdwn is shown as the Markdown the app
+//! would rewrite it to, without changing it; `--path`, which hands out the
+//! file for editing, rewrites it first, so edits are made in Markdown. The
+//! sample draft has no source session to read back for, so it is never shown.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -49,9 +50,10 @@ pub fn main(args: Args) -> Result<()> {
 }
 
 fn run(args: &Args, store: &Store, out: &mut impl Write, err: &mut impl Write) -> Result<()> {
-    let draft = resolve(args, store, err)?;
+    let mut draft = resolve(args, store, err)?;
     let path = draft.draft_path();
     let output = if args.path {
+        crate::drafts::convert_mrkdwn(store, &mut draft)?;
         format!("{}\n", path.display())
     } else {
         let mut body = store.read_text(&draft.id)?;
@@ -227,6 +229,33 @@ mod tests {
         assert_eq!(output.out, "**Ship** it");
         assert_eq!(store.read_text(&draft.id).unwrap(), "*Ship* it");
         assert_eq!(store.load(&draft.id).unwrap().meta.syntax, None);
+    }
+
+    #[test]
+    fn path_rewrites_a_mrkdwn_slack_draft_as_markdown_for_editing() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = create(&store, "Slack", "/s/a.jsonl", "*Ship* it", 0);
+        store
+            .update_meta(&draft.id, |meta| {
+                meta.target = Target::Slack;
+                meta.syntax = None;
+            })
+            .unwrap();
+        let before = store.load(&draft.id).unwrap().meta.updated_at;
+
+        let output = show(&store, &[&draft.id, "--path"]);
+        output.result.unwrap();
+        assert_eq!(output.out.trim_end(), draft.draft_path().to_str().unwrap());
+        assert_eq!(store.read_text(&draft.id).unwrap(), "**Ship** it");
+        let meta = store.load(&draft.id).unwrap().meta;
+        assert!(!meta.is_mrkdwn());
+        assert_eq!(meta.updated_at, before);
+
+        // Markdown written there stays Markdown.
+        store.save_text(&draft.id, "**Now** it").unwrap();
+        show(&store, &[&draft.id, "--path"]).result.unwrap();
+        assert_eq!(store.read_text(&draft.id).unwrap(), "**Now** it");
     }
 
     #[test]
