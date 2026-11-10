@@ -13,7 +13,7 @@ mod meta;
 mod store;
 
 pub use atomic::write as write_atomic;
-pub use autosave::Autosave;
+pub use autosave::{Autosave, Conflict};
 pub use config::{CONFIG_DIR_VAR, CONFIG_FILES, config_dir, prepare_config_dir};
 pub use meta::{DraftSettings, Meta, ModelChoice, Source, SourceKind, Status, Syntax, Target};
 pub use store::{DATA_DIR_VAR, Draft, NewDraft, Scan, Store, by_activity, data_dir};

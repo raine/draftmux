@@ -16,12 +16,12 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use draftmux_storage::{Store, Target};
+use draftmux_storage::{Conflict, Store, Target};
 use editor::{Editor, EditorEvent};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, BoxShadow, Context, CursorStyle, DragMoveEvent,
     Empty, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyBinding, MouseButton, Pixels,
-    Point, ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window,
+    Point, PromptLevel, ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window,
     WindowControlArea, actions, div, ease_out_quint, point, prelude::*, px, svg,
 };
 use markup::Document;
@@ -31,6 +31,7 @@ use crate::assets::{EDITOR_PANE_ICON, PREVIEW_ICON};
 use crate::chat::{Chat, ChatEvent};
 use crate::copy::{self, Copy};
 use crate::drafts::{Drafts, tilde};
+use crate::file_watch;
 use crate::format::{Format, Formatter};
 use crate::markup_view;
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
@@ -115,7 +116,11 @@ pub struct Chrome {
     scrollbars: [ScrollbarState; 3],
     /// Wakes up when the pending edit is due to be saved.
     autosave: Task<()>,
+    /// The user is being asked whether to keep their edits over a change
+    /// made to the draft's file outside the editor.
+    asking_outside_edit: bool,
     _clock: Task<()>,
+    _watch_draft: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -328,6 +333,20 @@ impl Chrome {
             }
         });
 
+        // Picks up writes to the selected draft's file made outside the
+        // editor: by an agent through `draftmux show --path`, or by pi's bash.
+        let watch_draft = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(file_watch::POLL).await;
+                if this
+                    .update_in(cx, |this, window, cx| this.check_outside_edit(window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
         let chat_width = store.chat_width().map_or(CHAT_WIDTH, px);
         let show_sidebar = !store.sidebar_hidden();
         let mut chrome = Self {
@@ -371,7 +390,9 @@ impl Chrome {
             preview_scroll,
             scrollbars: Default::default(),
             autosave: Task::ready(()),
+            asking_outside_edit: false,
             _clock: clock,
+            _watch_draft: watch_draft,
             _subscriptions: subscriptions,
         };
         chrome._subscriptions.push(cx.subscribe(
@@ -603,14 +624,10 @@ impl Chrome {
             }
             ChatEvent::DraftWritten { id, text } => {
                 if self.drafts.current_id() == Some(id.as_str()) {
-                    self.editor.update(cx, |editor, cx| {
-                        crate::changes::replace_all(editor, text, cx)
-                    });
-                    // The file already holds the text, so loading isn't an
-                    // edit to save.
-                    self.drafts.loaded(self.editor.read(cx).text());
-                }
-                if let Err(err) = self.drafts.touched(id, text) {
+                    // Shown now rather than on the next poll. Nothing is
+                    // pending while the agent runs, so there's no conflict.
+                    self.reload_outside_edit(cx);
+                } else if let Err(err) = self.drafts.touched(id, text) {
                     eprintln!("draftmux: recording the agent's edit: {err:#}");
                 }
             }
@@ -744,6 +761,88 @@ impl Chrome {
         }
     }
 
+    /// Counts a change made to the selected draft's file outside the editor
+    /// as activity, and loads it into the editor when no edit is pending.
+    /// Returns the file's text when an edit is pending instead.
+    fn reload_outside_edit(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let id = self.drafts.current_id()?.to_owned();
+        // A file that can't be read is reported by the next save.
+        let disk = self.drafts.changed_on_disk().ok().flatten()?;
+        if let Err(err) = self.drafts.touched(&id, &disk) {
+            eprintln!("draftmux: recording the outside edit: {err:#}");
+        }
+        if self.drafts.deadline().is_some() {
+            return Some(disk);
+        }
+        self.load_outside_edit(disk, cx);
+        cx.notify();
+        None
+    }
+
+    fn load_outside_edit(&mut self, disk: String, cx: &mut Context<Self>) {
+        self.drafts.adopt(disk.clone());
+        self.editor.update(cx, |editor, cx| {
+            crate::changes::replace_all(editor, &disk, cx)
+        });
+        // The file already holds the text, so loading isn't an edit to save.
+        self.drafts.loaded(self.editor.read(cx).text());
+    }
+
+    /// Reloads an outside change to the selected draft, or asks which
+    /// version to keep when the user has unsaved edits.
+    fn check_outside_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.asking_outside_edit {
+            return;
+        }
+        let Some(disk) = self.reload_outside_edit(cx) else {
+            return;
+        };
+        let Some(id) = self.drafts.current_id().map(str::to_owned) else {
+            return;
+        };
+        self.asking_outside_edit = true;
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "This draft was changed outside Draftmux",
+            Some(
+                "You have edits that aren't saved yet. Use the new version, or \
+                 keep your edits and replace it? Using the new version can be \
+                 undone.",
+            ),
+            // The default can be undone; keeping the edits replaces the
+            // other change for good.
+            &["Use New Version", "Keep My Edits"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let answer = answer.await.ok();
+            this.update(cx, |this, cx| {
+                this.asking_outside_edit = false;
+                // The answer is about these edits to this draft and this
+                // version of it. If a retried save wrote the edits meanwhile,
+                // or the file changed again, the next poll starts over.
+                if this.drafts.current_id() != Some(id.as_str())
+                    || this.drafts.deadline().is_none()
+                    || this.drafts.changed_on_disk().ok().flatten().as_ref() != Some(&disk)
+                {
+                    return;
+                }
+                match answer {
+                    Some(0) => this.load_outside_edit(disk, cx),
+                    Some(1) => {
+                        this.drafts.adopt(disk);
+                        this.flush().ok();
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
         let Some(deadline) = self.drafts.deadline() else {
             return;
@@ -780,6 +879,10 @@ impl Chrome {
     }
 
     fn save_failed(&mut self, err: &anyhow::Error) {
+        // Not a failure to report: the user is asked which version to keep.
+        if err.is::<Conflict>() {
+            return;
+        }
         eprintln!("draftmux: saving draft: {err:#}");
         self.save_error = Some(format!("Couldn't save: {err:#}").into());
     }

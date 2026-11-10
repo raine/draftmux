@@ -167,6 +167,23 @@ impl Drafts {
         }
     }
 
+    /// The selected draft's file text, when it was changed outside the
+    /// editor since it was loaded or saved.
+    pub fn changed_on_disk(&self) -> Result<Option<String>> {
+        match &self.current {
+            Some(current) => current.autosave.changed_on_disk(),
+            None => Ok(None),
+        }
+    }
+
+    /// Takes `disk` as the selected draft's file text, keeping any pending
+    /// edit; see [`Autosave::adopt`].
+    pub fn adopt(&mut self, disk: String) {
+        if let Some(current) = &mut self.current {
+            current.autosave.adopt(disk);
+        }
+    }
+
     /// Reports the editor text after a user edit.
     pub fn edited(&mut self, text: &str, now: Instant) {
         if let Some(current) = &mut self.current {
@@ -589,6 +606,34 @@ mod tests {
         meta.updated_at = drafts.rows()[0].draft.meta.updated_at;
         drafts.update_row(&z, meta, "z".into()).unwrap();
         assert_eq!(order(&drafts), [x.as_str(), z.as_str(), y.as_str()]);
+    }
+
+    #[test]
+    fn outside_write_to_the_open_draft_reloads_or_blocks_leaving() {
+        let (_root, store) = store();
+        let a = create(&store, "a", TimeDelta::hours(1));
+        let b = create(&store, "b", TimeDelta::minutes(1));
+        let path = store.load(&a).unwrap().draft_path();
+        let mut drafts = Drafts::new(store.clone());
+        drafts.select(&a).unwrap();
+        assert_eq!(drafts.changed_on_disk().unwrap(), None);
+
+        // Nothing pending: the outside text is loaded and isn't saved back.
+        std::fs::write(&path, "a outside").unwrap();
+        let disk = drafts.changed_on_disk().unwrap().unwrap();
+        drafts.adopt(disk.clone());
+        drafts.loaded(&disk);
+        assert_eq!(drafts.deadline(), None);
+        assert_eq!(drafts.changed_on_disk().unwrap(), None);
+
+        // An edit pending: neither text is lost and A can't be left.
+        drafts.edited("a mine", Instant::now());
+        std::fs::write(&path, "a outside again").unwrap();
+        let err = drafts.select(&b).unwrap_err();
+        assert!(err.is::<draftmux_storage::Conflict>());
+        assert_eq!(drafts.current_id(), Some(a.as_str()));
+        assert_eq!(store.read_text(&a).unwrap(), "a outside again");
+        assert!(drafts.deadline().is_some());
     }
 
     #[test]

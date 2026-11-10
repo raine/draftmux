@@ -7,7 +7,7 @@ use std::time::Duration;
 use gpui::{Context, Task};
 
 /// How often watched files are read.
-const POLL: Duration = Duration::from_secs(1);
+pub const POLL: Duration = Duration::from_secs(1);
 
 pub struct WatchedFile {
     path: PathBuf,
