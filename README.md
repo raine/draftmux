@@ -325,3 +325,7 @@ bump it deliberately:
    (`cargo tree --target aarch64-apple-darwin -i <crate>`).
 4. Run `cargo update -p gpui -p gpui_platform`, build, fix API changes, and
    check the window chrome with `cargo run -- app`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

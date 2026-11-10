@@ -6,6 +6,7 @@ default-members = ["crates/draftmux"]
 [workspace.package]
 edition = "2024"
 publish = false
+license = "MIT"
 
 # gpui is pinned to one Zed commit; see "Bumping gpui" in README.md before
 # changing it. Both entries must name the same rev.
