@@ -64,7 +64,8 @@ impl Ineligible {
                  Download it from GitHub."
             ),
             Self::Unsupported => format!(
-                "Draftmux {version} is available for macOS. Pull the repository and rebuild."
+                "Draftmux {version} is available. Download it from GitHub and run its install \
+                 script, or pull the repository and rebuild."
             ),
         }
     }

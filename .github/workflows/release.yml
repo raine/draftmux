@@ -1,7 +1,8 @@
 name: Release
 
 # A v* tag publishes a GitHub release of the signed, notarized macOS build,
-# which installed copies pick up through the app's automatic updates. Running
+# which installed copies pick up through the app's automatic updates, and of
+# the x86_64 Linux build. Running
 # the workflow by hand builds, signs and notarizes the same files and keeps
 # them as workflow artifacts without publishing anything.
 on:
@@ -55,9 +56,42 @@ jobs:
             target/macos-release/${{ steps.version.outputs.version }}/*.sha256
           if-no-files-found: error
 
+  linux:
+    # The oldest supported runner, so the binary runs on any distribution
+    # with glibc 2.35 or newer.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/draftmux/Cargo.toml | head -n 1)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - name: Install build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake clang \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
+            libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
+            libvulkan-dev libzstd-dev
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: Build
+        run: scripts/release-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draftmux-${{ steps.version.outputs.version }}-linux
+          path: |
+            target/linux-release/${{ steps.version.outputs.version }}/*.tar.gz
+            target/linux-release/${{ steps.version.outputs.version }}/*.sha256
+          if-no-files-found: error
+
   publish:
     if: github.event_name == 'push'
-    needs: macos
+    needs: [macos, linux]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -65,7 +99,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: draftmux-${{ needs.macos.outputs.version }}-macos
+          pattern: draftmux-${{ needs.macos.outputs.version }}-*
+          merge-multiple: true
           path: dist
       - name: Create release
         env:

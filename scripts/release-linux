@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Builds a distributable Draftmux release on this Linux machine into
+# target/linux-release/VERSION: an optimized build of the relocatable app
+# tree as Draftmux-VERSION-linux-ARCH.tar.gz, plus its .sha256. Extracting
+# it and running draftmux-linux/install installs it for the current user.
+# Publishes nothing. The binary needs a glibc at least as new as the build
+# machine's.
+set -euo pipefail
+
+if [[ $(uname -s) != Linux || $# -ne 0 ]]; then
+  echo "usage (on Linux): release-linux" >&2
+  exit 2
+fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/draftmux/Cargo.toml | head -n 1)"
+cargo build --locked --release -p draftmux --bin draftmux
+target="${CARGO_TARGET_DIR:-$root/target}"
+out="$target/linux-release/$version"
+rm -rf "$out"
+mkdir -p "$out"
+tree=$(mktemp -d)
+trap 'rm -rf "$tree"' EXIT
+"$root/scripts/assemble-linux-app" "$target/release/draftmux" "$tree" >/dev/null
+name="Draftmux-$version-linux-$(uname -m)"
+tar -czf "$out/$name.tar.gz" -C "$tree" draftmux-linux
+(cd "$out" && sha256sum "$name.tar.gz" >"$name.sha256")
+printf '%s\n' "$out/$name.tar.gz"

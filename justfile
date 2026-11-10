@@ -63,6 +63,10 @@ release BUMP="patch" *ARGS:
 release-macos:
     scripts/release-macos
 
+# Build an optimized Linux release tarball (run on Linux)
+release-linux:
+    scripts/release-linux
+
 # Print the Homebrew cask for a release disk image
 homebrew-cask VERSION CHECKSUM_FILE URL HOMEPAGE:
     scripts/homebrew-cask "$@"

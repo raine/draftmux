@@ -32,9 +32,26 @@ in `~/Library/Application Support/Draftmux/`.
 
 ### Linux
 
-Wayland and X11 are supported on glibc distributions. Install the Rust
-toolchain from `rust-toolchain.toml`, just, a C/C++ toolchain and pkg-config.
-On Debian 12 / Ubuntu, the build libraries are:
+Wayland and X11 are supported on x86_64 glibc distributions with glibc 2.35
+or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). Download
+`Draftmux-<version>-linux-x86_64.tar.gz` from
+[Releases](https://github.com/raine/draftmux/releases), then:
+
+```sh
+tar -xzf Draftmux-*-linux-x86_64.tar.gz
+draftmux-linux/install
+```
+
+This installs the app and its pi extension in `~/.local/lib/draftmux` and
+links `~/.local/bin/draftmux`. The desktop entry and icon go under
+`${XDG_DATA_HOME:-~/.local/share}`. Add `~/.local/bin` to PATH for CLI and
+agent use. To update, install a newer release the same way; the installer
+refuses to replace an unrelated command or unmarked app tree.
+`DRAFTMUX_INSTALL_PREFIX` overrides `~/.local`.
+
+To build from source instead, install the Rust toolchain from
+`rust-toolchain.toml`, just, a C/C++ toolchain and pkg-config. On Debian 12 /
+Ubuntu, the build libraries are:
 
 ```sh
 sudo apt install build-essential pkg-config cmake clang libxkbcommon-dev \
@@ -43,18 +60,10 @@ sudo apt install build-essential pkg-config cmake clang libxkbcommon-dev \
 just linux-install
 ```
 
-This builds a debug binary with two cargo jobs, installs the app and its pi
-extension in `~/.local/lib/draftmux`, and links `~/.local/bin/draftmux`.
-The desktop entry and icon go under `${XDG_DATA_HOME:-~/.local/share}`.
-Add `~/.local/bin` to PATH for CLI and agent use. Run the recipe again to
-update; it refuses to replace an unrelated command or unmarked app tree.
-`DRAFTMUX_INSTALL_PREFIX` overrides `~/.local`.
-
+This builds a debug binary with two cargo jobs and installs it the same way.
 `just linux-app` produces `target/draftmux-linux-<architecture>.tar.gz`
-without installing it. Extract it and run `draftmux-linux/install` on a
-machine with a compatible glibc and architecture. The binary finds resources
-relative to itself, including when launched through the command symlink.
-These are local builds, not automatically published releases.
+without installing it. The binary finds resources relative to itself,
+including when launched through the command symlink.
 
 Runtime packages on Debian are `libxcb1 libxkbcommon0 libxkbcommon-x11-0
 libfreetype6 libvulkan1 libegl1 libwayland-client0 libwayland-egl1 fontconfig
@@ -144,8 +153,8 @@ Check for Updates… checks right away and reports the result.
 Turn automatic checks off under Settings → General → Updates
 (`"check_for_updates": false` in `settings.json`), or set
 `DRAFTMUX_NO_UPDATE_CHECK=1`. Check for Updates still works either way.
-Builds made from source, including the Linux install,
-never check on their own; Check for Updates tells them a newer release
+Linux installs and builds made from source never check on their own and
+don't update themselves; Check for Updates tells them a newer release
 exists. Checks contact `api.github.com` and GitHub's download hosts and send
 nothing but the request.
 
@@ -295,10 +304,16 @@ Print the Homebrew cask for a release with
 `just homebrew-cask VERSION CHECKSUM_FILE URL HOMEPAGE`, where `URL` is where
 the disk image is published and may use `#{version}`.
 
+`scripts/release-linux` builds an optimized Linux release into
+`target/linux-release/<version>/`: the app tree that `just linux-app`
+packages, as `Draftmux-<version>-linux-<architecture>.tar.gz` with its
+`.sha256`. The binary needs a glibc at least as new as the build machine's.
+
 The Release workflow runs `scripts/release-macos` on GitHub Actions with the
-variables above as repository secrets. Pushing a `vVERSION` tag that matches
-the version in `crates/draftmux/Cargo.toml` publishes the disk image, the app
-archive and their checksums as a GitHub release, with that version's
+variables above as repository secrets, and `scripts/release-linux` on Ubuntu
+22.04. Pushing a `vVERSION` tag that matches the version in
+`crates/draftmux/Cargo.toml` publishes the disk image, the app archive, the
+Linux archive and their checksums as a GitHub release, with that version's
 `CHANGELOG.md` section as its notes, then writes the cask to
 `Casks/draftmux.rb` in
 [raine/homebrew-draftmux](https://github.com/raine/homebrew-draftmux), using
