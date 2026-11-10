@@ -72,6 +72,8 @@ const ITEM_RADIUS: Pixels = px(crate::platform::POPUP_RADIUS - 5.);
 const RESULTS_WIDTH: Pixels = px(380.);
 /// How long a newly highlighted item takes to fade in.
 const HIGHLIGHT_FADE: Duration = Duration::from_millis(120);
+/// How long the running, results and error states take to fade in.
+const MODE_FADE: Duration = Duration::from_millis(160);
 
 pub fn init(cx: &mut App) {
     let mut bindings = Vec::new();
@@ -850,7 +852,7 @@ impl SelectionPopover {
                 )
                 .into_any_element()
         };
-        match &open.mode {
+        let content = match &open.mode {
             Mode::Actions(actions) => div()
                 .flex()
                 .gap(px(2.))
@@ -938,7 +940,23 @@ impl SelectionPopover {
                 .text_color(palette.muted)
                 .child(message.clone())
                 .into_any_element(),
-        }
+        };
+        // The actions show with the panel; later states replace them in place
+        // and fade in rather than snapping.
+        let key = match &open.mode {
+            Mode::Actions(_) => return content,
+            Mode::Running { .. } => "popover-running",
+            Mode::Results(_) => "popover-results",
+            Mode::Error(_) => "popover-error",
+        };
+        div()
+            .child(content)
+            .with_animation(
+                key,
+                Animation::new(MODE_FADE).with_easing(ease_out_quint()),
+                |content, delta| content.opacity(delta),
+            )
+            .into_any_element()
     }
 }
 

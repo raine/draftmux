@@ -8,9 +8,9 @@
 
 use draftmux_pi_profiles::{Availability, ModelRef, availability};
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent,
-    MouseButton, ScrollStrategy, SharedString, UniformListScrollHandle, Window, actions, div,
-    prelude::*, px, uniform_list,
+    Animation, AnimationExt, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight,
+    KeyBinding, KeyDownEvent, MouseButton, ScrollStrategy, SharedString, UniformListScrollHandle,
+    Window, actions, div, ease_out_quint, prelude::*, px, uniform_list,
 };
 
 use crate::profiles::ModelList;
@@ -21,6 +21,8 @@ actions!(model_picker, [Dismiss]);
 const KEY_CONTEXT: &str = "ModelPicker";
 const WIDTH: gpui::Pixels = px(320.);
 const ROW_HEIGHT: gpui::Pixels = px(24.);
+/// How long a newly highlighted row takes to fade in.
+const HIGHLIGHT_FADE: std::time::Duration = std::time::Duration::from_millis(120);
 const VISIBLE_ROWS: usize = 14;
 
 /// Escape is an action rather than a key in [`ModelPicker::key_down`], so it
@@ -275,12 +277,11 @@ impl ModelPicker {
             Row::Model(model) => {
                 let highlighted = self.highlight == Some(ix);
                 let current = self.current.as_ref() == Some(model);
-                row.rounded(px(5.))
+                let row = row
+                    .rounded(px(5.))
                     .active(|style| style.opacity(0.8))
                     .text_size(px(13.))
-                    .when(highlighted, |row| {
-                        row.bg(palette.accent).text_color(palette.on_accent)
-                    })
+                    .when(highlighted, |row| row.text_color(palette.on_accent))
                     .child(
                         div()
                             .w(px(16.))
@@ -294,8 +295,16 @@ impl ModelPicker {
                             cx.notify();
                         }
                     }))
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
-                    .into_any_element()
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)));
+                if !highlighted {
+                    return row.into_any_element();
+                }
+                row.with_animation(
+                    ("highlight", ix),
+                    Animation::new(HIGHLIGHT_FADE).with_easing(ease_out_quint()),
+                    move |row, delta| row.bg(palette.accent.opacity(delta)),
+                )
+                .into_any_element()
             }
         }
     }

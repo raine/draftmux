@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use editor::{Editor, EditorEvent};
 use gpui::{
-    App, Context, Entity, FontWeight, KeyBinding, SharedString, Subscription, Task, Window,
-    actions, div, prelude::*, px,
+    Animation, AnimationExt, App, Context, Entity, FontWeight, KeyBinding, SharedString,
+    Subscription, Task, Window, actions, div, prelude::*, px,
 };
 use shell_env::ShellEnv;
 
@@ -25,6 +25,7 @@ actions!(format, [Format]);
 
 /// oxfmt is a Node script; a cold start takes about a second.
 const TIMEOUT: Duration = Duration::from_secs(5);
+const MESSAGE_FADE: Duration = Duration::from_millis(200);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(editor::secondary!("shift-f"), Format, None)]);
@@ -169,6 +170,11 @@ impl Render for Formatter {
                     .truncate()
                     .text_color(palette.muted)
                     .child(message)
+                    .with_animation(
+                        "format-message",
+                        Animation::new(MESSAGE_FADE),
+                        |message, delta| message.opacity(delta),
+                    )
             }))
             .when(visible, |this| {
                 this.child(

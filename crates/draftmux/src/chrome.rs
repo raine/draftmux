@@ -20,10 +20,10 @@ use anyhow::Result;
 use draftmux_storage::{Store, Target};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    App, BoxShadow, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
-    FontWeight, Hsla, KeyBinding, MouseButton, Pixels, Point, ScrollHandle, SharedString,
-    StyleRefinement, Subscription, Task, Window, WindowControlArea, actions, div, point,
-    prelude::*, px, svg,
+    Animation, AnimationExt, AnyElement, App, BoxShadow, Context, CursorStyle, DragMoveEvent,
+    Empty, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyBinding, MouseButton, Pixels,
+    Point, ScrollHandle, SharedString, StyleRefinement, Subscription, Task, Window,
+    WindowControlArea, actions, div, ease_out_quint, point, prelude::*, px, svg,
 };
 use markup::Document;
 
@@ -46,6 +46,8 @@ actions!(chrome, [ToggleEditor, TogglePreview, ToggleSidebar]);
 const TOOLBAR_HEIGHT: Pixels = px(52.);
 const SIDEBAR_WIDTH: Pixels = px(228.);
 const CHAT_WIDTH: Pixels = px(340.);
+/// How long the target switch's newly selected segment takes to fade in.
+const SEGMENT_FADE: Duration = Duration::from_millis(150);
 const CHAT_MIN_WIDTH: Pixels = px(260.);
 /// Room the chat never takes from the editor and preview.
 const CONTENT_MIN_WIDTH: Pixels = px(320.);
@@ -1077,10 +1079,10 @@ fn target_switch(
     palette: &Palette,
     cx: &mut Context<Chrome>,
 ) -> impl IntoElement {
-    let segment = |target: Target| {
+    let palette = *palette;
+    let segment = |target: Target| -> AnyElement {
         let label = target.label();
-        let on = target == selected;
-        div()
+        let segment = div()
             .id(label)
             .h(px(20.))
             .px(px(9.))
@@ -1088,18 +1090,25 @@ fn target_switch(
             .items_center()
             .rounded(px(5.5))
             .text_size(px(12.))
-            .when(on, |segment| {
-                segment.bg(palette.segment_on).shadow(vec![
-                    shadow(palette.segment_ring, 0., 0., 0.5),
-                    shadow(palette.segment_drop, 1., 2.5, 0.),
-                ])
-            })
-            .when(!on, |segment| {
-                segment
-                    .active(|style| style.opacity(0.8))
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_target(target, cx)))
-            })
-            .child(label)
+            .child(label);
+        if target != selected {
+            return segment
+                .active(|style| style.opacity(0.8))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_target(target, cx)))
+                .into_any_element();
+        }
+        segment
+            .with_animation(
+                ("segment-on", target as usize),
+                Animation::new(SEGMENT_FADE).with_easing(ease_out_quint()),
+                move |segment, delta| {
+                    segment.bg(palette.segment_on.opacity(delta)).shadow(vec![
+                        shadow(palette.segment_ring.opacity(delta), 0., 0., 0.5),
+                        shadow(palette.segment_drop.opacity(delta), 1., 2.5, 0.),
+                    ])
+                },
+            )
+            .into_any_element()
     };
     div()
         .flex()

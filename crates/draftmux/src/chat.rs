@@ -1067,6 +1067,18 @@ impl Chat {
                                 .text_color(palette.muted),
                         ),
                 )
+                .with_animation(
+                    "selection-chip",
+                    Animation::new(ENTRANCE).with_easing(ease_out_quint()),
+                    move |chip, delta| {
+                        let rise = if crate::platform::reduce_motion() {
+                            0.
+                        } else {
+                            ENTRANCE_RISE
+                        };
+                        chip.relative().top(px(rise * (1. - delta))).opacity(delta)
+                    },
+                )
         });
         div().flex_none().px(px(12.)).pt(px(8.)).pb(px(12.)).child(
             div()
