@@ -16,7 +16,7 @@
 mod quote;
 mod transcript;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -62,6 +62,13 @@ const KEY_CONTEXT: &str = "Composer";
 const ENTRANCE: Duration = Duration::from_millis(200);
 /// How far below its place a newly arrived item starts.
 const ENTRANCE_RISE: f32 = 6.;
+/// How long a tool row takes to settle when its tool finishes or it is
+/// expanded or collapsed.
+const TOOL_SETTLE: Duration = Duration::from_millis(150);
+/// How long the send button takes to change colour.
+const SEND_FADE: Duration = Duration::from_millis(150);
+/// How long "Jump to latest" takes to fade in and rise into place.
+const JUMP_FADE: Duration = Duration::from_millis(150);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -103,9 +110,28 @@ pub struct Chat {
     /// editor's once it settles.
     chip: Range<usize>,
     settle_chip: Task<()>,
+    /// The send button's state and the one it is changing from.
+    send_state: Cell<(SendState, SendState)>,
     style: MarkupStyle,
     /// Wakes up when the selected draft's idle pi should stop.
     idle: Task<()>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SendState {
+    Disabled,
+    Ready,
+    Busy,
+}
+
+impl SendState {
+    fn background(self, palette: &Palette) -> Hsla {
+        match self {
+            Self::Disabled => palette.send_disabled,
+            Self::Ready => palette.accent,
+            Self::Busy => palette.send_busy,
+        }
+    }
 }
 
 struct Session {
@@ -129,6 +155,12 @@ struct Session {
     /// entrance, by transcript index. Restored history and items that
     /// arrived unseen appear at once.
     entering: HashMap<usize, Instant>,
+    /// When tools finished while the session was shown, by transcript index;
+    /// their result icon and stats fade in.
+    finished: HashMap<usize, Instant>,
+    /// When tool rows were expanded or collapsed, by transcript index; their
+    /// chevron turns.
+    turned: HashMap<usize, Instant>,
     /// Whether the list ends with a placeholder awaiting a visible reply.
     activity_row: bool,
     _events: Task<()>,
@@ -197,6 +229,7 @@ impl Chat {
             detached: None,
             chip: 0..0,
             settle_chip: Task::ready(()),
+            send_state: Cell::new((SendState::Disabled, SendState::Disabled)),
             style: message_style(theme::get(cx).dark),
             idle: Task::ready(()),
         }
@@ -253,6 +286,8 @@ impl Chat {
                             history_ready: false,
                             bubbles: HashMap::new(),
                             entering: HashMap::new(),
+                            finished: HashMap::new(),
+                            turned: HashMap::new(),
                             activity_row: false,
                             _events: Task::ready(()),
                         },
@@ -441,6 +476,8 @@ impl Chat {
         // Prepending moves every item to a new index.
         session.bubbles.clear();
         session.entering.clear();
+        session.finished.clear();
+        session.turned.clear();
         self.sync_list(id, cx);
     }
 
@@ -564,9 +601,23 @@ impl Chat {
         if let (AgentEvent::Ready(state), Some(model)) = (&event, &session.model) {
             model.update(cx, |model, cx| model.set_state(state.clone(), cx));
         }
-        session
-            .transcript
-            .apply(&event, written.as_deref(), Instant::now());
+        let shown = self.current.as_deref() == Some(id);
+        let running: Vec<usize> = if shown {
+            running_tools(&session.transcript).collect()
+        } else {
+            Vec::new()
+        };
+        let now = Instant::now();
+        session.transcript.apply(&event, written.as_deref(), now);
+        if !running.is_empty() {
+            let still: Vec<usize> = running_tools(&session.transcript).collect();
+            session
+                .finished
+                .retain(|_, start| now.saturating_duration_since(*start) < TOOL_SETTLE);
+            for index in running.into_iter().filter(|index| !still.contains(index)) {
+                session.finished.insert(index, now);
+            }
+        }
         if self.current.as_deref() == Some(id)
             && let Some(text) = written
         {
@@ -662,6 +713,11 @@ impl Chat {
         };
         if let Some(session) = self.sessions.get_mut(&id) {
             session.transcript.toggle(index);
+            let now = Instant::now();
+            session
+                .turned
+                .retain(|_, start| now.saturating_duration_since(*start) < TOOL_SETTLE);
+            session.turned.insert(index, now);
         }
         self.sync_list(&id, cx);
     }
@@ -776,7 +832,7 @@ impl Chat {
                     }),
                 ))
                 .into_any_element(),
-            Item::Tool(tool) => self.tool_row(tool, index, session, &palette, cx),
+            Item::Tool(tool) => self.tool_row(tool, index, session, &palette, window, cx),
             Item::Failure { error, .. } => {
                 let retry = session.transcript.retry_at(index).is_some();
                 let (message, color) = match error {
@@ -849,8 +905,14 @@ impl Chat {
         index: usize,
         session: &Session,
         palette: &Palette,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let finish = settling(session.finished.get(&index));
+        let turn = settling(session.turned.get(&index));
+        if finish.is_some() || turn.is_some() {
+            window.request_animation_frame();
+        }
         let meta = &session.draft.meta;
         let target = tool.target(
             &meta.cwd,
@@ -869,6 +931,7 @@ impl Chat {
                 } else {
                     palette.faint
                 })
+                .when_some(finish, |icon, delta| icon.opacity(delta))
                 .into_any_element()
         };
         let stats = tool.stats.filter(|_| !running);
@@ -928,6 +991,7 @@ impl Chat {
                     .items_center()
                     .gap(px(6.))
                     .pl(px(8.))
+                    .when_some(finish, |meta, delta| meta.opacity(delta))
                     .when_some(stats, |meta, (added, removed)| {
                         meta.child(stat(format!("+{added}"), palette.added, palette.added_bg))
                             .when_some(removed, |meta, removed| {
@@ -951,8 +1015,17 @@ impl Chat {
                             .path(CHEVRON_ICON)
                             .size(px(10.))
                             .text_color(palette.faint);
-                        if tool.expanded {
-                            chevron.with_transformation(Transformation::rotate(percentage(0.25)))
+                        // Collapsing turns it back while the row is hovered.
+                        let turned = match turn.filter(|_| !crate::platform::reduce_motion()) {
+                            Some(delta) if tool.expanded => delta,
+                            Some(delta) => 1. - delta,
+                            None if tool.expanded => 1.,
+                            None => 0.,
+                        };
+                        if tool.expanded || turned > 0. {
+                            chevron.with_transformation(Transformation::rotate(percentage(
+                                0.25 * turned,
+                            )))
                         } else {
                             chevron
                                 .invisible()
@@ -965,7 +1038,11 @@ impl Chat {
             .flex_col()
             .child(row)
             .when(tool.expanded, |column| {
-                column.child(tool_body(tool, index, palette))
+                column.child(
+                    div()
+                        .when_some(turn, |body, delta| body.opacity(delta))
+                        .child(tool_body(tool, index, palette)),
+                )
             })
             .into_any_element()
     }
@@ -1023,6 +1100,18 @@ impl Chat {
         let session = self.session();
         let empty = self.composer.read(cx).text().trim().is_empty();
         let can_send = !busy && !empty && session.is_some();
+        let state = if busy {
+            SendState::Busy
+        } else if can_send {
+            SendState::Ready
+        } else {
+            SendState::Disabled
+        };
+        let (shown, mut from) = self.send_state.get();
+        if state != shown {
+            from = shown;
+            self.send_state.set((state, from));
+        }
         let model = session.and_then(|session| session.model.clone());
         let quote = self.quote(self.chip.clone(), cx);
         let placeholder = if quote.is_some() {
@@ -1131,20 +1220,7 @@ impl Chat {
                                 .items_center()
                                 .justify_center()
                                 .rounded(px(7.))
-                                .bg(if busy {
-                                    palette.send_busy
-                                } else if can_send {
-                                    palette.accent
-                                } else {
-                                    palette.send_disabled
-                                })
                                 .text_color(palette.on_accent)
-                                .child(
-                                    svg()
-                                        .path(if busy { STOP_ICON } else { SEND_ICON })
-                                        .size(px(if busy { 10. } else { 14. }))
-                                        .text_color(palette.on_accent),
-                                )
                                 .when(busy || can_send, |button| {
                                     button
                                         .active(|style| style.opacity(0.8))
@@ -1155,7 +1231,29 @@ impl Chat {
                                                 this.send(cx);
                                             }
                                         }))
-                                }),
+                                })
+                                .with_animation(
+                                    ("send-state", state as usize),
+                                    Animation::new(SEND_FADE).with_easing(ease_out_quint()),
+                                    move |button, delta| {
+                                        let icon = if state == SendState::Busy {
+                                            svg().path(STOP_ICON).size(px(10.))
+                                        } else {
+                                            svg().path(SEND_ICON).size(px(14.))
+                                        };
+                                        // The icon fades in only when it changes.
+                                        let swapped =
+                                            (state == SendState::Busy) != (from == SendState::Busy);
+                                        button
+                                            .bg(from
+                                                .background(&palette)
+                                                .blend(state.background(&palette).opacity(delta)))
+                                            .child(
+                                                icon.text_color(palette.on_accent)
+                                                    .opacity(if swapped { delta } else { 1. }),
+                                            )
+                                    },
+                                ),
                         ),
                 ),
         )
@@ -1211,7 +1309,6 @@ impl Render for Chat {
                                         div()
                                             .id("jump-to-latest")
                                             .absolute()
-                                            .bottom(px(10.))
                                             .right(px(20.))
                                             .size(px(30.))
                                             .rounded_full()
@@ -1237,6 +1334,21 @@ impl Render for Chat {
                                                     .with_transformation(Transformation::rotate(
                                                         percentage(0.5),
                                                     )),
+                                            )
+                                            .with_animation(
+                                                "jump-to-latest-in",
+                                                Animation::new(JUMP_FADE)
+                                                    .with_easing(ease_out_quint()),
+                                                |button, delta| {
+                                                    let rise = if crate::platform::reduce_motion() {
+                                                        0.
+                                                    } else {
+                                                        4.
+                                                    };
+                                                    button
+                                                        .bottom(px(10. - rise * (1. - delta)))
+                                                        .opacity(delta)
+                                                },
                                             ),
                                     )
                                 },
@@ -1487,6 +1599,25 @@ fn stat(text: String, color: Hsla, background: Hsla) -> impl IntoElement {
         .text_color(color)
         .bg(background)
         .child(text)
+}
+
+/// How far along a tool row's settle is, eased, if it started at `start`
+/// and hasn't finished.
+fn settling(start: Option<&Instant>) -> Option<f32> {
+    let progress = start?.elapsed().as_secs_f32() / TOOL_SETTLE.as_secs_f32();
+    (progress < 1.).then(|| ease_out_quint()(progress))
+}
+
+/// The transcript indices of the tools still running.
+fn running_tools(transcript: &Transcript) -> impl Iterator<Item = usize> + '_ {
+    transcript
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            Item::Tool(tool) if tool.running() => Some(index),
+            _ => None,
+        })
 }
 
 fn format_duration(duration: Duration) -> String {
