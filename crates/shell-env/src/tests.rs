@@ -1,16 +1,32 @@
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::*;
 use crate::capture::{fallback_env, get, parse_env};
 
+/// Writes through a child process so this process never has the script
+/// open for writing: a shell another test forks meanwhile would inherit that
+/// descriptor until it execs, and executing the script would then fail with
+/// "Text file busy".
 fn write_executable(path: &Path, contents: &str) {
-    fs::write(path, contents).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut writer = Command::new("/bin/sh")
+        .args(["-c", "cat >\"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(contents.as_bytes())
+        .unwrap();
+    assert!(writer.wait().unwrap().success());
 }
 
 fn var<'a>(env: &'a ShellEnv, name: &str) -> Option<&'a OsString> {
@@ -22,6 +38,11 @@ fn base_env(home: &Path) -> Vars {
         ("HOME".into(), home.into()),
         ("PATH".into(), "/usr/bin:/bin:/usr/sbin:/sbin".into()),
     ]
+}
+
+fn assert_capture_error(env: &ShellEnv, expected: &str) {
+    let err = env.capture_error.as_deref();
+    assert!(err.is_some_and(|err| err.contains(expected)), "{err:?}");
 }
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -118,12 +139,7 @@ fn hanging_shell_falls_back_within_timeout() {
     let started = Instant::now();
     let env = capture(shell, base_env(dir.path()), Duration::from_millis(300));
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(
-        env.capture_error
-            .as_deref()
-            .unwrap()
-            .contains("didn't finish")
-    );
+    assert_capture_error(&env, "didn't finish");
     let path = var(&env, "PATH").unwrap().to_str().unwrap();
     assert!(path.contains("/usr/local/bin"), "{path}");
 }
@@ -148,12 +164,7 @@ fn missing_shell_falls_back() {
         base_env(dir.path()),
         TIMEOUT,
     );
-    assert!(
-        env.capture_error
-            .as_deref()
-            .unwrap()
-            .contains("couldn't start")
-    );
+    assert_capture_error(&env, "couldn't start");
     let missing = env.pi().unwrap_err().to_string();
     assert!(missing.contains("pi wasn't found"), "{missing}");
     assert!(missing.contains("couldn't start"), "{missing}");
@@ -221,12 +232,7 @@ fn shell_exiting_without_env_falls_back() {
     let shell = dir.path().join("broken-sh");
     write_executable(&shell, "#!/bin/sh\necho 'rc error'\nexit 1\n");
     let env = capture(shell, base_env(dir.path()), TIMEOUT);
-    assert!(
-        env.capture_error
-            .as_deref()
-            .unwrap()
-            .contains("exited without printing")
-    );
+    assert_capture_error(&env, "exited without printing");
 }
 
 #[test]
@@ -237,10 +243,5 @@ fn flooding_shell_times_out() {
     let started = Instant::now();
     let env = capture(shell, base_env(dir.path()), Duration::from_millis(300));
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(
-        env.capture_error
-            .as_deref()
-            .unwrap()
-            .contains("didn't finish")
-    );
+    assert_capture_error(&env, "didn't finish");
 }
