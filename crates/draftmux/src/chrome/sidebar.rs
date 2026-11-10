@@ -53,8 +53,12 @@ fn adjacent_row(current: Option<usize>, len: usize, forward: bool) -> Option<usi
 }
 
 pub(super) struct Toast {
-    /// Distinguishes successive toasts, so each one animates in.
+    /// Distinguishes successive toasts, so each one's text fades in.
     serial: usize,
+    /// The serial of the toast that rose into view. A toast replacing a
+    /// visible one keeps it, so the card stays put and only its text
+    /// changes.
+    entrance: usize,
     error: bool,
     text: SharedString,
     /// Draft to unarchive when Undo is clicked.
@@ -454,8 +458,13 @@ impl Chrome {
         cx: &mut Context<Self>,
     ) {
         let serial = self.toast.as_ref().map_or(0, |toast| toast.serial + 1);
+        let entrance = match &self.toast {
+            Some(toast) if !toast.leaving => toast.entrance,
+            _ => serial,
+        };
         self.toast = Some(Toast {
             serial,
+            entrance,
             error,
             text,
             undo,
@@ -544,7 +553,19 @@ impl Chrome {
                     .path(icon)
                     .text_color(icon_color),
             )
-            .child(div().min_w_0().child(toast.text.clone()))
+            .child({
+                let text = div().min_w_0().child(toast.text.clone());
+                if toast.serial == toast.entrance {
+                    text.into_any_element()
+                } else {
+                    text.with_animation(
+                        ("toast-text", toast.serial),
+                        Animation::new(TOAST_FADE_IN).with_easing(ease_out_quint()),
+                        |text, delta| text.opacity(delta),
+                    )
+                    .into_any_element()
+                }
+            })
             .children(toast.undo.clone().map(|id| {
                 div()
                     .id("toast-undo")
@@ -587,7 +608,7 @@ impl Chrome {
         } else {
             layer
                 .with_animation(
-                    ("toast-in", toast.serial),
+                    ("toast-in", toast.entrance),
                     Animation::new(TOAST_FADE_IN).with_easing(ease_out_quint()),
                     move |layer, delta| {
                         layer
