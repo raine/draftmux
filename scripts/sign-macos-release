@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Signs a Draftmux.app bundle or disk image with a Developer ID Application
 # certificate, then verifies it with verify-macos-release. The certificate
-# is imported into a temporary keychain that is deleted on exit; the login
-# keychain and its search list are left alone.
+# is imported into a temporary keychain that is deleted on exit. codesign
+# finds the private key through the user keychain search list, so the
+# temporary keychain joins that list while signing and the previous list is
+# restored on exit; the login keychain itself is left alone.
 #
 #   APPLE_DEVELOPER_ID_CERT_BASE64    the .p12 certificate and key, base64
 #   APPLE_DEVELOPER_ID_CERT_PASSWORD  the .p12 password
@@ -43,8 +45,14 @@ certificate="$work_dir/certificate.p12"
 keychain="$work_dir/signing.keychain-db"
 keychain_password=$(openssl rand -hex 32)
 keychain_created=0
+search_list=()
+search_list_changed=0
 cleanup() {
   local status=$?
+  if [[ $search_list_changed == 1 ]] && ! security list-keychains -d user -s "${search_list[@]}"; then
+    echo "failed to restore the keychain search list" >&2
+    status=1
+  fi
   if [[ $keychain_created == 1 ]] && ! security delete-keychain "$keychain" >/dev/null 2>&1; then
     echo "failed to remove the signing keychain: $keychain" >&2
     status=1
@@ -60,6 +68,13 @@ security create-keychain -p "$keychain_password" "$keychain"
 keychain_created=1
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
+while IFS= read -r line; do
+  line=${line#"${line%%[![:space:]]*}"}
+  line=${line#\"}
+  search_list+=("${line%\"}")
+done < <(security list-keychains -d user)
+security list-keychains -d user -s "$keychain" "${search_list[@]}"
+search_list_changed=1
 security import "$certificate" -k "$keychain" \
   -P "$APPLE_DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
