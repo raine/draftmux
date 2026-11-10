@@ -791,6 +791,79 @@ fn emphasis(text: &str, ix: usize, delim: char) -> Option<usize> {
     None
 }
 
+/// The two ways mrkdwn writes a labelled link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkSyntax {
+    /// `<url|label>`
+    Angle,
+    /// `[label](url)`
+    Markdown,
+}
+
+/// The syntax of the first labelled link in `mrkdwn` outside code.
+pub fn link_syntax(mrkdwn: &str) -> Option<LinkSyntax> {
+    let mut found = None;
+    visit_links(mrkdwn, |url, label, syntax| {
+        if label != url {
+            found.get_or_insert(syntax);
+        }
+        None
+    });
+    found
+}
+
+/// `mrkdwn` with every labelled link outside code written in `syntax`.
+/// Links whose label can't be written in the other syntax stay as they are.
+pub fn rewrite_links(mrkdwn: &str, syntax: LinkSyntax) -> String {
+    visit_links(mrkdwn, |url, label, from| {
+        if from == syntax || label == url {
+            return None;
+        }
+        match syntax {
+            LinkSyntax::Angle if !label.contains(['|', '<', '>']) => {
+                Some(format!("<{url}|{label}>"))
+            }
+            LinkSyntax::Markdown if !label.contains(['[', ']']) => {
+                Some(format!("[{label}]({url})"))
+            }
+            _ => None,
+        }
+    })
+}
+
+/// Calls `f` with the target, label and syntax of each link outside
+/// code spans and blocks, and returns `text` with the links `f` replaced.
+fn visit_links(text: &str, mut f: impl FnMut(&str, &str, LinkSyntax) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut ix = 0;
+    while ix < text.len() {
+        let rest = &text[ix..];
+        let c = rest.chars().next().unwrap();
+        let link = match c {
+            '<' => angle_link(rest).map(|link| (link, LinkSyntax::Angle)),
+            '[' => markdown_link(rest).map(|link| (link, LinkSyntax::Markdown)),
+            _ => None,
+        };
+        let len = if let Some(((len, url, label), syntax)) = link {
+            match f(url, label, syntax) {
+                Some(rewritten) => out.push_str(&rewritten),
+                None => out.push_str(&rest[..len]),
+            }
+            ix += len;
+            continue;
+        } else if let Some(fenced) = rest.strip_prefix("```") {
+            fenced.find("```").map_or(rest.len(), |end| end + 6)
+        } else if c == '`' {
+            code_span(rest).map_or(c.len_utf8(), |(len, _)| len)
+        } else {
+            c.len_utf8()
+        };
+        out.push_str(&rest[..len]);
+        ix += len;
+    }
+    out
+}
+
 /// Decodes the three entities Slack escapes: `&amp;`, `&lt;` and `&gt;`.
 fn decode(text: &str) -> String {
     if !text.contains('&') {

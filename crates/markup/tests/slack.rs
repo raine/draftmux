@@ -303,3 +303,44 @@ fn diff_line_colours() {
         assert_eq!(show(line), expected, "{line:?}");
     }
 }
+
+#[test]
+fn link_syntax_is_the_first_labelled_link() {
+    use slack::LinkSyntax::*;
+    assert_eq!(slack::link_syntax("no links"), None);
+    assert_eq!(slack::link_syntax("<https://a.b> bare"), None);
+    assert_eq!(
+        slack::link_syntax("`<https://a.b|x>` [Aven](https://a.b) <https://c.d|y>"),
+        Some(Markdown)
+    );
+    assert_eq!(
+        slack::link_syntax("<https://a.b|x> [Aven](https://a.b)"),
+        Some(Angle)
+    );
+}
+
+#[test]
+fn rewrite_links_converts_labelled_links_outside_code() {
+    use slack::LinkSyntax::*;
+    let text = "Adds <https://github.com/raine/aven|Aven> and [wiki](https://w.org/Foo_(bar)) \
+                to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n";
+    assert_eq!(
+        slack::rewrite_links(text, Markdown),
+        "Adds [Aven](https://github.com/raine/aven) and [wiki](https://w.org/Foo_(bar)) \
+         to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n"
+    );
+    assert_eq!(
+        slack::rewrite_links(text, Angle),
+        "Adds <https://github.com/raine/aven|Aven> and <https://w.org/Foo_(bar)|wiki> \
+         to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n"
+    );
+    // Labels the other syntax can't hold stay as written.
+    assert_eq!(
+        slack::rewrite_links("<https://a.b|[x]> [a|b](https://a.b)", Markdown),
+        "<https://a.b|[x]> [a|b](https://a.b)"
+    );
+    assert_eq!(
+        slack::rewrite_links("<https://a.b|[x]> [a|b](https://a.b)", Angle),
+        "<https://a.b|[x]> [a|b](https://a.b)"
+    );
+}

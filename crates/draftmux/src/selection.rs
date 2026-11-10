@@ -142,8 +142,20 @@ pub fn run(
     let (leading, trailing) = surrounding_whitespace(request.selected());
     Ok(parse(&output?, config.alternatives)?
         .into_iter()
-        .map(|option| format!("{leading}{option}{trailing}"))
+        .map(|option| format!("{leading}{}{trailing}", same_links(request, option)))
         .collect())
+}
+
+/// `option` with its links in the syntax the selection uses, as Slack
+/// accepts both `<url|text>` and `[text](url)` and models tend to switch.
+fn same_links(request: &Request, option: String) -> String {
+    if request.target != Target::Slack {
+        return option;
+    }
+    match markup::slack::link_syntax(request.selected()) {
+        Some(syntax) => markup::slack::rewrite_links(&option, syntax),
+        None => option,
+    }
 }
 
 fn command(
@@ -191,7 +203,7 @@ fn syntax(target: Target) -> &'static str {
     match target {
         Target::Github => "GitHub-flavored Markdown",
         Target::Slack => {
-            "Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text>; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)"
+            "Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text> or [text](url) links; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)"
         }
         Target::Rich => {
             "Markdown, pasted as rich text into an email or document (headings, bold, italic, links, lists, quotes, code and tables carry over; no raw HTML, alerts or @mentions; no subject line)"
@@ -235,7 +247,8 @@ fn prompt(request: &Request, count: usize) -> Result<String, String> {
          Reply with exactly this JSON shape and nothing else: {{\"alternatives\": [\"...\"]}}\n\
          - Give {count} distinct options, each a complete replacement for the selected passage only, \
          fitting the text around it.\n\
-         - Write them in {syntax}, keeping the passage's formatting and line breaks where they still fit.\n\
+         - Write them in {syntax}, keeping the passage's formatting, link syntax and line breaks \
+         where they still fit.\n\
          - No commentary, numbering or code fences.",
         instruction = request.action.instruction(),
     );
@@ -376,6 +389,26 @@ mod tests {
         assert_eq!(
             prompt(&huge, 3).unwrap_err(),
             "The draft is too long for a selection action"
+        );
+    }
+
+    #[test]
+    fn slack_options_keep_the_selection_link_syntax() {
+        let text = "Adds [Aven](https://github.com/raine/aven) to the app showcase.";
+        let option = "Includes <https://github.com/raine/aven|Aven> in the showcase".to_string();
+        let mut link = request(text, &text[..text.len() - 1], Action::Alternatives);
+        assert_eq!(same_links(&link, option.clone()), option, "GitHub");
+        link.target = Target::Slack;
+        assert_eq!(
+            same_links(&link, option.clone()),
+            "Includes [Aven](https://github.com/raine/aven) in the showcase"
+        );
+        let mut plain = request("Ship it today", "today", Action::Alternatives);
+        plain.target = Target::Slack;
+        assert_eq!(
+            same_links(&plain, option.clone()),
+            option,
+            "no link selected"
         );
     }
 
