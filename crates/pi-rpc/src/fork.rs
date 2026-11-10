@@ -152,7 +152,7 @@ impl Rpc {
         self.next_id += 1;
         let id = self.next_id.to_string();
         // A write fails when pi has exited; the exit is reported below.
-        let _ = self.conn.send(&command.to_line(&id));
+        let _ = self.conn.send(command.to_line(&id));
         loop {
             let wait = self.deadline.saturating_duration_since(Instant::now());
             let message = match self.rx.recv_timeout(wait) {
@@ -184,7 +184,7 @@ impl Rpc {
                     };
                 }
                 Message::Line(Incoming::Dialog { id, title, .. }) => {
-                    let _ = self.conn.send(&protocol::cancel_dialog_line(&id));
+                    let _ = self.conn.send(protocol::cancel_dialog_line(&id));
                     self.dialog = Some(title);
                 }
                 Message::Line(_) => {}

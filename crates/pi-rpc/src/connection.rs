@@ -1,10 +1,11 @@
-//! One running pi process: stdio pipes, reader threads and shutdown.
+//! One running pi process: stdio pipes, reader and writer threads and
+//! shutdown.
 
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{ChildStdin, Command, Stdio};
-use std::sync::{Arc, Condvar, Mutex};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,7 +34,9 @@ pub(crate) enum Message {
 }
 
 pub(crate) struct Connection {
-    stdin: ChildStdin,
+    /// Lines for the writer thread, which owns pi's stdin. Writing blocks
+    /// while pi doesn't read, so callers only queue.
+    stdin: mpsc::Sender<String>,
     pid: libc::pid_t,
     exit: Arc<ExitState>,
 }
@@ -66,7 +69,7 @@ impl Connection {
             .process_group(0)
             .spawn()?;
         let pid = child.id() as libc::pid_t;
-        let stdin = child.stdin.take().expect("stdin is piped");
+        let mut stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
         let exit = Arc::new(ExitState::default());
@@ -89,6 +92,23 @@ impl Connection {
                 exit_err.update(|inner| inner.stderr_done = true);
             })?;
 
+        let (lines, queue) = mpsc::channel::<String>();
+        thread::Builder::new()
+            .name("pi-stdin".into())
+            .spawn(move || {
+                // Ends when the sender is dropped, closing stdin, or when pi
+                // exits and the write fails; either way stdin is dropped.
+                for line in queue {
+                    if let Err(err) = stdin
+                        .write_all(line.as_bytes())
+                        .and_then(|()| stdin.flush())
+                    {
+                        eprintln!("pi-rpc: writing to pi failed: {err}");
+                        return;
+                    }
+                }
+            })?;
+
         let exit_wait = exit.clone();
         thread::Builder::new()
             .name("pi-wait".into())
@@ -109,16 +129,23 @@ impl Connection {
                 on_message(Message::Exited { status, stderr });
             })?;
 
-        Ok(Self { stdin, pid, exit })
+        Ok(Self {
+            stdin: lines,
+            pid,
+            exit,
+        })
     }
 
-    pub(crate) fn send(&mut self, line: &str) -> io::Result<()> {
-        self.stdin.write_all(line.as_bytes())?;
-        self.stdin.flush()
+    /// Queues `line` for pi. Fails only once writing has failed.
+    pub(crate) fn send(&self, line: String) -> io::Result<()> {
+        self.stdin
+            .send(line)
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "pi's stdin is closed"))
     }
 
-    /// Closes stdin so pi shuts down, then escalates to SIGTERM and SIGKILL
-    /// of the process group if it doesn't exit. Returns at once.
+    /// Closes stdin after the queued lines so pi shuts down, then escalates
+    /// to SIGTERM and SIGKILL of the process group if it doesn't exit, which
+    /// also ends a write pi isn't reading. Returns at once.
     pub(crate) fn stop(self) {
         let Self { stdin, pid, exit } = self;
         drop(stdin);

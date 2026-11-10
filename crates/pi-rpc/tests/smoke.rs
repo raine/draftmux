@@ -42,7 +42,7 @@ fn prompt_round_trip() {
         instructions: None,
         context_files: true,
     };
-    let (agent, mut events) = Agent::new(spec, Duration::from_secs(60));
+    let (agent, mut events) = Agent::new(spec, Duration::from_secs(60), Duration::from_secs(120));
 
     let state = block_on(agent.get_state()).expect("get_state");
     assert!(state.model.is_some(), "the profile has no default model");

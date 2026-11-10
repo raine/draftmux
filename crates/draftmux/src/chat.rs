@@ -51,8 +51,11 @@ use transcript::{DiffLine, Item, Tool, Transcript};
 
 actions!(chat, [Send, Stop]);
 
-/// How long an idle pi process is kept for the selected draft.
+/// How long an idle pi process is kept.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How long pi gets to answer a request. pi answers a prompt only after
+/// compacting and running input hooks or an extension command.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 /// How long the draft's selection must stay put before the composer's chip
 /// shows it, so dragging a selection doesn't flicker the chip.
 const CHIP_SETTLE: Duration = Duration::from_millis(250);
@@ -112,8 +115,6 @@ pub struct Chat {
     /// The send button's state and the one it is changing from.
     send_state: Cell<(SendState, SendState)>,
     style: MarkupStyle,
-    /// Wakes up when the selected draft's idle pi should stop.
-    idle: Task<()>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -232,7 +233,6 @@ impl Chat {
             settle_chip: Task::ready(()),
             send_state: Cell::new((SendState::Disabled, SendState::Disabled)),
             style: message_style(theme::get(cx).dark),
-            idle: Task::ready(()),
         }
     }
 
@@ -263,7 +263,6 @@ impl Chat {
             session.unsent = unsent;
         }
         self.current = id.clone();
-        self.idle = Task::ready(());
         self.text_selection
             .update(cx, |selection, cx| selection.reset(cx));
         if let (Some(id), Some(draft)) = (id, draft) {
@@ -382,7 +381,7 @@ impl Chat {
         })();
         let (agent, events) = match spec {
             Ok(spec) => {
-                let (agent, events) = Agent::new(spec, IDLE_TIMEOUT);
+                let (agent, events) = Agent::new(spec, IDLE_TIMEOUT, REQUEST_TIMEOUT);
                 (Ok(Arc::new(agent)), Some(events))
             }
             Err(err) => (Err(err), None),
@@ -434,7 +433,6 @@ impl Chat {
             })
             .detach();
         }
-        self.schedule_idle(cx);
         self.request_first_draft(id, cx);
     }
 
@@ -645,14 +643,12 @@ impl Chat {
         self.after_change(id, cx);
     }
 
-    /// Updates the list, the owner and the idle timer after `id`'s
-    /// transcript changed.
+    /// Updates the list and the owner after `id`'s transcript changed.
     fn after_change(&mut self, id: &str, cx: &mut Context<Self>) {
         self.enter_new_items(id);
         self.sync_list(id, cx);
         if self.current.as_deref() == Some(id) {
             cx.emit(ChatEvent::Running(self.busy()));
-            self.schedule_idle(cx);
         }
     }
 
@@ -708,22 +704,6 @@ impl Chat {
         }
         session.activity_row = activity_row;
         cx.notify();
-    }
-
-    fn schedule_idle(&mut self, cx: &mut Context<Self>) {
-        let Some(Some(Ok(agent))) = self.session().map(|session| &session.agent) else {
-            return;
-        };
-        let Some(deadline) = agent.deadline() else {
-            return;
-        };
-        let agent = agent.clone();
-        self.idle = cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .timer(deadline.saturating_duration_since(Instant::now()))
-                .await;
-            agent.poll(Instant::now());
-        });
     }
 
     fn toggle(&mut self, index: usize, cx: &mut Context<Self>) {

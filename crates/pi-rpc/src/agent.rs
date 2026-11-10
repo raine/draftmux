@@ -1,11 +1,13 @@
 //! The pi process of one draft: started on demand, stopped when idle or
-//! switched away from, and replaced after a crash.
+//! switched away from, and replaced after a crash. Requests pi doesn't
+//! answer in time fail, so a stuck pi still goes idle.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::channel::{mpsc, oneshot};
@@ -125,6 +127,9 @@ pub enum Error {
     Spawn(String),
     /// Writing to pi failed.
     Write(String),
+    /// pi didn't answer within the request timeout. It may still act on the
+    /// request.
+    Timeout(Duration),
     /// pi's answer didn't have the expected shape.
     Protocol(String),
 }
@@ -138,6 +143,9 @@ impl fmt::Display for Error {
             Error::Stopped => write!(f, "pi was stopped before answering"),
             Error::Spawn(err) => write!(f, "couldn't start pi: {err}"),
             Error::Write(err) => write!(f, "couldn't write to pi: {err}"),
+            Error::Timeout(timeout) => {
+                write!(f, "pi didn't answer within {} s", timeout.as_secs())
+            }
             Error::Protocol(err) => write!(f, "unexpected answer from pi: {err}"),
         }
     }
@@ -149,13 +157,13 @@ type Reply = Result<Option<Value>, Error>;
 
 /// One draft's pi process.
 ///
-/// Holds no timer. Contract for the app:
+/// No call blocks on pi: requests are queued to a writer thread, and a
+/// timer thread per process fails requests pi doesn't answer in time and
+/// stops pi once it has been idle for the idle timeout. Contract for the
+/// app:
 ///
 /// - Call [`Agent::focus`] when the draft is selected and [`Agent::blur`]
 ///   when switching away. Requests start pi when it isn't running.
-/// - After each call and each event, schedule a wake-up for
-///   [`Agent::deadline`] and call [`Agent::poll`] then; that stops an idle
-///   process.
 /// - Flush the autosave before [`Agent::prompt`] so pi reads the editor
 ///   text.
 /// - Dropping the agent stops pi.
@@ -166,8 +174,11 @@ pub struct Agent {
 struct Shared {
     spec: LaunchSpec,
     idle_timeout: Duration,
+    request_timeout: Duration,
     events: mpsc::UnboundedSender<AgentEvent>,
     inner: Mutex<Inner>,
+    /// Wakes the timer thread after `inner` changed.
+    changed: Condvar,
 }
 
 #[derive(Default)]
@@ -182,15 +193,26 @@ struct Live {
     conn: Connection,
     next_id: u64,
     pending: HashMap<String, Pending>,
+    /// The startup `get_state` after its deadline passed. It no longer keeps
+    /// pi from going idle, but a late answer is still reported.
+    late_startup: Option<String>,
     /// Between `agent_start` and `agent_settled`, including runs that
     /// extensions started.
     running: bool,
+    /// Between `compaction_start` and `compaction_end`.
+    compacting: bool,
     turn: Option<Turn>,
     stop_when_quiescent: bool,
     last_activity: Instant,
 }
 
-enum Pending {
+struct Pending {
+    waiter: Waiter,
+    /// When the request fails with [`Error::Timeout`].
+    due: Instant,
+}
+
+enum Waiter {
     Caller(oneshot::Sender<Reply>),
     /// The `get_state` sent at start, which tells whether pi is already
     /// running (an extension can start a run before events are subscribed).
@@ -213,45 +235,110 @@ impl Live {
         !self.running && self.turn.is_none() && self.pending.is_empty()
     }
 
+    /// Queues `command`; with a `waiter`, its answer is awaited until
+    /// `timeout` passes.
     fn send(
         &mut self,
         command: &protocol::Command,
-        pending: Option<Pending>,
+        waiter: Option<(Waiter, Duration)>,
     ) -> Result<String, Error> {
         self.next_id += 1;
         let id = self.next_id.to_string();
         self.conn
-            .send(&command.to_line(&id))
+            .send(command.to_line(&id))
             .map_err(|err| Error::Write(err.to_string()))?;
-        if let Some(pending) = pending {
-            self.pending.insert(id.clone(), pending);
-        }
         self.last_activity = Instant::now();
+        if let Some((waiter, timeout)) = waiter {
+            let due = self.last_activity + timeout;
+            self.pending.insert(id.clone(), Pending { waiter, due });
+        }
         Ok(id)
     }
 
     fn fail_pending(&mut self, error: Error) {
         for (_, pending) in self.pending.drain() {
-            if let Pending::Caller(tx) = pending {
+            if let Waiter::Caller(tx) = pending.waiter {
                 let _ = tx.send(Err(error.clone()));
             }
         }
+    }
+
+    /// Fails the requests whose deadline has passed. A prompt that fails
+    /// ends its turn, so pi can go idle. Returns whether to stop pi: the user
+    /// asked to abort that prompt, and pi ignores an abort until the run
+    /// starts, which the ended turn no longer waits for.
+    fn expire(&mut self, now: Instant, timeout: Duration) -> bool {
+        if self.working() {
+            return false;
+        }
+        let mut stop = false;
+        for (id, pending) in self.pending.extract_if(|_, pending| pending.due <= now) {
+            match pending.waiter {
+                Waiter::Caller(tx) => {
+                    let _ = tx.send(Err(Error::Timeout(timeout)));
+                }
+                Waiter::Startup => {
+                    eprintln!(
+                        "pi-rpc: pi didn't answer the startup get_state within {} s",
+                        timeout.as_secs()
+                    );
+                    self.late_startup = Some(id.clone());
+                }
+            }
+            if let Some(turn) = self.turn.take_if(|turn| turn.id == id) {
+                stop |= turn.abort_requested;
+            }
+        }
+        stop
+    }
+
+    /// Whether pi shows it is working: deadlines are suspended meanwhile.
+    /// pi compacts before it answers a prompt, and a `/command` can run the
+    /// agent before it answers; pi can't go idle during either anyway.
+    fn working(&self) -> bool {
+        self.running || self.compacting
+    }
+
+    /// Restarts the deadlines once pi stops working.
+    fn rearm(&mut self, timeout: Duration) {
+        if self.working() {
+            return;
+        }
+        let due = Instant::now() + timeout;
+        for pending in self.pending.values_mut() {
+            pending.due = pending.due.max(due);
+        }
+    }
+
+    /// When the timer has something to do: the earliest request deadline,
+    /// or going idle.
+    fn wake_at(&self, idle_timeout: Duration) -> Option<Instant> {
+        let due = (!self.working())
+            .then(|| self.pending.values().map(|pending| pending.due).min())
+            .flatten();
+        let idle = self.quiescent().then(|| self.last_activity + idle_timeout);
+        due.into_iter().chain(idle).min()
     }
 }
 
 impl Agent {
     /// Nothing starts until [`Agent::focus`] or a request. Events from every
     /// process the agent starts arrive on the returned receiver.
+    /// Requests pi doesn't answer within `request_timeout` fail with
+    /// [`Error::Timeout`].
     pub fn new(
         spec: LaunchSpec,
         idle_timeout: Duration,
+        request_timeout: Duration,
     ) -> (Self, mpsc::UnboundedReceiver<AgentEvent>) {
         let (events, rx) = mpsc::unbounded();
         let shared = Arc::new(Shared {
             spec,
             idle_timeout,
+            request_timeout,
             events,
             inner: Mutex::new(Inner::default()),
+            changed: Condvar::new(),
         });
         (Self { shared }, rx)
     }
@@ -271,30 +358,14 @@ impl Agent {
         if let Some(live) = &mut inner.live {
             live.stop_when_quiescent = true;
             if live.quiescent() {
-                stop(&mut inner);
+                self.shared.stop(&mut inner);
             }
         }
     }
 
     /// Stops pi now, abandoning any turn in flight.
     pub fn stop(&self) {
-        stop(&mut self.shared.lock());
-    }
-
-    /// When pi should be stopped for inactivity; `None` when it isn't
-    /// running or is busy.
-    pub fn deadline(&self) -> Option<Instant> {
-        self.shared.deadline(&self.shared.lock())
-    }
-
-    /// Stops pi if the idle deadline has passed. Returns whether it stopped.
-    pub fn poll(&self, now: Instant) -> bool {
-        let mut inner = self.shared.lock();
-        let due = self.shared.deadline(&inner).is_some_and(|due| due <= now);
-        if due {
-            stop(&mut inner);
-        }
-        due
+        self.shared.stop(&mut self.shared.lock());
     }
 
     /// Sends a user message. Resolves once pi has accepted or rejected it;
@@ -309,11 +380,10 @@ impl Agent {
             if live.running || live.turn.is_some() {
                 return Err(Error::Busy);
             }
-            let (tx, rx) = oneshot::channel();
             let command = protocol::Command::Prompt {
                 message: text.clone(),
             };
-            let id = live.send(&command, Some(Pending::Caller(tx)))?;
+            let (id, rx) = self.shared.call(live, &command)?;
             live.turn = Some(Turn {
                 id,
                 text,
@@ -335,10 +405,10 @@ impl Agent {
                     if let Some(turn) = &mut live.turn {
                         turn.abort_requested = true;
                     }
-                    let (tx, rx) = oneshot::channel();
                     Some(
-                        live.send(&protocol::Command::Abort, Some(Pending::Caller(tx)))
-                            .map(|_| rx),
+                        self.shared
+                            .call(live, &protocol::Command::Abort)
+                            .map(|(_, rx)| rx),
                     )
                 }
             }
@@ -443,22 +513,31 @@ async fn decode<T: DeserializeOwned>(
     serde_json::from_value(data).map_err(|err| Error::Protocol(err.to_string()))
 }
 
-fn stop(inner: &mut Inner) {
-    if let Some(mut live) = inner.live.take() {
-        live.fail_pending(Error::Stopped);
-        live.conn.stop();
-    }
-}
-
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap()
     }
 
-    fn deadline(&self, inner: &Inner) -> Option<Instant> {
-        let live = inner.live.as_ref()?;
-        live.quiescent()
-            .then(|| live.last_activity + self.idle_timeout)
+    fn stop(&self, inner: &mut Inner) {
+        if let Some(mut live) = inner.live.take() {
+            live.fail_pending(Error::Stopped);
+            live.conn.stop();
+            // Lets the timer thread exit.
+            self.changed.notify_all();
+        }
+    }
+
+    /// Sends `command` and awaits its answer until the request timeout.
+    fn call(
+        &self,
+        live: &mut Live,
+        command: &protocol::Command,
+    ) -> Result<(String, oneshot::Receiver<Reply>), Error> {
+        let (tx, rx) = oneshot::channel();
+        let id = live.send(command, Some((Waiter::Caller(tx), self.request_timeout)))?;
+        // The new deadline may be earlier than the one the timer waits for.
+        self.changed.notify_all();
+        Ok((id, rx))
     }
 
     fn request(
@@ -467,9 +546,7 @@ impl Shared {
     ) -> Result<oneshot::Receiver<Reply>, Error> {
         let mut inner = self.lock();
         let live = self.ensure_live(&mut inner)?;
-        let (tx, rx) = oneshot::channel();
-        live.send(&command, Some(Pending::Caller(tx)))?;
-        Ok(rx)
+        self.call(live, &command).map(|(_, rx)| rx)
     }
 
     /// Sends `command` to process `generation` only, without starting one.
@@ -483,9 +560,7 @@ impl Shared {
             return Err(Error::Stopped);
         }
         let live = inner.live.as_mut().ok_or(Error::Stopped)?;
-        let (tx, rx) = oneshot::channel();
-        live.send(&command, Some(Pending::Caller(tx)))?;
-        Ok(rx)
+        self.call(live, &command).map(|(_, rx)| rx)
     }
 
     fn ensure_live<'a>(self: &Arc<Self>, inner: &'a mut Inner) -> Result<&'a mut Live, Error> {
@@ -501,18 +576,59 @@ impl Shared {
                 conn,
                 next_id: 0,
                 pending: HashMap::new(),
+                late_startup: None,
                 running: false,
+                compacting: false,
                 turn: None,
                 stop_when_quiescent: false,
                 last_activity: Instant::now(),
             };
-            if let Err(err) = live.send(&protocol::Command::GetState, Some(Pending::Startup)) {
+            let startup = (Waiter::Startup, self.request_timeout);
+            if let Err(err) = live.send(&protocol::Command::GetState, Some(startup)) {
                 live.conn.stop();
                 return Err(err);
+            }
+            let shared = self.clone();
+            if let Err(err) = thread::Builder::new()
+                .name("pi-timer".into())
+                .spawn(move || shared.run_timer(generation))
+            {
+                live.conn.stop();
+                return Err(Error::Spawn(err.to_string()));
             }
             inner.live = Some(live);
         }
         Ok(inner.live.as_mut().expect("just started"))
+    }
+
+    /// Expires requests and stops pi when it goes idle, until process
+    /// `generation` stops.
+    fn run_timer(&self, generation: u64) {
+        let mut inner = self.lock();
+        loop {
+            if inner.generation != generation {
+                return;
+            }
+            let Some(live) = &mut inner.live else {
+                return;
+            };
+            let now = Instant::now();
+            let abandoned = live.expire(now, self.request_timeout);
+            let idle = live.quiescent()
+                && (live.stop_when_quiescent || live.last_activity + self.idle_timeout <= now);
+            let wake = live.wake_at(self.idle_timeout);
+            if abandoned || idle {
+                self.stop(&mut inner);
+                return;
+            }
+            inner = match wake {
+                Some(at) => {
+                    let wait = at.saturating_duration_since(now);
+                    self.changed.wait_timeout(inner, wait).unwrap().0
+                }
+                None => self.changed.wait(inner).unwrap(),
+            };
+        }
     }
 
     fn emit(&self, event: AgentEvent) {
@@ -532,6 +648,8 @@ fn on_message(shared: &Weak<Shared>, generation: u64, message: Message) {
     let Some(live) = &mut inner.live else {
         return;
     };
+    // Takes effect once the lock is released.
+    shared.changed.notify_all();
     live.last_activity = Instant::now();
     match message {
         Message::Line(Incoming::Response(response)) => {
@@ -540,7 +658,7 @@ fn on_message(shared: &Weak<Shared>, generation: u64, message: Message) {
             }
         }
         Message::Line(Incoming::Dialog { id, method, title }) => {
-            if let Err(err) = live.conn.send(&protocol::cancel_dialog_line(&id)) {
+            if let Err(err) = live.conn.send(protocol::cancel_dialog_line(&id)) {
                 eprintln!("pi-rpc: couldn't cancel an extension dialog: {err}");
             }
             shared.emit(AgentEvent::Pi(Event::DialogCancelled { method, title }));
@@ -560,6 +678,12 @@ fn on_message(shared: &Weak<Shared>, generation: u64, message: Message) {
                     if live.turn.as_ref().is_some_and(|turn| turn.started) {
                         live.turn = None;
                     }
+                    live.rearm(shared.request_timeout);
+                }
+                Event::CompactionStart { .. } => live.compacting = true,
+                Event::CompactionEnd { .. } => {
+                    live.compacting = false;
+                    live.rearm(shared.request_timeout);
                 }
                 _ => {}
             }
@@ -581,7 +705,7 @@ fn on_message(shared: &Weak<Shared>, generation: u64, message: Message) {
         }
     }
     if live.stop_when_quiescent && live.quiescent() {
-        stop(&mut inner);
+        shared.stop(&mut inner);
     }
 }
 
@@ -613,11 +737,17 @@ fn on_response(live: &mut Live, response: Response) -> Option<State> {
             Some(Disposition::Handled) | None => live.turn = None,
         }
     }
-    match live.pending.remove(&id) {
-        Some(Pending::Caller(tx)) => {
+    let waiter = live.pending.remove(&id).map(|pending| pending.waiter);
+    let waiter = waiter.or_else(|| {
+        live.late_startup
+            .take_if(|startup| *startup == id)
+            .map(|_| Waiter::Startup)
+    });
+    match waiter {
+        Some(Waiter::Caller(tx)) => {
             let _ = tx.send(reply);
         }
-        Some(Pending::Startup) => {
+        Some(Waiter::Startup) => {
             match reply.and_then(|data| {
                 serde_json::from_value::<State>(data.unwrap_or_default())
                     .map_err(|err| Error::Protocol(err.to_string()))

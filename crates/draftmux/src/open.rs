@@ -778,7 +778,7 @@ cat > /dev/null
             instructions: None,
             context_files: true,
         };
-        let (agent, _events) = Agent::new(spec, Duration::from_secs(60));
+        let (agent, _events) = Agent::new(spec, Duration::from_secs(60), Duration::from_secs(60));
         let state = block_on(agent.get_state()).expect("get_state");
         let models = block_on(agent.get_available_models()).expect("get_available_models");
         (state, models)

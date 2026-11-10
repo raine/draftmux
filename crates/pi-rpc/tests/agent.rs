@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use draftmux_pi_rpc::{
@@ -17,6 +18,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const IDLE: Duration = Duration::from_secs(60);
+const REQUEST: Duration = Duration::from_secs(60);
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Harness {
@@ -29,14 +31,19 @@ struct Harness {
 impl Harness {
     /// Spawn `n` runs `scripts[n]`.
     fn new(scripts: &[&str]) -> Self {
-        Self::with_idle(scripts, IDLE)
+        Self::with_timeouts(scripts, IDLE, REQUEST)
     }
 
-    fn with_idle(scripts: &[&str], idle: Duration) -> Self {
-        Self::with_spec(scripts, idle, |_| {})
+    fn with_timeouts(scripts: &[&str], idle: Duration, request: Duration) -> Self {
+        Self::with_spec(scripts, idle, request, |_| {})
     }
 
-    fn with_spec(scripts: &[&str], idle: Duration, edit: impl FnOnce(&mut LaunchSpec)) -> Self {
+    fn with_spec(
+        scripts: &[&str],
+        idle: Duration,
+        request: Duration,
+        edit: impl FnOnce(&mut LaunchSpec),
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths: Vec<PathBuf> = scripts
             .iter()
@@ -72,7 +79,7 @@ impl Harness {
         };
         let mut spec = spec;
         edit(&mut spec);
-        let (agent, events) = Agent::new(spec, idle);
+        let (agent, events) = Agent::new(spec, idle, request);
         Self {
             agent,
             events,
@@ -150,6 +157,20 @@ impl Harness {
     }
 }
 
+/// Runs `f`, aborting the tests if it blocks.
+fn without_blocking<T>(f: impl FnOnce() -> T) -> T {
+    let (done, wait) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if wait.recv_timeout(Duration::from_secs(1)) == Err(RecvTimeoutError::Timeout) {
+            eprintln!("blocked for a second");
+            std::process::abort();
+        }
+    });
+    let result = f();
+    drop(done);
+    result
+}
+
 fn wait_for(condition: impl Fn() -> bool) {
     let deadline = Instant::now() + TIMEOUT;
     while !condition() {
@@ -220,7 +241,6 @@ fn prompt_round_trip_from_recording() {
         events.last(),
         Some(&AgentEvent::Pi(Event::AgentSettled { aborted: false }))
     );
-    assert!(h.agent.deadline().is_some());
 
     h.agent.blur();
     wait_for(|| h.saw_eof(0));
@@ -264,7 +284,7 @@ fn spawn_contract() {
 
 #[test]
 fn settings_reach_the_process() {
-    let h = Harness::with_spec(&[&script("### eof")], IDLE, |spec| {
+    let h = Harness::with_spec(&[&script("### eof")], IDLE, REQUEST, |spec| {
         spec.instructions = Some("Short paragraphs.".into());
         spec.context_files = false;
     });
@@ -422,7 +442,6 @@ fn rejected_and_handled_prompts_end_the_turn() {
         block_on(h.agent.prompt("a".into())),
         Err(Error::Rejected("No API key for anthropic/claude".into()))
     );
-    assert!(h.agent.deadline().is_some());
     assert_eq!(
         block_on(h.agent.prompt("b".into())),
         Ok(Disposition::Handled)
@@ -431,7 +450,8 @@ fn rejected_and_handled_prompts_end_the_turn() {
         block_on(h.agent.prompt("c".into())),
         Ok(Disposition::Handled)
     );
-    assert!(h.agent.deadline().is_some());
+    h.agent.blur();
+    wait_for(|| h.saw_eof(0));
 }
 
 #[test]
@@ -455,11 +475,13 @@ fn extension_dialogs_are_cancelled() {
 
 #[test]
 fn idle_stop() {
-    let mut h = Harness::with_idle(
-        &[&script("### eof"), &script("### eof")],
+    let slow_start =
+        format!(">>> {{\"id\":\"1\",\"type\":\"get_state\"}}\n### sleep 200\n{STATE}\n### eof");
+    let mut h = Harness::with_timeouts(
+        &[&slow_start, &script("### eof")],
         Duration::from_millis(50),
+        REQUEST,
     );
-    assert_eq!(h.agent.deadline(), None);
     h.agent.focus().unwrap();
     // Busy until the startup get_state is answered, which is reported.
     let ready = h.until(|event| matches!(event, AgentEvent::Ready(_)));
@@ -467,11 +489,10 @@ fn idle_stop() {
         unreachable!()
     };
     assert_eq!(state.thinking_level, ThinkingLevel::Medium);
-    let due = h.agent.deadline().unwrap();
-    assert!(!h.agent.poll(due - Duration::from_millis(1)));
-    assert!(h.agent.poll(due));
-    assert_eq!(h.agent.deadline(), None);
+    assert!(!h.saw_eof(0));
+    let ready = Instant::now();
     wait_for(|| h.saw_eof(0));
+    assert!(ready.elapsed() >= Duration::from_millis(50));
     h.no_more_events();
 
     h.agent.focus().unwrap();
@@ -493,7 +514,6 @@ fn blur_waits_for_the_run_to_settle() {
         Ok(Disposition::Started)
     );
     h.agent.blur();
-    assert_eq!(h.agent.deadline(), None);
     assert_eq!(h.next(), AgentEvent::Pi(Event::AgentStart));
     assert!(!h.saw_eof(0));
     h.until_settled();
@@ -506,18 +526,18 @@ fn blur_waits_for_the_run_to_settle() {
 #[test]
 fn run_started_before_subscription() {
     let streaming = STATE.replace(r#""isStreaming":false"#, r#""isStreaming":true"#);
-    let mut h = Harness::with_idle(
+    let mut h = Harness::with_timeouts(
         &[&format!(
             ">>> {{\"id\":\"1\",\"type\":\"get_state\"}}\n{streaming}\n{{\"type\":\"turn_start\"}}\n### sleep 200\n{{\"type\":\"agent_settled\",\"aborted\":false}}\n### eof"
         )],
         Duration::ZERO,
+        REQUEST,
     );
     h.agent.focus().unwrap();
     assert_eq!(h.next(), AgentEvent::Pi(Event::TurnStart));
-    assert_eq!(h.agent.deadline(), None);
     assert_eq!(block_on(h.agent.prompt("x".into())), Err(Error::Busy));
+    assert!(!h.saw_eof(0));
     h.until_settled();
-    assert!(h.agent.poll(Instant::now()));
     wait_for(|| h.saw_eof(0));
 }
 
@@ -550,7 +570,6 @@ fn crash_mid_turn_reports_the_turn_and_respawns() {
     assert!(error.contains("exit status: 3"), "{error}");
     assert!(error.contains("boom: out of memory"), "{error}");
     assert_eq!(failed_turn.as_deref(), Some("draft it"));
-    assert_eq!(h.agent.deadline(), None);
 
     // Retry: the next prompt starts a new process.
     assert_eq!(
@@ -628,4 +647,145 @@ fn stop_escalates_to_sigterm() {
     wait_for(|| unsafe { libc::kill(pid, 0) } != 0);
     assert!(started.elapsed() >= Duration::from_secs(2));
     h.no_more_events();
+}
+
+/// pi that doesn't read stdin: calls return at once and requests time out.
+#[test]
+fn writes_dont_wait_for_pi_to_read() {
+    let request = Duration::from_millis(300);
+    let mut h = Harness::with_timeouts(&[&script("### hang")], IDLE, request);
+    h.agent.focus().unwrap();
+    h.until(|event| matches!(event, AgentEvent::Ready(_)));
+    let pid = h.record(0)["pid"].as_i64().unwrap() as libc::pid_t;
+    // Far more than a pipe holds.
+    let prompt = without_blocking(|| h.agent.prompt("x".repeat(4 << 20)));
+    let state = without_blocking(|| h.agent.get_state());
+    without_blocking(|| h.agent.blur());
+    assert_eq!(block_on(prompt), Err(Error::Timeout(request)));
+    assert_eq!(block_on(state), Err(Error::Timeout(request)));
+    // Blurred, so stopped once nothing is pending; pi ignores EOF.
+    // SAFETY: signal 0 only checks that the process exists.
+    wait_for(|| unsafe { libc::kill(pid, 0) } != 0);
+}
+
+#[test]
+fn stop_doesnt_wait_for_pi_to_read() {
+    let mut h = Harness::new(&[&script("### hang")]);
+    h.agent.focus().unwrap();
+    h.until(|event| matches!(event, AgentEvent::Ready(_)));
+    let prompt = without_blocking(|| h.agent.prompt("x".repeat(4 << 20)));
+    without_blocking(|| h.agent.stop());
+    assert_eq!(block_on(prompt), Err(Error::Stopped));
+}
+
+/// pi ignores an abort before the run starts, so an aborted prompt that
+/// pi doesn't answer in time stops pi.
+#[test]
+fn unanswered_aborted_prompt_stops_pi() {
+    let request = Duration::from_millis(300);
+    let mut h = Harness::with_timeouts(&[&script("### hang")], IDLE, request);
+    h.agent.focus().unwrap();
+    h.until(|event| matches!(event, AgentEvent::Ready(_)));
+    let pid = h.record(0)["pid"].as_i64().unwrap() as libc::pid_t;
+    let prompt = without_blocking(|| h.agent.prompt("x".repeat(4 << 20)));
+    // Due after the prompt, so it is still waiting when pi stops.
+    std::thread::sleep(request / 2);
+    let abort = without_blocking(|| h.agent.abort());
+    assert_eq!(block_on(prompt), Err(Error::Timeout(request)));
+    assert_eq!(block_on(abort), Err(Error::Stopped));
+    // SAFETY: signal 0 only checks that the process exists.
+    wait_for(|| unsafe { libc::kill(pid, 0) } != 0);
+    h.no_more_events();
+}
+
+/// pi that reads requests without answering: they time out, then pi goes
+/// idle.
+#[test]
+fn unanswered_requests_time_out() {
+    let request = Duration::from_millis(200);
+    let h = Harness::with_timeouts(&[&script("### eof")], Duration::from_millis(50), request);
+    assert_eq!(
+        block_on(h.agent.prompt("x".into())),
+        Err(Error::Timeout(request))
+    );
+    wait_for(|| h.saw_eof(0));
+}
+
+#[test]
+fn blurred_agent_stops_after_a_timeout() {
+    let request = Duration::from_millis(200);
+    let h = Harness::with_timeouts(&[&script("### eof")], IDLE, request);
+    let prompt = h.agent.prompt("x".into());
+    h.agent.blur();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!h.saw_eof(0));
+    assert_eq!(block_on(prompt), Err(Error::Timeout(request)));
+    wait_for(|| h.saw_eof(0));
+}
+
+#[test]
+fn unanswered_startup_times_out() {
+    let request = Duration::from_millis(200);
+    let h = Harness::with_timeouts(&["### eof"], Duration::from_millis(50), request);
+    assert_eq!(
+        block_on(h.agent.get_messages()),
+        Err(Error::Timeout(request))
+    );
+    wait_for(|| h.saw_eof(0));
+}
+
+#[test]
+fn late_startup_is_still_reported() {
+    let mut h = Harness::with_timeouts(
+        &[&format!(
+            ">>> {{\"id\":\"1\",\"type\":\"get_state\"}}\n### sleep 400\n{STATE}\n### eof"
+        )],
+        IDLE,
+        Duration::from_millis(200),
+    );
+    h.agent.focus().unwrap();
+    h.until(|event| matches!(event, AgentEvent::Ready(_)));
+    h.agent.blur();
+    wait_for(|| h.saw_eof(0));
+}
+
+/// pi compacts before it answers a prompt.
+#[test]
+fn compaction_suspends_deadlines() {
+    let h = Harness::with_timeouts(
+        &[&script(
+            r#">>> {"id":"2","type":"prompt","message":"x"}
+{"type":"compaction_start","reason":"threshold"}
+### sleep 1000
+{"type":"compaction_end","reason":"threshold","aborted":false,"willRetry":false}
+{"id":"2","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+### eof"#,
+        )],
+        IDLE,
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        block_on(h.agent.prompt("x".into())),
+        Ok(Disposition::Started)
+    );
+}
+
+/// A `/command` can run the agent before pi answers it.
+#[test]
+fn a_run_suspends_deadlines() {
+    let mut h = Harness::with_timeouts(
+        &[&script(
+            r#">>> {"id":"2","type":"prompt","message":"/cmd"}
+{"type":"agent_start"}
+### sleep 1000
+{"type":"agent_settled","aborted":false}
+{"id":"2","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+### eof"#,
+        )],
+        IDLE,
+        Duration::from_millis(500),
+    );
+    let prompt = h.agent.prompt("/cmd".into());
+    assert_eq!(h.next(), AgentEvent::Pi(Event::AgentStart));
+    assert_eq!(block_on(prompt), Ok(Disposition::Handled));
 }
