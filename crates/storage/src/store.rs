@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -264,12 +265,7 @@ impl Store {
                 Err(err) => scan.errors.push((dir, err)),
             }
         }
-        scan.drafts.sort_by(|a, b| {
-            b.meta
-                .updated_at
-                .cmp(&a.meta.updated_at)
-                .then_with(|| a.id.cmp(&b.id))
-        });
+        scan.drafts.sort_by(by_activity);
         Ok(scan)
     }
 
@@ -321,6 +317,14 @@ impl Store {
         validate_id(id)?;
         Ok(self.root.join(id))
     }
+}
+
+/// The drafts list order: most recently active first, ties by id.
+pub fn by_activity(a: &Draft, b: &Draft) -> Ordering {
+    b.meta
+        .updated_at
+        .cmp(&a.meta.updated_at)
+        .then_with(|| a.id.cmp(&b.id))
 }
 
 /// Overrides [`data_dir`], so a development build can run beside the

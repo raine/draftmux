@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::meta::Meta;
 use crate::store::Store;
 
 /// Debounced saving of one draft's editor text to `draft.md`.
@@ -55,28 +56,36 @@ impl Autosave {
         self.pending.as_ref().map(|pending| pending.due)
     }
 
-    /// Saves the pending text if its deadline has passed. Returns whether it
-    /// wrote.
-    pub fn poll(&mut self, now: Instant) -> Result<bool> {
+    /// Saves the pending text if its deadline has passed. Returns the
+    /// draft's metadata when it wrote.
+    pub fn poll(&mut self, now: Instant) -> Result<Option<Meta>> {
         match self.deadline() {
             Some(due) if due <= now => self.flush(),
-            _ => Ok(false),
+            _ => Ok(None),
         }
     }
 
-    /// Saves the pending text now. Returns whether it wrote. On error the
-    /// text stays pending.
-    pub fn flush(&mut self) -> Result<bool> {
+    /// Saves the pending text now. Returns the draft's metadata when it
+    /// wrote. On error the text stays pending.
+    pub fn flush(&mut self) -> Result<Option<Meta>> {
         let Some(pending) = self.pending.as_mut() else {
-            return Ok(false);
+            return Ok(None);
         };
-        if let Err(err) = self.store.save_text(&self.id, &pending.text) {
-            self.saved = None;
-            return Err(err);
-        }
+        let meta = match self.store.save_text(&self.id, &pending.text) {
+            Ok(meta) => meta,
+            Err(err) => {
+                self.saved = None;
+                return Err(err);
+            }
+        };
         self.saved = Some(std::mem::take(&mut pending.text));
         self.pending = None;
-        Ok(true)
+        Ok(Some(meta))
+    }
+
+    /// The text known to be in `draft.md`.
+    pub fn saved(&self) -> Option<&str> {
+        self.saved.as_deref()
     }
 
     /// Treats `text` as what's on disk and drops any pending save.
@@ -127,10 +136,15 @@ mod tests {
         autosave.edited("H".into(), t0);
         autosave.edited("Hi".into(), t0 + Duration::from_millis(300));
 
-        assert!(!autosave.poll(t0 + DELAY).unwrap());
+        assert!(autosave.poll(t0 + DELAY).unwrap().is_none());
         assert_eq!(on_disk(&store), "");
 
-        assert!(autosave.poll(t0 + Duration::from_millis(800)).unwrap());
+        assert!(
+            autosave
+                .poll(t0 + Duration::from_millis(800))
+                .unwrap()
+                .is_some()
+        );
         assert_eq!(on_disk(&store), "Hi");
         assert_eq!(autosave.deadline(), None);
     }
@@ -139,9 +153,9 @@ mod tests {
     fn flush_saves_before_deadline() {
         let (_root, store, mut autosave) = setup();
         autosave.edited("before prompt".into(), Instant::now());
-        assert!(autosave.flush().unwrap());
+        assert!(autosave.flush().unwrap().is_some());
         assert_eq!(on_disk(&store), "before prompt");
-        assert!(!autosave.flush().unwrap());
+        assert!(autosave.flush().unwrap().is_none());
     }
 
     #[test]
@@ -157,7 +171,7 @@ mod tests {
             .unwrap();
         autosave.edited("typed".into(), t0);
         autosave.reset("agent".into());
-        assert!(!autosave.flush().unwrap());
+        assert!(autosave.flush().unwrap().is_none());
         assert_eq!(on_disk(&store), "agent");
 
         autosave.edited("agent".into(), t0);
@@ -189,7 +203,7 @@ mod tests {
 
         std::fs::write(dir.join("meta.json"), meta).unwrap();
         autosave.edited(String::new(), Instant::now());
-        assert!(autosave.flush().unwrap());
+        assert!(autosave.flush().unwrap().is_some());
         assert_eq!(on_disk(&store), "");
     }
 }

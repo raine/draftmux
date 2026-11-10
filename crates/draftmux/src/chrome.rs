@@ -610,7 +610,7 @@ impl Chrome {
                     // edit to save.
                     self.drafts.loaded(self.editor.read(cx).text());
                 }
-                if let Err(err) = self.drafts.touched(id) {
+                if let Err(err) = self.drafts.touched(id, text) {
                     eprintln!("draftmux: recording the agent's edit: {err:#}");
                 }
             }

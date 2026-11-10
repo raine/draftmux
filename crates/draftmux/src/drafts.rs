@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Local, Utc};
 use draftmux_settings::Settings;
-use draftmux_storage::{Autosave, Draft, Store, Syntax, Target};
+use draftmux_storage::{Autosave, Draft, Meta, Status, Store, Syntax, Target, by_activity};
 
 use crate::sample;
 
@@ -107,6 +107,33 @@ impl Drafts {
         }
     }
 
+    /// Puts `id`'s row where a rescan would, from `meta` and its `title`,
+    /// without reading other drafts.
+    fn update_row(&mut self, id: &str, meta: Meta, title: String) -> Result<()> {
+        let draft = match self.rows.iter().position(|row| row.draft.id == id) {
+            Some(index) => Draft {
+                meta,
+                ..self.rows.remove(index).draft
+            },
+            None => Draft {
+                meta,
+                ..self.store.load(id)?
+            },
+        };
+        if let Some(current) = &mut self.current
+            && current.draft.id == id
+        {
+            current.draft = draft.clone();
+        }
+        if draft.meta.status == Status::Active {
+            let index = self
+                .rows
+                .partition_point(|row| by_activity(&row.draft, &draft).is_lt());
+            self.rows.insert(index, Row { draft, title });
+        }
+        Ok(())
+    }
+
     /// Makes `id` the selected draft and returns its text, rewriting a
     /// Slack draft written in mrkdwn as Markdown. Saves the previous draft
     /// first and stays on it if that fails.
@@ -157,10 +184,8 @@ impl Drafts {
         let Some(current) = &mut self.current else {
             return Ok(());
         };
-        if current.autosave.poll(now)? {
-            self.refresh();
-        }
-        Ok(())
+        let meta = current.autosave.poll(now)?;
+        self.saved(meta)
     }
 
     /// Saves the pending edit now.
@@ -168,10 +193,20 @@ impl Drafts {
         let Some(current) = &mut self.current else {
             return Ok(());
         };
-        if current.autosave.flush()? {
-            self.refresh();
-        }
-        Ok(())
+        let meta = current.autosave.flush()?;
+        self.saved(meta)
+    }
+
+    /// Updates the selected draft's row after its autosave wrote `meta`.
+    fn saved(&mut self, meta: Option<Meta>) -> Result<()> {
+        let (Some(meta), Some(current)) = (meta, &self.current) else {
+            return Ok(());
+        };
+        let id = current.draft.id.clone();
+        let title = display_title(&meta.title, || {
+            current.autosave.saved().unwrap_or_default().to_owned()
+        });
+        self.update_row(&id, meta, title)
     }
 
     /// Changes the selected draft's target. The text is left as it is, since
@@ -189,12 +224,14 @@ impl Drafts {
         Ok(())
     }
 
-    /// Counts a change to `id`'s file made outside the editor as activity.
-    pub fn touched(&mut self, id: &str) -> Result<()> {
-        self.store
+    /// Counts a change to `id`'s file, which now holds `text`, made outside
+    /// the editor as activity.
+    pub fn touched(&mut self, id: &str, text: &str) -> Result<()> {
+        let meta = self
+            .store
             .update_meta(id, |meta| meta.updated_at = Utc::now())?;
-        self.refresh();
-        Ok(())
+        let title = display_title(&meta.title, || text.to_owned());
+        self.update_row(id, meta, title)
     }
 
     /// Records that the first draft of `id` was requested.
@@ -450,9 +487,108 @@ mod tests {
         drafts.select(&b).unwrap();
 
         std::fs::write(store.load(&a).unwrap().draft_path(), "a rewritten").unwrap();
-        drafts.touched(&a).unwrap();
+        drafts.touched(&a, "a rewritten").unwrap();
         assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
         assert_eq!(drafts.rows()[0].title, "a rewritten");
+    }
+
+    fn rows(drafts: &Drafts) -> Vec<(String, String, Meta)> {
+        drafts
+            .rows()
+            .iter()
+            .map(|row| {
+                (
+                    row.draft.id.clone(),
+                    row.title.clone(),
+                    row.draft.meta.clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn saves_and_outside_writes_leave_other_drafts_unread() {
+        let (_root, store) = store();
+        let a = create(&store, "a", TimeDelta::hours(1));
+        let b = create(&store, "b", TimeDelta::minutes(1));
+        let mut drafts = Drafts::new(store.clone());
+        drafts.select(&a).unwrap();
+        // A rescan would drop B's row and couldn't title it.
+        let dir = store.load(&b).unwrap().dir;
+        std::fs::write(dir.join("meta.json"), "{").unwrap();
+        std::fs::remove_file(dir.join("draft.md")).unwrap();
+
+        let t0 = Instant::now();
+        drafts.edited("a typed", t0);
+        drafts.poll(t0 + AUTOSAVE_DELAY).unwrap();
+        assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
+        assert_eq!(drafts.rows()[0].title, "a typed");
+
+        drafts.edited("a flushed", Instant::now());
+        drafts.flush().unwrap();
+        assert_eq!(drafts.rows()[0].title, "a flushed");
+
+        drafts.touched(&a, "a by agent").unwrap();
+        assert_eq!(drafts.rows()[0].title, "a by agent");
+        assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
+        assert_eq!(drafts.rows()[1].title, "b");
+        assert_eq!(drafts.current().unwrap().meta, store.load(&a).unwrap().meta);
+    }
+
+    #[test]
+    fn row_updates_match_a_rescan() {
+        let (_root, store) = store();
+        let a = create(&store, "a", TimeDelta::hours(3));
+        let b = create(&store, "b", TimeDelta::hours(2));
+        let c = create(&store, "c", TimeDelta::hours(1));
+        create(&store, "future", -TimeDelta::days(1));
+        store
+            .update_meta(&b, |meta| meta.title = "Stored title".into())
+            .unwrap();
+        let mut drafts = Drafts::new(store.clone());
+
+        drafts.select(&a).unwrap();
+        drafts.edited("# a heading", Instant::now());
+        drafts.select(&b).unwrap();
+        drafts.edited("b body", Instant::now());
+        drafts.flush().unwrap();
+        std::fs::write(store.load(&c).unwrap().draft_path(), "- c item").unwrap();
+        drafts.touched(&c, "- c item").unwrap();
+
+        assert_eq!(rows(&drafts), rows(&Drafts::new(store.clone())));
+    }
+
+    #[test]
+    fn outside_writes_follow_the_drafts_status() {
+        let (_root, store) = store();
+        let a = create(&store, "a", TimeDelta::hours(1));
+        let b = create(&store, "b", TimeDelta::minutes(1));
+        let mut drafts = Drafts::new(store.clone());
+
+        store.archive(&a).unwrap();
+        drafts.touched(&a, "a").unwrap();
+        assert_eq!(order(&drafts), [b.as_str()]);
+
+        store.unarchive(&a).unwrap();
+        drafts.touched(&a, "a again").unwrap();
+        assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
+        assert_eq!(drafts.rows()[0].title, "a again");
+    }
+
+    #[test]
+    fn row_update_breaks_activity_ties_by_id() {
+        let (_root, store) = store();
+        let x = create(&store, "x", TimeDelta::hours(1));
+        let y = create(&store, "y", TimeDelta::hours(2));
+        let z = create(&store, "z", TimeDelta::hours(3));
+        assert!(x < z);
+        let mut drafts = Drafts::new(store.clone());
+
+        // Z becomes as recent as X, and sorts after it by id.
+        let mut meta = store.load(&z).unwrap().meta;
+        meta.updated_at = drafts.rows()[0].draft.meta.updated_at;
+        drafts.update_row(&z, meta, "z".into()).unwrap();
+        assert_eq!(order(&drafts), [x.as_str(), z.as_str(), y.as_str()]);
     }
 
     #[test]
