@@ -4,12 +4,15 @@
 //! markdown in the editor, and the popover then sits above the preview's
 //! selection instead.
 //!
-//! gpui can't anchor a popup to its parent on macOS, so the popover is a
-//! `WindowKind::PopUp` panel placed in screen coordinates. It holds no state
-//! of its own: [`SelectionPopover`] owns the state, and the panel is
-//! resized, reopened or closed to match it after each frame of the main
-//! window. gpui can't move a window, but a resize keeps its bottom edge, so a
-//! popover above the selection grows upwards in place.
+//! The popover is a separate panel window. On Wayland, where windows can't
+//! be placed in screen coordinates, it's a popup anchored to the main window
+//! at its edge facing the selection. gpui can't anchor popups on macOS or
+//! X11, so there it's a `WindowKind::PopUp` panel placed in screen
+//! coordinates. It holds no state of its own: [`SelectionPopover`] owns the
+//! state, and the panel is resized, reopened or closed to match it after
+//! each frame of the main window. gpui can't move a window, but a resize
+//! keeps a `PopUp`'s bottom edge and an anchored popup's anchored edge, so
+//! the popover grows in place while that edge stays put.
 //!
 //! The main window keeps keyboard focus, so the editor keeps its selection
 //! highlight; the popover's keys are bound in key contexts around the editor
@@ -28,7 +31,12 @@ use editor::{Editor, EditorEvent};
 use gpui::{
     Action, AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, KeyBinding, Pixels,
     SharedString, Size, Subscription, Task, Window, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions, actions, canvas, div, point, prelude::*, px,
+    WindowOptions, actions, canvas, div, point,
+    popup::{
+        PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
+    },
+    prelude::*,
+    px,
 };
 use shell_env::ShellEnv;
 
@@ -145,9 +153,28 @@ impl Drop for CancelOnDrop {
 struct Panel {
     handle: WindowHandle<PopoverPanel>,
     bounds: Bounds<Pixels>,
+    /// The edge a resize keeps in place.
+    pinned: Edge,
     /// Dismisses the popover when the panel, key after a click on it, loses
     /// focus to another app.
     _activation: Subscription,
+}
+
+/// A horizontal edge of the panel.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Edge {
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    /// The left corner of `bounds` on this edge.
+    fn corner(self, bounds: Bounds<Pixels>) -> gpui::Point<Pixels> {
+        match self {
+            Edge::Top => bounds.origin,
+            Edge::Bottom => bounds.bottom_left(),
+        }
+    }
 }
 
 impl SelectionPopover {
@@ -638,8 +665,10 @@ impl SelectionPopover {
         let target = self.placement(window, cx);
         match (&mut self.panel, target) {
             (None, None) => {}
-            (Some(panel), Some(bounds)) if panel.bounds == bounds => {}
-            (Some(panel), Some(bounds)) if panel.bounds.bottom_left() == bounds.bottom_left() => {
+            (Some(panel), Some((bounds, _))) if panel.bounds == bounds => {}
+            (Some(panel), Some((bounds, _)))
+                if panel.pinned.corner(panel.bounds) == panel.pinned.corner(bounds) =>
+            {
                 panel.bounds = bounds;
                 panel
                     .handle
@@ -648,17 +677,18 @@ impl SelectionPopover {
             }
             (_, target) => {
                 self.close_panel(cx);
-                if let Some(bounds) = target {
-                    self.open_panel(bounds, window, cx);
+                if let Some((bounds, side)) = target {
+                    self.open_panel(bounds, side, window, cx);
                 }
             }
         }
     }
 
     /// Where the panel goes, in screen coordinates: above the selection's
-    /// first visible row, or below its last when there's no room above.
-    /// `None` when the popover is hidden or the selection is scrolled away.
-    fn placement(&self, window: &Window, cx: &App) -> Option<Bounds<Pixels>> {
+    /// first visible row, or below its last when there's no room above, with
+    /// the edge that faces the selection. `None` when the popover is hidden
+    /// or the selection is scrolled away.
+    fn placement(&self, window: &Window, cx: &App) -> Option<(Bounds<Pixels>, Edge)> {
         self.open.as_ref()?;
         let (pane, rows) = if self.in_preview(cx) {
             let rows = self.preview.read(cx).selection_rects().to_vec();
@@ -674,56 +704,93 @@ impl SelectionPopover {
         let size = self.content_size?;
 
         let above = first.top() - GAP - size.height;
-        let y = if above >= pane.top() + MARGIN {
-            above
+        let (y, side) = if above >= pane.top() + MARGIN {
+            (above, Edge::Bottom)
         } else {
-            last.bottom() + GAP
+            (last.bottom() + GAP, Edge::Top)
         };
         let max_x = (pane.right() - size.width - MARGIN).max(pane.left() + MARGIN);
         let x = (first.left() - px(6.)).clamp(pane.left() + MARGIN, max_x);
         let origin = window.bounds().origin + point(x, y);
-        Some(Bounds::new(origin.map(|v| v.round()), size))
+        Some((Bounds::new(origin.map(|v| v.round()), size), side))
     }
 
-    fn open_panel(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let options = WindowOptions {
+    /// Opens the panel at `bounds`, pinned at the `side` edge where the
+    /// platform can anchor it there.
+    fn open_panel(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        side: Edge,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let display_id = window.display(cx).map(|display| display.id());
+        let options = move |kind| WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
             focus: false,
             show: true,
-            kind: WindowKind::PopUp,
+            kind,
             is_movable: false,
             is_resizable: false,
             is_minimizable: false,
-            display_id: window.display(cx).map(|display| display.id()),
+            display_id,
             window_background: crate::platform::popup_background(),
             ..Default::default()
         };
+        // Growing away from the selection from the corner on the `side`
+        // edge, so a resize keeps that edge in place.
+        let anchored = WindowKind::AnchoredPopup(PopupOptions {
+            parent: window.window_handle(),
+            anchor_rect: Bounds::new(
+                side.corner(bounds) - window.bounds().origin,
+                gpui::size(px(1.), px(1.)),
+            ),
+            anchor: PopupAnchor::TopLeft,
+            gravity: match side {
+                Edge::Top => PopupGravity::BottomRight,
+                Edge::Bottom => PopupGravity::TopRight,
+            },
+            constraint_adjustment: PopupConstraintAdjustment::SLIDE_X
+                | PopupConstraintAdjustment::SLIDE_Y,
+            offset: point(px(0.), px(0.)),
+            grab: false,
+        });
         self.opening = true;
         let popover = cx.entity();
         // The panel renders this entity as it opens, so it opens after the
         // current update.
         cx.defer(move |cx| {
             let mut activation = None;
-            let opened = cx.open_window(options, |window, cx| {
-                activation = Some(popover.update(cx, |_, cx| {
-                    cx.observe_window_activation(window, |this, window, cx| {
-                        if !window.is_window_active() {
-                            this.dismiss_unless_panel_active(cx);
-                        }
+            let mut open = |kind, cx: &mut App| {
+                cx.open_window(options(kind), |window, cx| {
+                    activation = Some(popover.update(cx, |_, cx| {
+                        cx.observe_window_activation(window, |this, window, cx| {
+                            if !window.is_window_active() {
+                                this.dismiss_unless_panel_active(cx);
+                            }
+                        })
+                    }));
+                    cx.new(|_| PopoverPanel {
+                        popover: popover.clone(),
                     })
-                }));
-                cx.new(|_| PopoverPanel {
-                    popover: popover.clone(),
                 })
-            });
+            };
+            let opened = match open(anchored, cx) {
+                // A `PopUp` resize keeps its bottom edge.
+                Err(err) if err.is::<PopupNotSupportedError>() => {
+                    open(WindowKind::PopUp, cx).map(|handle| (handle, Edge::Bottom))
+                }
+                opened => opened.map(|handle| (handle, side)),
+            };
             popover.update(cx, |this, cx| {
                 this.opening = false;
                 match opened {
-                    Ok(handle) => {
+                    Ok((handle, pinned)) => {
                         this.panel = Some(Panel {
                             handle,
                             bounds,
+                            pinned,
                             _activation: activation.expect("set when the window opens"),
                         });
                         // Dismissed while it opened.
