@@ -482,7 +482,7 @@ impl Chrome {
             let (dir, target) = (draft.dir.clone(), draft.meta.target);
             self.formatter
                 .update(cx, |formatter, cx| formatter.set_draft_dir(dir, cx));
-            self.set_plain_text(target, cx);
+            self.set_target_markup(target, cx);
         }
         self.sync_selection_draft(cx);
         self.editor
@@ -799,20 +799,22 @@ impl Chrome {
             return;
         }
         self.preview_work.invalidate();
-        self.set_plain_text(target, cx);
+        self.set_target_markup(target, cx);
         let preview = markup_view::preview(target, self.editor.read(cx).text());
         self.set_preview(Some(preview), cx);
         self.sync_selection_draft(cx);
         cx.notify();
     }
 
-    /// Plain text drafts get no markdown highlighting or Format.
-    fn set_plain_text(&mut self, target: Target, cx: &mut Context<Self>) {
-        let plain_text = target == Target::Plain;
-        self.editor
-            .update(cx, |editor, cx| editor.set_markdown(!plain_text, cx));
+    /// Plain text drafts get no markdown highlighting, and only GitHub and
+    /// rich text drafts get Format.
+    fn set_target_markup(&mut self, target: Target, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_markdown(target != Target::Plain, cx)
+        });
+        let hidden = matches!(target, Target::Plain | Target::Slack);
         self.formatter
-            .update(cx, |formatter, cx| formatter.set_plain_text(plain_text, cx));
+            .update(cx, |formatter, cx| formatter.set_hidden(hidden, cx));
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {

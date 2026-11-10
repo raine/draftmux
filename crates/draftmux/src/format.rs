@@ -37,8 +37,9 @@ pub struct Formatter {
     /// The focused draft's directory, oxfmt's working directory.
     draft_dir: Option<PathBuf>,
     agent_running: bool,
-    /// The draft isn't markdown, so Format is hidden.
-    plain_text: bool,
+    /// The draft's target reads text differently from CommonMark, so Format
+    /// is hidden.
+    hidden: bool,
     running: Option<Task<()>>,
     message: Option<SharedString>,
     _editor_events: Subscription,
@@ -55,7 +56,7 @@ impl Formatter {
             editor,
             draft_dir: None,
             agent_running: false,
-            plain_text: false,
+            hidden: false,
             running: None,
             message: None,
             _editor_events,
@@ -75,11 +76,14 @@ impl Formatter {
         cx.notify();
     }
 
-    /// oxfmt formats markdown, which escapes and rewrites plain text, so
-    /// Format is hidden for plain-text drafts and a format that finishes after
-    /// the switch is discarded.
-    pub fn set_plain_text(&mut self, plain_text: bool, cx: &mut Context<Self>) {
-        self.plain_text = plain_text;
+    /// oxfmt formats CommonMark, so Format is hidden for targets that read
+    /// text differently and a format that finishes after the switch is
+    /// discarded. It would escape and rewrite plain text, and in a Slack
+    /// message, where every line break shows, it merges a line after a `>`
+    /// quote into the quote, adds and collapses blank lines and renumbers
+    /// lists.
+    pub fn set_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        self.hidden = hidden;
         self.message = None;
         cx.notify();
     }
@@ -93,10 +97,7 @@ impl Formatter {
     }
 
     fn available(&self) -> bool {
-        self.draft_dir.is_some()
-            && !self.agent_running
-            && !self.plain_text
-            && self.running.is_none()
+        self.draft_dir.is_some() && !self.agent_running && !self.hidden && self.running.is_none()
     }
 
     pub fn format(&mut self, cx: &mut Context<Self>) {
@@ -132,7 +133,7 @@ impl Formatter {
                 // The text, the draft or the editor's owner changed while
                 // oxfmt ran; its output and errors are about something else.
                 if this.agent_running
-                    || this.plain_text
+                    || this.hidden
                     || this.draft_dir.as_ref() != Some(&dir)
                     || this.editor.read(cx).text() != input
                 {
@@ -157,7 +158,7 @@ impl Formatter {
 
 impl Render for Formatter {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let visible = Self::oxfmt(cx).is_some() && !self.plain_text;
+        let visible = Self::oxfmt(cx).is_some() && !self.hidden;
         let available = self.available();
         let palette = *theme::palette(cx);
         div()
