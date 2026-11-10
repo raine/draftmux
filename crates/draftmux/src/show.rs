@@ -45,7 +45,7 @@ struct JsonOutput<'a> {
 
 /// Runs the command against the default drafts directory.
 pub fn main(args: Args) -> Result<()> {
-    let store = Store::new(Store::default_root()?);
+    let store = Store::open_default()?;
     run(&args, &store, &mut io::stdout().lock(), &mut io::stderr())
 }
 
@@ -102,9 +102,7 @@ fn resolve(args: &Args, store: &Store, err: &mut impl Write) -> Result<Draft> {
     let source =
         &std::path::absolute(source).with_context(|| format!("resolving {}", source.display()))?;
     let scan = store.scan()?;
-    for (dir, e) in &scan.errors {
-        writeln!(err, "draftmux: skipping {}: {e:#}", dir.display())?;
-    }
+    scan.report_errors(err)?;
     // The scan is sorted by activity, newest first, and includes archived
     // drafts.
     let mut matches = scan.drafts.into_iter().filter(|draft| {

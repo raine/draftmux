@@ -87,9 +87,7 @@ impl Drafts {
                 return;
             }
         };
-        for (dir, err) in &scan.errors {
-            eprintln!("draftmux: skipping {}: {err:#}", dir.display());
-        }
+        scan.report_errors(&mut std::io::stderr()).ok();
         self.rows = scan
             .active()
             .map(|draft| Row {

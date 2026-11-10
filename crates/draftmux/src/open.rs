@@ -64,7 +64,7 @@ pub fn main(args: Args) -> Result<u8> {
             eprintln!("draftmux: ignoring Draftmux's settings: {err:#}");
             Settings::default()
         });
-    let draft = create(&args, &Store::new(Store::default_root()?), &pi, &settings)?;
+    let draft = create(&args, &Store::open_default()?, &pi, &settings)?;
     // Printed before focusing: the draft exists and `show` can read it even
     // if the app can't be reached.
     println!("{}", draft.id);

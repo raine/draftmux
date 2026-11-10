@@ -63,6 +63,14 @@ pub struct Scan {
 }
 
 impl Scan {
+    /// Writes a line to `out` for each draft directory that was skipped.
+    pub fn report_errors(&self, out: &mut impl io::Write) -> io::Result<()> {
+        for (dir, err) in &self.errors {
+            writeln!(out, "draftmux: skipping {}: {err:#}", dir.display())?;
+        }
+        Ok(())
+    }
+
     /// The drafts list: active drafts, most recently active first.
     pub fn active(&self) -> impl Iterator<Item = &Draft> {
         self.drafts
@@ -77,8 +85,13 @@ impl Store {
     }
 
     /// `drafts` in [`data_dir`].
-    pub fn default_root() -> Result<PathBuf> {
+    fn default_root() -> Result<PathBuf> {
         Ok(data_dir()?.join("drafts"))
+    }
+
+    /// The store at [`Store::default_root`].
+    pub fn open_default() -> Result<Self> {
+        Ok(Self::new(Self::default_root()?))
     }
 
     /// Creates `<id>/` with an empty `draft.md` and `session/`, then writes

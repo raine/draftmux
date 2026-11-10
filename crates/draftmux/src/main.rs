@@ -119,7 +119,7 @@ fn run_app() -> Result<()> {
     };
     let data_dir = draftmux_storage::data_dir()?;
     let config_dir = draftmux_storage::config_dir()?;
-    let store = Store::new(Store::default_root()?);
+    let store = Store::open_default()?;
 
     gpui_platform::application()
         .with_assets(assets::Assets)

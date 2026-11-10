@@ -43,7 +43,7 @@ struct JsonDraft<'a> {
 
 /// Runs the command against the default drafts directory.
 pub fn main(args: Args) -> Result<()> {
-    let store = Store::new(Store::default_root()?);
+    let store = Store::open_default()?;
     let home = std::env::home_dir();
     run(
         &args,
@@ -68,9 +68,7 @@ fn run(
         None => None,
     };
     let scan = store.scan()?;
-    for (dir, e) in &scan.errors {
-        writeln!(err, "draftmux: skipping {}: {e:#}", dir.display())?;
-    }
+    scan.report_errors(err)?;
     let drafts: Vec<&Draft> = scan
         .drafts
         .iter()
