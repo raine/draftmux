@@ -6,32 +6,29 @@ message next to a preview of where it goes with an embedded pi agent and
 steer-style selection actions, then copy it out or let the original agent read
 it back.
 
-Status: early development.
+Status: early release; expect rough edges.
 
 ## Install
 
 ### macOS
 
-Requires macOS with full Xcode installed, the Rust toolchain (see
-Development) and [just](https://github.com/casey/just).
+Requires an Apple silicon Mac with macOS 11 or later.
 
 ```sh
-just install-app
+brew install --cask raine/draftmux/draftmux
 ```
 
-This builds `Draftmux.app`, installs it in `/Applications`, and links
-`~/.local/bin/draftmux` to the binary inside the app, which is both the app
-and the `draftmux` CLI. Make sure `~/.local/bin` is on your `PATH`. Use
-`--app-dir` and `--bin-dir` to install elsewhere, and `--app PATH` to install
-an already built `Draftmux.app`. It only replaces a previous Draftmux
-install, never other files. Run it again to update, and after moving the app,
-since the link points into it. To uninstall, delete `Draftmux.app` and the
-`draftmux` link. Drafts stay in `~/Library/Application Support/Draftmux/`.
+The cask installs `Draftmux.app` and links the `draftmux` command, which
+agents use to hand drafts off. Without Homebrew, download the disk image from
+[Releases](https://github.com/raine/draftmux/releases), drag Draftmux to
+Applications, and link the command yourself:
 
-`just app` builds the app without installing it and prints its path
-(`target/release/Draftmux.app`); `just app-debug` builds
-`target/debug/Draftmux.app`. Both are ad-hoc signed for running locally, not
-notarized for distribution.
+```sh
+ln -s /Applications/Draftmux.app/Contents/MacOS/draftmux ~/.local/bin/draftmux
+```
+
+Draftmux keeps itself up to date (see [Updates](#updates)). Drafts are stored
+in `~/Library/Application Support/Draftmux/`.
 
 ### Linux
 
@@ -86,6 +83,23 @@ remove `~/.local/lib/draftmux`, the `~/.local/bin/draftmux` symlink, and
 `io.github.raine.Draftmux.desktop` / `io.github.raine.Draftmux.png` from
 the applications and icons directories. Drafts are not removed.
 
+## Usage
+
+The chat and selection actions run
+[pi](https://github.com/badlogic/pi-mono)
+(`npm install -g @earendil-works/pi-coding-agent`), which Draftmux finds on
+your login shell's PATH. Without pi, editing, previews and copying still work.
+Formatting uses [oxfmt](https://oxc.rs) when it is installed.
+
+To hand a message off from Claude Code or pi, install the agent skill and
+invoke it from the agent's session, for example `/draftmux PR description`:
+
+```sh
+draftmux skill install
+```
+
+See [Draftmux skill](#draftmux-skill) for the full handoff and read-back flow.
+
 ### Configuration
 
 Everything the Settings window changes is saved in plain JSON files, which you
@@ -130,7 +144,7 @@ Check for Updates… checks right away and reports the result.
 Turn automatic checks off under Settings → General → Updates
 (`"check_for_updates": false` in `settings.json`), or set
 `DRAFTMUX_NO_UPDATE_CHECK=1`. Check for Updates still works either way.
-Builds made from source, including `just install-app` and the Linux install,
+Builds made from source, including the Linux install,
 never check on their own; Check for Updates tells them a newer release
 exists. Checks contact `api.github.com` and GitHub's download hosts and send
 nothing but the request.
