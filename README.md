@@ -32,13 +32,14 @@ in `~/Library/Application Support/Draftmux/`.
 
 ### Linux
 
-Wayland and X11 are supported on x86_64 glibc distributions with glibc 2.35
-or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). Download
-`Draftmux-<version>-linux-x86_64.tar.gz` from
+Wayland and X11 are supported on x86_64 and arm64 distributions with glibc
+2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). Download
+`Draftmux-<version>-linux-x86_64.tar.gz` or
+`Draftmux-<version>-linux-aarch64.tar.gz` from
 [Releases](https://github.com/raine/draftmux/releases), then:
 
 ```sh
-tar -xzf Draftmux-*-linux-x86_64.tar.gz
+tar -xzf Draftmux-*-linux-"$(uname -m)".tar.gz
 draftmux-linux/install
 ```
 

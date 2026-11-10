@@ -2,7 +2,7 @@ name: Release
 
 # A v* tag publishes a GitHub release of the signed, notarized macOS build,
 # which installed copies pick up through the app's automatic updates, and of
-# the x86_64 Linux build. Running
+# the x86_64 and arm64 Linux builds. Running
 # the workflow by hand builds, signs and notarizes the same files and keeps
 # them as workflow artifacts without publishing anything.
 on:
@@ -57,9 +57,12 @@ jobs:
           if-no-files-found: error
 
   linux:
-    # The oldest supported runner, so the binary runs on any distribution
+    # The oldest supported runners, so the binaries run on any distribution
     # with glibc 2.35 or newer.
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -78,12 +81,12 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release
+          key: release-${{ matrix.runner }}
       - name: Build
         run: scripts/release-linux
       - uses: actions/upload-artifact@v4
         with:
-          name: draftmux-${{ steps.version.outputs.version }}-linux
+          name: draftmux-${{ steps.version.outputs.version }}-${{ matrix.runner }}
           path: |
             target/linux-release/${{ steps.version.outputs.version }}/*.tar.gz
             target/linux-release/${{ steps.version.outputs.version }}/*.sha256

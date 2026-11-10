@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-First release, for Apple silicon Macs and x86_64 Linux.
+First release, for Apple silicon Macs and x86_64 and arm64 Linux.
 
 - Markdown editor with a live preview for GitHub, Slack, rich text and plain
   text
