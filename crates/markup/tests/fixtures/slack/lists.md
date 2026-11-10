@@ -1,5 +1,5 @@
 Plan for this week:
-- Finish the *preview* renderer
+- Finish the **preview** renderer
 - Fix copy for Slack
     - pasted bold came out italic
     - links lost their labels

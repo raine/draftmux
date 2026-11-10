@@ -1,9 +1,9 @@
 //! Platform-neutral block tree for message bodies.
 //!
-//! Each target syntax (GitHub markdown, Slack mrkdwn, plain text) parses into
-//! the same [`Document`]; renderers and exporters read the tree without
-//! knowing which syntax it came from. The tree holds structure and semantics
-//! only, no colors, sizes or fonts.
+//! Each target syntax (GitHub markdown, Markdown with Slack's line rules,
+//! plain text) parses into the same [`Document`]; renderers and exporters
+//! read the tree without knowing which syntax it came from. The tree holds
+//! structure and semantics only, no colors, sizes or fonts.
 
 mod emoji;
 pub mod frontmatter;

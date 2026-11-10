@@ -1,6 +1,6 @@
 ---
 source: crates/markup/tests/slack.rs
-expression: "snapshot(\"*starts here\\nends here* and `code\\nspan`\\n\")"
+expression: "snapshot(\"**starts here\\nends here** and `code\\nspan`\\n\")"
 ---
 paragraph
-  "*starts here\nends here* and `code\nspan`"
+  "**starts here\nends here** and `code\nspan`"

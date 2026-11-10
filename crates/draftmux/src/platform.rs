@@ -170,7 +170,7 @@ mod tests {
         // A private named pasteboard, so the test never touches the user's.
         let name = NSString::from_str(&format!("draftmux.test.{}", std::process::id()));
         let pasteboard = NSPasteboard::pasteboardWithName(&name);
-        let doc = markup::slack::parse("*Hi* `code` :tada:\n- one\n- two\n");
+        let doc = markup::slack::parse("**Hi** `code` :tada:\n- one\n- two\n");
         let flavours = slack_flavours(&doc);
         write_pasteboard(&pasteboard, &flavours);
         // SAFETY: AppKit's pasteboard type constants are immutable statics.

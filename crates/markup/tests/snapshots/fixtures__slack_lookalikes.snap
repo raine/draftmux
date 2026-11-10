@@ -4,22 +4,16 @@ expression: fixtures! (@ render slack text)
 ---
 # posted
 paragraph
-  "Text Slack would read as Markdown: "
-  "**literal**" code
-  ", "
-  "__dunder__" code
-  ", "
-  "~~tilde~~" code
-  " and "
-  "[x](y)" code
-  ".\nA label too: "
+  "Stays as written: snake_case_names, 2*3*4, * spaced *, **escaped**, "
+  "**code**" code
+  " and [x](y).\nA label too: "
   "[docs](here)" -> https://example.com
-  " and snake_case_names stay as written."
+  " keeps its brackets."
 code lang=None "- not a list\n1. not numbered\n> not a quote\n# not a heading\n| a | b |\n|---|---|\n---"
 
 # html
-<meta charset="utf-8"><p>Text Slack would read as Markdown: <code>**literal**</code>, <code>__dunder__</code>, <code>~~tilde~~</code> and <code>[x](y)</code>.</p>
-<p>A label too: <a href="https://example.com">[docs](here)</a> and snake_case_names stay as written.</p>
+<meta charset="utf-8"><p>Stays as written: snake_case_names, 2*3*4, * spaced *, **escaped**, <code>**code**</code> and [x](y).</p>
+<p>A label too: <a href="https://example.com">[docs](here)</a> keeps its brackets.</p>
 <pre>- not a list
 1. not numbered
 &gt; not a quote
@@ -29,8 +23,8 @@ code lang=None "- not a list\n1. not numbered\n> not a quote\n# not a heading\n|
 ---</pre>
 
 # plain
-Text Slack would read as Markdown: *␣*␣literal*␣*␣, _␣_␣dunder_␣_␣, ~␣~␣tilde~␣~␣ and [x]␣(y).
-A label too: [docs]␣(here) and snake_␣case_␣names stay as written.
+Stays as written: snake_␣case_␣names, 2*␣3*␣4, *␣ spaced *␣, *␣*␣escaped*␣*␣, *␣*␣code*␣*␣ and [x]␣(y).
+A label too: [docs]␣(here) keeps its brackets.
 ␣- not a list
 ␣1. not numbered
 ␣> not a quote

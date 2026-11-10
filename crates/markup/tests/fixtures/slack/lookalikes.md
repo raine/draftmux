@@ -1,5 +1,5 @@
-Text Slack would read as Markdown: `**literal**`, `__dunder__`, `~~tilde~~` and `[x](y)`.
-A label too: <https://example.com|[docs](here)> and snake_case_names stay as written.
+Stays as written: snake_case_names, 2*3*4, * spaced *, \*\*escaped\*\*, `**code**` and [x](y).
+A label too: <https://example.com|[docs](here)> keeps its brackets.
 ```
 - not a list
 1. not numbered

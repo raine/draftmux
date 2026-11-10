@@ -5,7 +5,7 @@ One blank line above, and two below.
 
 
 > Quoted from the incident channel:
-> the upload retried *three* times
+> the upload retried **three** times
 That was the only failure.
 ```
 cargo test -j 2 -p markup --test slack

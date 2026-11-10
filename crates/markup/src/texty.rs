@@ -232,13 +232,13 @@ mod tests {
 
     #[test]
     fn needs_a_user_mention() {
-        assert_eq!(texty(&parse("*Hi* <https://example.com|there>\n")), None);
+        assert_eq!(texty(&parse("**Hi** [there](https://example.com)\n")), None);
     }
 
     #[test]
     fn writes_mentions_and_formatting() {
         let doc = parse(
-            "*Thanks* <@W010J2WH545> and <@U1|raine> · <https://example.com|Docs>\n\n\
+            "**Thanks** <@W010J2WH545> and <@U1|raine> · [Docs](https://example.com)\n\n\
              • one `code`\n\
              > quoted _note_\n",
         );

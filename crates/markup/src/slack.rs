@@ -1,16 +1,21 @@
-//! Slack mrkdwn parser.
+//! Parser for Slack messages written in Markdown with Slack's line and block
+//! rules.
 //!
-//! Inline syntax follows Slack's mrkdwn: `*bold*`, `_italic_`, `~strike~`,
-//! `` `code` ``, `<url|label>`, Markdown `[label](url)` links, which Slack's
-//! composer turns into links, and bare web URLs, with `&amp;`, `&lt;` and
-//! `&gt;` decoded. `:shortcode:`s Slack knows, outside code and link labels,
-//! become the Unicode emoji Slack shows. Delimiters only apply at word
-//! boundaries and never span a line, so `snake_case` and `2*3*4` stay
-//! literal. Blocks follow what Slack's
-//! composer shows: ```` ``` ```` code blocks (which may open and close
-//! mid-line, with a language when a single word follows the opening fence
-//! on its own line, as in ```` ```diff ````), `>` quotes holding one
-//! paragraph, and `-`, `*`, `•` or `1.` lists nested by indentation.
+//! Inline syntax is Markdown: `**bold**` or `__bold__`, `*italic*` or
+//! `_italic_`, `~~strike~~` or `~strike~`, `` `code` ``, `[label](url)` links
+//! and bare web URLs, with a backslash escaping ASCII punctuation. Delimiters
+//! only apply at word boundaries and never span a line, and a closing run
+//! has the opening one's length, so `snake_case` and `2*3*4` stay literal.
+//! Slack's own tokens work too: `:shortcode:`s Slack knows, outside code and
+//! link labels, become the Unicode emoji Slack shows, `<@U123>` mentions are
+//! kept for [`crate::texty`], `<url|label>` and `<url>` links are read as
+//! links, and `&amp;`, `&lt;` and `&gt;` are decoded.
+//!
+//! Blocks follow what Slack's composer shows: ```` ``` ```` code blocks
+//! (which may open and close mid-line, with a language when a single word
+//! follows the opening fence on its own line, as in ```` ```diff ````), `>`
+//! quotes holding one paragraph, and `-`, `*`, `•` or `1.` lists nested by
+//! indentation.
 //!
 //! Slack text is newline-literal, so blank lines are kept: consecutive text
 //! lines, blank ones included, form one paragraph whose text holds every `\n`.
@@ -20,22 +25,58 @@
 //! Markdown headings and pipe tables have no Slack equivalent but are kept as
 //! [`Block::Heading`] and [`Block::Table`]; [`posted`] gives the blocks Slack
 //! actually receives.
+//!
+//! Slack drafts with no recorded syntax are in Slack's mrkdwn (`*bold*`,
+//! `_italic_`, `~strike~`); [`from_mrkdwn`] rewrites them as Markdown.
+
+use std::ops::Range;
 
 use crate::{Alignment, Block, Document, List, ListItem, Span, SpanStyle, Table, push_span};
 
-pub fn parse(mrkdwn: &str) -> Document {
-    let text = mrkdwn.replace("\r\n", "\n");
+mod mrkdwn;
+
+pub use mrkdwn::from_mrkdwn;
+
+pub fn parse(text: &str) -> Document {
+    parse_with(text, Grammar::Markdown).0
+}
+
+/// The inline syntax of a Slack draft. Block rules are the same in both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grammar {
+    Markdown,
+    /// Slack's mrkdwn: `*bold*`, `_italic_` and `~strike~`, no escapes.
+    Mrkdwn,
+}
+
+/// A byte range of a text whose inline syntax the parser read: one line or
+/// table cell.
+struct InlineRange {
+    range: Range<usize>,
+    /// Table cells: a `|` here can decide whether the line is a table row.
+    cell: bool,
+}
+
+/// The document `text` holds in `grammar`, and the ranges of `text`, with
+/// `\r\n` read as `\n`, whose inline syntax it parsed, in order.
+fn parse_with(text: &str, grammar: Grammar) -> (Document, Vec<InlineRange>) {
+    let text = text.replace("\r\n", "\n");
     let mut parser = Parser {
         text: &text,
+        grammar,
         pos: 0,
         blocks: Vec::new(),
         para: Vec::new(),
+        inline_ranges: Vec::new(),
     };
     parser.skip_blank_lines();
     parser.run();
-    Document {
+    let mut ranges = parser.inline_ranges;
+    ranges.sort_by_key(|inline| inline.range.start);
+    let doc = Document {
         blocks: parser.blocks,
-    }
+    };
+    (doc, ranges)
 }
 
 /// The blocks Slack posts when `doc` is pasted into its composer as rich
@@ -209,11 +250,14 @@ fn table_text(table: &Table) -> String {
 
 struct Parser<'a> {
     text: &'a str,
+    grammar: Grammar,
     /// Byte offset of the start of the next unread line.
     pos: usize,
     blocks: Vec<Block>,
     /// Pending paragraph lines.
     para: Vec<&'a str>,
+    /// Where each line handed to [`Parser::inline`] lies in `text`.
+    inline_ranges: Vec<InlineRange>,
 }
 
 impl<'a> Parser<'a> {
@@ -251,10 +295,8 @@ impl<'a> Parser<'a> {
                 self.code(offset, body_end);
             } else if let Some((level, content)) = heading(line) {
                 self.next_line();
-                self.push_block(Block::Heading {
-                    level,
-                    spans: inline(content),
-                });
+                let spans = self.inline(&[content]);
+                self.push_block(Block::Heading { level, spans });
             } else if let Some((header, alignments)) = self.table_head(line) {
                 self.table(header, alignments);
             } else if list_marker(line).is_some() {
@@ -273,9 +315,27 @@ impl<'a> Parser<'a> {
 
     fn flush_para(&mut self) {
         if !self.para.is_empty() {
-            let text = self.para.join("\n");
-            self.para.clear();
-            self.blocks.push(Block::Paragraph(inline(&text)));
+            let para = std::mem::take(&mut self.para);
+            let spans = self.inline(&para);
+            self.blocks.push(Block::Paragraph(spans));
+        }
+    }
+
+    /// The spans of `lines`, slices of `text`, joined by newlines. Inline
+    /// syntax never spans a line, so they parse as one text.
+    fn inline(&mut self, lines: &[&'a str]) -> Vec<Span> {
+        self.record(lines, false);
+        inline(&lines.join("\n"), self.grammar)
+    }
+
+    fn record(&mut self, lines: &[&'a str], cell: bool) {
+        let base = self.text.as_ptr() as usize;
+        for line in lines {
+            let start = line.as_ptr() as usize - base;
+            self.inline_ranges.push(InlineRange {
+                range: start..start + line.len(),
+                cell,
+            });
         }
     }
 
@@ -298,9 +358,8 @@ impl<'a> Parser<'a> {
                 lines.push(line.strip_prefix(' ').unwrap_or(line));
             }
         }
-        self.push_block(Block::Quote(vec![Block::Paragraph(inline(
-            &lines.join("\n"),
-        ))]));
+        let spans = self.inline(&lines);
+        self.push_block(Block::Quote(vec![Block::Paragraph(spans)]));
     }
 
     /// Offset of a ```` ``` ```` in `line` and the text position of the one
@@ -351,25 +410,36 @@ impl<'a> Parser<'a> {
         self.next_line();
         self.next_line();
         let columns = header.len();
-        let row = |cells: Vec<&str>| {
-            let mut row: Vec<Vec<Span>> = cells.into_iter().take(columns).map(inline).collect();
-            row.resize(columns, Vec::new());
-            row
-        };
-        let header = row(header);
+        let header = self.row(header, columns);
         let mut rows = Vec::new();
         while !self.done() {
             let line = self.peek_line();
             if line.trim().is_empty() || !line.contains('|') {
                 break;
             }
-            rows.push(row(cells(self.next_line())));
+            let cells = cells(self.next_line());
+            rows.push(self.row(cells, columns));
         }
         self.push_block(Block::Table(Table {
             alignments,
             header,
             rows,
         }));
+    }
+
+    /// The spans of a table row's first `columns` cells, padded to
+    /// `columns`.
+    fn row(&mut self, cells: Vec<&'a str>, columns: usize) -> Vec<Vec<Span>> {
+        let mut row: Vec<Vec<Span>> = cells
+            .into_iter()
+            .take(columns)
+            .map(|cell| {
+                self.record(&[cell], true);
+                inline(cell, self.grammar)
+            })
+            .collect();
+        row.resize(columns, Vec::new());
+        row
     }
 
     /// Consecutive list lines, plus indented continuation lines, as one or
@@ -384,8 +454,7 @@ impl<'a> Parser<'a> {
                 && !line.trim().is_empty()
                 && let Some(last) = entries.last_mut()
             {
-                last.text.push('\n');
-                last.text.push_str(line.trim());
+                last.lines.push(line.trim());
             } else {
                 break;
             }
@@ -393,53 +462,56 @@ impl<'a> Parser<'a> {
         }
         let mut ix = 0;
         while ix < entries.len() {
-            let list = build_list(&entries, &mut ix);
+            let list = self.build_list(&entries, &mut ix);
             self.push_block(Block::List(list));
         }
     }
+
+    /// Builds the list starting at `entries[*ix]`: following entries at the
+    /// same indent and kind are its items, deeper ones nest under the
+    /// previous item.
+    fn build_list(&mut self, entries: &[Entry<'a>], ix: &mut usize) -> List {
+        let first = &entries[*ix];
+        let mut list = List {
+            start: first.number,
+            tight: true,
+            items: Vec::new(),
+        };
+        while let Some(entry) = entries.get(*ix) {
+            if entry.indent > first.indent && !list.items.is_empty() {
+                let nested = self.build_list(entries, ix);
+                list.items
+                    .last_mut()
+                    .unwrap()
+                    .blocks
+                    .push(Block::List(nested));
+                continue;
+            }
+            if entry.indent < first.indent || entry.number.is_some() != first.number.is_some() {
+                break;
+            }
+            let spans = self.inline(&entry.lines);
+            list.items.push(ListItem {
+                task: None,
+                blocks: vec![Block::Paragraph(spans)],
+            });
+            *ix += 1;
+        }
+        list
+    }
 }
 
-struct Entry {
+struct Entry<'a> {
     indent: usize,
     /// Number of an ordered item; `None` for bullets.
     number: Option<u64>,
-    text: String,
-}
-
-/// Builds the list starting at `entries[*ix]`: following entries at the same
-/// indent and kind are its items, deeper ones nest under the previous item.
-fn build_list(entries: &[Entry], ix: &mut usize) -> List {
-    let first = &entries[*ix];
-    let mut list = List {
-        start: first.number,
-        tight: true,
-        items: Vec::new(),
-    };
-    while let Some(entry) = entries.get(*ix) {
-        if entry.indent > first.indent && !list.items.is_empty() {
-            let nested = build_list(entries, ix);
-            list.items
-                .last_mut()
-                .unwrap()
-                .blocks
-                .push(Block::List(nested));
-            continue;
-        }
-        if entry.indent < first.indent || entry.number.is_some() != first.number.is_some() {
-            break;
-        }
-        list.items.push(ListItem {
-            task: None,
-            blocks: vec![Block::Paragraph(inline(&entry.text))],
-        });
-        *ix += 1;
-    }
-    list
+    /// The item's text and its continuation lines, trimmed.
+    lines: Vec<&'a str>,
 }
 
 /// Parses a list item line: `-`, `*` or `•`, or a number and `.`, followed
 /// by whitespace.
-fn list_marker(line: &str) -> Option<Entry> {
+fn list_marker(line: &str) -> Option<Entry<'_>> {
     let content = line.trim_start_matches([' ', '\t']);
     let indent = line[..line.len() - content.len()]
         .chars()
@@ -462,7 +534,7 @@ fn list_marker(line: &str) -> Option<Entry> {
     (!text.is_empty()).then(|| Entry {
         indent,
         number,
-        text: text.to_owned(),
+        lines: vec![text],
     })
 }
 
@@ -547,14 +619,14 @@ fn delimiter_row(line: &str, columns: usize) -> Option<Vec<Alignment>> {
         .collect()
 }
 
-fn inline(text: &str) -> Vec<Span> {
+fn inline(text: &str, grammar: Grammar) -> Vec<Span> {
     let mut out = Vec::new();
-    collect_spans(text, SpanStyle::default(), &mut out);
+    collect_spans(text, SpanStyle::default(), grammar, &mut out);
     out
 }
 
 /// Pushes the spans of `text`, which has `style` applied around it.
-fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
+fn collect_spans(text: &str, style: SpanStyle, grammar: Grammar, out: &mut Vec<Span>) {
     let mut plain = 0;
     let mut ix = 0;
     while ix < text.len() {
@@ -563,6 +635,10 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
         // Ends the plain text before a token.
         let flush = |out: &mut Vec<Span>| push_span(out, &decode(&text[plain..ix]), style, None);
         let token_len = match c {
+            '\\' if grammar == Grammar::Markdown => escape(rest).inspect(|&len| {
+                flush(out);
+                push_span(out, &rest[1..len], style, None);
+            }),
             '`' => code_span(rest).map(|(len, code)| {
                 flush(out);
                 let style = SpanStyle {
@@ -592,25 +668,31 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
                 push_span(out, emoji, style, None);
                 len
             }),
-            '*' | '_' | '~' => emphasis(text, ix, c).map(|end| {
-                flush(out);
-                let style = match c {
-                    '*' => SpanStyle {
-                        strong: true,
-                        ..style
-                    },
-                    '_' => SpanStyle {
-                        emph: true,
-                        ..style
-                    },
-                    _ => SpanStyle {
-                        strike: true,
-                        ..style
-                    },
+            '*' | '_' | '~' => {
+                let span = match grammar {
+                    Grammar::Markdown => emphasis(text, ix, c),
+                    Grammar::Mrkdwn => mrkdwn::emphasis(text, ix, c).map(|end| (1, end)),
                 };
-                collect_spans(&text[ix + 1..end], style, out);
-                end + 1 - ix
-            }),
+                span.map(|(run, end)| {
+                    flush(out);
+                    let style = match (c, run, grammar) {
+                        ('~', ..) => SpanStyle {
+                            strike: true,
+                            ..style
+                        },
+                        ('*', _, Grammar::Mrkdwn) | (_, 2, _) => SpanStyle {
+                            strong: true,
+                            ..style
+                        },
+                        _ => SpanStyle {
+                            emph: true,
+                            ..style
+                        },
+                    };
+                    collect_spans(&text[ix + run..end], style, grammar, out);
+                    end + run - ix
+                })
+            }
             _ => None,
         };
         match token_len {
@@ -618,11 +700,22 @@ fn collect_spans(text: &str, style: SpanStyle, out: &mut Vec<Span>) {
                 ix += len;
                 plain = ix;
             }
-            // Repeated delimiters like ``` or ** are literal as a whole run.
-            None => ix += rest.len() - rest.trim_start_matches(c).len(),
+            // Repeated delimiters like ``` or *** are literal as a whole run.
+            None => ix += run(rest, c),
         }
     }
     push_span(out, &decode(&text[plain..]), style, None);
+}
+
+/// Length of the run of `c` at the start of `text`.
+fn run(text: &str, c: char) -> usize {
+    text.len() - text.trim_start_matches(c).len()
+}
+
+/// Length of a backslash escaping ASCII punctuation at the start of `text`.
+fn escape(text: &str) -> Option<usize> {
+    let escaped = text.strip_prefix('\\')?.chars().next()?;
+    escaped.is_ascii_punctuation().then_some(2)
 }
 
 fn preceded_by_alnum(text: &str, ix: usize) -> bool {
@@ -738,130 +831,49 @@ fn bare_url(text: &str) -> Option<&str> {
     (url.len() > text.len() - after_scheme.len()).then_some(url)
 }
 
-/// Byte offset of the delimiter closing the one at `text[ix]`, if it opens
-/// emphasis: the opener follows a non-word character and precedes text, and
-/// the closer, on the same line, follows text and precedes a non-word
-/// character. Code spans and links inside are skipped over.
-fn emphasis(text: &str, ix: usize, delim: char) -> Option<usize> {
-    if preceded_by_alnum(text, ix) {
+/// The run length of the delimiter at `text[ix]` and the byte offset of the
+/// run closing it, if it opens emphasis: a run of one or two follows a
+/// non-word character and precedes text, and a run of the same length
+/// closes it on the same line, after text and before a non-word character.
+/// Escapes, code spans and links inside are skipped over, as they are when
+/// the text is read.
+fn emphasis(text: &str, ix: usize, delim: char) -> Option<(usize, usize)> {
+    let len = run(&text[ix..], delim);
+    if len > 2 || preceded_by_alnum(text, ix) {
         return None;
     }
-    let after = text[ix + 1..].chars().next()?;
-    if after.is_whitespace() || after == delim {
+    if text[ix + len..].chars().next()?.is_whitespace() {
         return None;
     }
-    let mut jx = ix + 1;
+    let mut jx = ix + len;
     while jx < text.len() {
         let rest = &text[jx..];
         let c = rest.chars().next().unwrap();
-        match c {
+        let skip = match c {
             '\n' => return None,
-            '`' => {
-                if let Some((len, _)) = code_span(rest) {
-                    jx += len;
-                    continue;
-                }
-            }
-            '<' => {
-                if let Some((len, ..)) = angle_link(rest) {
-                    jx += len;
-                    continue;
-                }
-            }
-            '[' => {
-                if let Some((len, ..)) = markdown_link(rest) {
-                    jx += len;
-                    continue;
-                }
-            }
+            '\\' => escape(rest),
+            // As in the text, a run of backticks that opens no code span
+            // is literal.
+            '`' => Some(code_span(rest).map_or(run(rest, '`'), |(len, _)| len)),
+            '<' => angle_link(rest).map(|(len, ..)| len),
+            '[' => markdown_link(rest).map(|(len, ..)| len),
             _ if c == delim => {
+                let closer = run(rest, delim);
                 let before = text[..jx].chars().next_back().unwrap();
-                let next = text[jx + 1..].chars().next();
-                if !before.is_whitespace()
-                    && before != delim
-                    && !next.is_some_and(|n| n.is_alphanumeric() || n == delim)
+                let next = rest[closer..].chars().next();
+                if closer == len
+                    && !before.is_whitespace()
+                    && !next.is_some_and(char::is_alphanumeric)
                 {
-                    return Some(jx);
+                    return Some((len, jx));
                 }
+                Some(closer)
             }
-            _ => {}
-        }
-        jx += c.len_utf8();
+            _ => None,
+        };
+        jx += skip.unwrap_or(c.len_utf8());
     }
     None
-}
-
-/// The two ways mrkdwn writes a labelled link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkSyntax {
-    /// `<url|label>`
-    Angle,
-    /// `[label](url)`
-    Markdown,
-}
-
-/// The syntax of the first labelled link in `mrkdwn` outside code.
-pub fn link_syntax(mrkdwn: &str) -> Option<LinkSyntax> {
-    let mut found = None;
-    visit_links(mrkdwn, |url, label, syntax| {
-        if label != url {
-            found.get_or_insert(syntax);
-        }
-        None
-    });
-    found
-}
-
-/// `mrkdwn` with every labelled link outside code written in `syntax`.
-/// Links whose label can't be written in the other syntax stay as they are.
-pub fn rewrite_links(mrkdwn: &str, syntax: LinkSyntax) -> String {
-    visit_links(mrkdwn, |url, label, from| {
-        if from == syntax || label == url {
-            return None;
-        }
-        match syntax {
-            LinkSyntax::Angle if !label.contains(['|', '<', '>']) => {
-                Some(format!("<{url}|{label}>"))
-            }
-            LinkSyntax::Markdown if !label.contains(['[', ']']) => {
-                Some(format!("[{label}]({url})"))
-            }
-            _ => None,
-        }
-    })
-}
-
-/// Calls `f` with the target, label and syntax of each link outside
-/// code spans and blocks, and returns `text` with the links `f` replaced.
-fn visit_links(text: &str, mut f: impl FnMut(&str, &str, LinkSyntax) -> Option<String>) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut ix = 0;
-    while ix < text.len() {
-        let rest = &text[ix..];
-        let c = rest.chars().next().unwrap();
-        let link = match c {
-            '<' => angle_link(rest).map(|link| (link, LinkSyntax::Angle)),
-            '[' => markdown_link(rest).map(|link| (link, LinkSyntax::Markdown)),
-            _ => None,
-        };
-        let len = if let Some(((len, url, label), syntax)) = link {
-            match f(url, label, syntax) {
-                Some(rewritten) => out.push_str(&rewritten),
-                None => out.push_str(&rest[..len]),
-            }
-            ix += len;
-            continue;
-        } else if let Some(fenced) = rest.strip_prefix("```") {
-            fenced.find("```").map_or(rest.len(), |end| end + 6)
-        } else if c == '`' {
-            code_span(rest).map_or(c.len_utf8(), |(len, _)| len)
-        } else {
-            c.len_utf8()
-        };
-        out.push_str(&rest[..len]);
-        ix += len;
-    }
-    out
 }
 
 /// Decodes the three entities Slack escapes: `&amp;`, `&lt;` and `&gt;`.

@@ -1,6 +1,6 @@
 ---
 source: crates/markup/tests/slack.rs
-expression: "snapshot(\"*open _also `tick ~tilde\\n\")"
+expression: "snapshot(\"**open _also `tick ~~tilde *one\\n\")"
 ---
 paragraph
-  "*open _also `tick ~tilde"
+  "**open _also `tick ~~tilde *one"

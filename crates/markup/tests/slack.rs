@@ -12,7 +12,8 @@ fn snapshot(mrkdwn: &str) -> String {
 #[test]
 fn inline_styles() {
     insta::assert_snapshot!(snapshot(
-        "plain *bold* _italic_ ~gone~ `code` *_both_* ~*struck bold*~ *bold `code` inside*\n"
+        "plain **bold** __bold__ *italic* _italic_ ~~gone~~ ~gone~ `code` **_both_** ~~**struck bold**~~ \
+         **bold `code` inside** **bold *italic* inside**\n"
     ));
 }
 
@@ -20,30 +21,32 @@ fn inline_styles() {
 fn word_boundaries() {
     insta::assert_snapshot!(snapshot(
         "snake_case_name 2*3*4 foo*bar* * spaced * _trailing _ (*paren*) *end*. \
-         **double** __dunder__ ~~tilde~~\n"
+         ***triple*** **mismatch* ~~mixed~ \\*escaped\\* \\\\*backslash* \\a\n"
     ));
 }
 
 #[test]
 fn styles_stay_on_one_line() {
-    insta::assert_snapshot!(snapshot("*starts here\nends here* and `code\nspan`\n"));
+    insta::assert_snapshot!(snapshot("**starts here\nends here** and `code\nspan`\n"));
 }
 
 #[test]
 fn unmatched_delimiters_stay_literal() {
-    insta::assert_snapshot!(snapshot("*open _also `tick ~tilde\n"));
+    insta::assert_snapshot!(snapshot("**open _also `tick ~~tilde *one\n"));
 }
 
 #[test]
 fn code_inside_is_literal() {
-    insta::assert_snapshot!(snapshot("`*not bold* <https://a.b|x>` and *a `*` b*\n"));
+    insta::assert_snapshot!(snapshot(
+        "`**not bold** [x](https://a.b)` and **a `**` b** *a \\* b*\n"
+    ));
 }
 
 #[test]
 fn links() {
     insta::assert_snapshot!(snapshot(
         "<https://example.com|the site> <https://example.com> <mailto:a@b.co|mail> \
-         *<https://bold.link|bold link>* <@U123> <#C1|general> <!here> <not a link> a < b\n"
+         **<https://bold.link|bold link>** <@U123> <#C1|general> <!here> <not a link> a < b\n"
     ));
 }
 
@@ -59,7 +62,7 @@ fn bare_urls() {
 fn markdown_links() {
     insta::assert_snapshot!(snapshot(
         "Adds [Aven](https://github.com/raine/aven) to it, ([wiki](https://en.wikipedia.org/wiki/Foo_(bar))), \
-         *[bold](https://a.b/x_y)* _see [docs](https://a.b/c_d)_ [mail](mailto:a@b.co). \
+         **[bold](https://a.b/x_y)** _see [docs](https://a.b/c_d)_ [mail](mailto:a@b.co). \
          `[code](https://a.b)` [no scheme](example.com) [](https://a.b) [two\nlines](https://a.b) \
          [spaced](https://a.b c) [unclosed](https://a.b [a [b](https://a.b)\n"
     ));
@@ -102,20 +105,20 @@ fn code_block_languages() {
 
 #[test]
 fn unclosed_fence_is_text() {
-    insta::assert_snapshot!(snapshot("```\nnever closed *bold*\n"));
+    insta::assert_snapshot!(snapshot("```\nnever closed **bold**\n"));
 }
 
 #[test]
 fn quotes() {
     insta::assert_snapshot!(snapshot(
-        "> first *line*\n>second\n>\n> > nested stays literal\nafter\n\n>>> rest\nof the\n\nmessage\n"
+        "> first **line**\n>second\n>\n> > nested stays literal\nafter\n\n>>> rest\nof the\n\nmessage\n"
     ));
 }
 
 #[test]
 fn lists() {
     insta::assert_snapshot!(snapshot(
-        "Changes:\n- one\n* two\n• three\n  - nested *bold*\n    - deeper\n  continued line\n- back\n\n\
+        "Changes:\n- one\n* two\n• three\n  - nested **bold**\n    - deeper\n  continued line\n- back\n\n\
          3. third\n4. fourth\n   1. sub\n- bullet after ordered\n\n- [ ] not a task\n-no space\n"
     ));
 }
@@ -130,7 +133,7 @@ fn blank_lines_between_blocks() {
 #[test]
 fn headings() {
     insta::assert_snapshot!(snapshot(
-        "# One\n### Three *bold* ###\n####### seven\n#channel\n#\n"
+        "# One\n### Three **bold** ###\n####### seven\n#channel\n#\n"
     ));
 }
 
@@ -138,7 +141,7 @@ fn headings() {
 fn tables() {
     insta::assert_snapshot!(snapshot(
         "| Left | Center | Right | None |\n|:-----|:------:|------:|------|\n\
-         | `a|b` | *c* | <https://x.y|l|k> | [a|b](https://x.y/?q=1|2) |\n| ragged |\nafter\n\nnot | a table\n"
+         | `a|b` | **c** | <https://x.y|l|k> | [a|b](https://x.y/?q=1|2) |\n| ragged |\nafter\n\nnot | a table\n"
     ));
 }
 
@@ -172,7 +175,7 @@ fn kept_lists_post_unchanged() {
 #[test]
 fn multi_line_item_posts_as_lines() {
     insta::assert_snapshot!(posted(
-        "- wraps\n  onto a second line\n    - nested *bold*\n- plain\n"
+        "- wraps\n  onto a second line\n    - nested **bold**\n- plain\n"
     ));
 }
 
@@ -302,45 +305,4 @@ fn diff_line_colours() {
     ] {
         assert_eq!(show(line), expected, "{line:?}");
     }
-}
-
-#[test]
-fn link_syntax_is_the_first_labelled_link() {
-    use slack::LinkSyntax::*;
-    assert_eq!(slack::link_syntax("no links"), None);
-    assert_eq!(slack::link_syntax("<https://a.b> bare"), None);
-    assert_eq!(
-        slack::link_syntax("`<https://a.b|x>` [Aven](https://a.b) <https://c.d|y>"),
-        Some(Markdown)
-    );
-    assert_eq!(
-        slack::link_syntax("<https://a.b|x> [Aven](https://a.b)"),
-        Some(Angle)
-    );
-}
-
-#[test]
-fn rewrite_links_converts_labelled_links_outside_code() {
-    use slack::LinkSyntax::*;
-    let text = "Adds <https://github.com/raine/aven|Aven> and [wiki](https://w.org/Foo_(bar)) \
-                to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n";
-    assert_eq!(
-        slack::rewrite_links(text, Markdown),
-        "Adds [Aven](https://github.com/raine/aven) and [wiki](https://w.org/Foo_(bar)) \
-         to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n"
-    );
-    assert_eq!(
-        slack::rewrite_links(text, Angle),
-        "Adds <https://github.com/raine/aven|Aven> and <https://w.org/Foo_(bar)|wiki> \
-         to <https://a.b>, `<https://a.b|code>`\n```\n<https://a.b|block>\n```\n"
-    );
-    // Labels the other syntax can't hold stay as written.
-    assert_eq!(
-        slack::rewrite_links("<https://a.b|[x]> [a|b](https://a.b)", Markdown),
-        "<https://a.b|[x]> [a|b](https://a.b)"
-    );
-    assert_eq!(
-        slack::rewrite_links("<https://a.b|[x]> [a|b](https://a.b)", Angle),
-        "<https://a.b|[x]> [a|b](https://a.b)"
-    );
 }

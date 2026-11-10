@@ -2,7 +2,7 @@
 
 use markup::{rich, slack};
 
-const MESSAGE: &str = "Hi *team*, _quick_ ~old~ `code` *bold <https://a.example?x=1&y=2|link>*\n\
+const MESSAGE: &str = "Hi **team**, _quick_ ~~old~~ `code` **bold [link](https://a.example?x=1&y=2)**\n\
     second  line\n\
     \n\
     - one\n\
