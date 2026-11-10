@@ -281,6 +281,16 @@ Print the Homebrew cask for a release with
 `just homebrew-cask VERSION CHECKSUM_FILE URL HOMEPAGE`, where `URL` is where
 the disk image is published and may use `#{version}`.
 
+The Release workflow runs `scripts/release-macos` on GitHub Actions with the
+variables above as repository secrets. Pushing a `vVERSION` tag that matches
+the version in `crates/draftmux/Cargo.toml` publishes the disk image, the app
+archive and their checksums as a GitHub release, then writes the cask to
+`Casks/draftmux.rb` in
+[raine/homebrew-draftmux](https://github.com/raine/homebrew-draftmux), using
+the `RELEASE_TOKEN` secret, a token that can push to that repository. Running
+the workflow by hand builds, signs and notarizes the same files as workflow
+artifacts without publishing anything.
+
 The bundle ID is `CFBundleIdentifier` in `macos/Info.plist`, which every
 script reads; the updater's `BUNDLE_ID` in `crates/draftmux/src/update.rs`
 must match it. It is part of the signature's designated requirement, so

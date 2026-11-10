@@ -72,3 +72,33 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  update-tap:
+    needs: [macos, publish]
+    # scripts/homebrew-cask reads the bundle ID with plutil.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: raine/homebrew-draftmux
+          token: ${{ secrets.RELEASE_TOKEN }}
+          path: tap
+      - uses: actions/download-artifact@v4
+        with:
+          name: draftmux-${{ needs.macos.outputs.version }}-macos
+          path: dist
+      - name: Write the cask and push it to the tap
+        env:
+          VERSION: ${{ needs.macos.outputs.version }}
+        run: |
+          mkdir -p tap/Casks
+          scripts/homebrew-cask "$VERSION" "dist/Draftmux-$VERSION-arm64.sha256" \
+            'https://github.com/raine/draftmux/releases/download/v#{version}/Draftmux-#{version}-arm64.dmg' \
+            https://github.com/raine/draftmux >tap/Casks/draftmux.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/draftmux.rb
+          git commit -m "draftmux $VERSION"
+          git push
