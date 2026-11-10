@@ -1,6 +1,5 @@
 //! The chat column: the selected draft's conversation with its pi agent,
-//! drawn on gpui's `list()` with tool calls as compact rows (history/docs/design.md,
-//! Preview and chat rendering), and the composer.
+//! drawn on gpui's `list()` with tool calls as compact rows, and the composer.
 //!
 //! Each draft gets its own [`Agent`], started when the draft is selected
 //! and stopped once it is idle or left. The chat reports to its owner

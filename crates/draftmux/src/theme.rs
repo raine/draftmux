@@ -121,8 +121,7 @@ fn context_menu(items: Vec<ContextMenuItem>, _: &mut Window, cx: &mut App) -> An
     .into_any_element()
 }
 
-/// Colours of the "Native" prototype variant (history/docs/prototype/index.html):
-/// `.t-native` for light, `.t-dark` and `body.t-dark-pop` for dark.
+/// The app's light and dark colours.
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub text: Hsla,

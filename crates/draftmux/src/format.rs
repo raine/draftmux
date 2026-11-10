@@ -1,5 +1,4 @@
-//! The Format action: runs the editor text through oxfmt on demand
-//! (history/docs/design.md, Formatting).
+//! The Format action: runs the editor text through oxfmt on demand.
 //!
 //! oxfmt runs from the draft's own directory with an explicit empty config,
 //! so no `.oxfmtrc` from the source repo or the home directory changes how

@@ -1,6 +1,5 @@
-//! The selection actions popover (history/docs/design.md, Selection menu): actions
-//! for the editor selection, then the options pi returns, in a blurred popup
-//! window above the selection. A selection made in the preview selects its
+//! The selection actions popover: actions for the editor selection, then the
+//! options pi returns, in a blurred popup window above the selection. A selection made in the preview selects its
 //! markdown in the editor, and the popover then sits above the preview's
 //! selection instead.
 //!

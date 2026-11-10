@@ -37,7 +37,7 @@ ignored = ["comrak"]
 comrak = { version = "0.59", default-features = false }
 
 [features]
-# `draftmux capture`: renders fixture drafts to PNGs (history/docs/design.md, Testing).
+# `draftmux capture`: renders fixture drafts to PNGs.
 capture = ["dep:image", "gpui/test-support", "gpui_platform/test-support"]
 
 [target.'cfg(target_os = "macos")'.dependencies]

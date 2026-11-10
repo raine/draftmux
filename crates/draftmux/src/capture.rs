@@ -1,8 +1,7 @@
 //! `draftmux capture`: renders fixture drafts to PNGs for comparing the
-//! preview with GitHub's, Slack's and Apple Mail's own rendering
-//! (history/docs/design.md, Testing). For Rich text it also writes the HTML
-//! Copy puts on the pasteboard, which `tools/mail-reference` renders the
-//! way Apple Mail does.
+//! preview with GitHub's, Slack's and Apple Mail's own rendering. For Rich
+//! text it also writes the HTML Copy puts on the pasteboard, which
+//! `tools/mail-reference` renders the way Apple Mail does.
 //!
 //! Each fixture is drawn by [`markup_view::render`] in an offscreen window,
 //! light and dark, at a fixed content width on the platform's background,

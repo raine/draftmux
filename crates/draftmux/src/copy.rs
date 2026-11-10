@@ -1,5 +1,5 @@
-//! The Copy action: puts the draft on the pasteboard ready for its target
-//! (history/docs/design.md, Output). Copying never changes the draft.
+//! The Copy action: puts the draft on the pasteboard ready for its target.
+//! Copying never changes the draft.
 
 use std::time::Duration;
 
