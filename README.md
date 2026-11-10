@@ -73,9 +73,6 @@ fonts-dejavu-core fonts-liberation`, plus graphics drivers (Mesa:
 session with a session D-Bus bus. pi and oxfmt are optional external tools,
 just as on macOS.
 
-Toggle the drafts sidebar with the toolbar’s sidebar button or `Cmd+\`
-(`Ctrl+\` on Linux). Draftmux remembers its visibility across restarts.
-
 Linux shortcuts use Ctrl instead of Cmd: Ctrl+Q quits, Ctrl+, opens Settings,
 Ctrl+Shift+C copies for the target, and Ctrl+Shift+F formats. Settings is also
 available in the main toolbar. The editor uses Ctrl+Left/Right for words,
@@ -106,6 +103,9 @@ Slack drafts are written in Markdown, not Slack's mrkdwn, with Slack's rules
 on top: every line break shows, and headings and tables paste as a bold line
 and a code block.
 
+Toggle the drafts sidebar with the toolbar’s sidebar button or `Cmd+\`
+(`Ctrl+\` on Linux). Draftmux remembers its visibility across restarts.
+
 To hand a message off from Claude Code or pi, install the agent skill and
 invoke it from the agent's session, for example `/draftmux PR description`:
 
@@ -123,7 +123,7 @@ selection actions, and `profiles.json` the pi profile folders added in
 Draftmux. They live in `~/.config/draftmux` (or `$XDG_CONFIG_HOME/draftmux`)
 on macOS and Linux; set `DRAFTMUX_CONFIG_DIR` to use another directory.
 Settings shows the path under Files. Older versions kept these files in the
-drafts directory and Draftmux moves them on first launch.
+data directory beside `drafts/`, and Draftmux moves them on first launch.
 
 Draftmux applies a saved edit within a second, without a restart. If the file
 doesn't parse, Settings shows the error and the last valid settings stay in
