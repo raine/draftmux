@@ -191,7 +191,7 @@ fn syntax(target: Target) -> &'static str {
     match target {
         Target::Github => "GitHub-flavored Markdown",
         Target::Slack => {
-            "Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text> or [text](url) links; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)"
+            "Markdown for a Slack message: every line break shows as written; **bold**, *italic*, ~~strike~~, `code`, [text](url) links; :shortcode: emoji and <@U…> mentions work; headings paste as a bold line and tables as a code block; keep list items to one line"
         }
         Target::Rich => {
             "Markdown, pasted as rich text into an email or document (headings, bold, italic, links, lists, quotes, code and tables carry over; no raw HTML, alerts or @mentions; no subject line)"
@@ -360,7 +360,11 @@ mod tests {
             Action::Instruction("Shorten it".into()),
         );
         slack.target = Target::Slack;
-        assert!(prompt(&slack, 3).unwrap().contains("Slack mrkdwn"));
+        assert!(
+            prompt(&slack, 3)
+                .unwrap()
+                .contains("Markdown for a Slack message")
+        );
         slack.target = Target::Plain;
         assert!(
             prompt(&slack, 3)

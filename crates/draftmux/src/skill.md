@@ -105,8 +105,11 @@ printf '%s' "$draft" | jq -j '.body' | gh pr create --title "$title" --body-file
 ```
 
 For email, read `fields.subject`, `fields.to` and `fields.cc` separately
-from `body`. Other keys are returned unchanged. For a Slack tool call, pass
-the JSON `body` as-is. Do not send or post until the user asks.
+from `body`. Other keys are returned unchanged. A Slack `body` is Markdown in
+which every line break shows. Pass it as-is to a Slack tool that takes
+Markdown; for one that takes Slack mrkdwn, change only `**bold**` to
+`*bold*`, `*italic*` to `_italic_`, `~~strike~~` to `~strike~` and
+`[text](url)` to `<url|text>`. Do not send or post until the user asks.
 
 Plain `draftmux show` returns the complete file, including frontmatter.
 `--path` returns the raw file's path: use it for editing, not as a

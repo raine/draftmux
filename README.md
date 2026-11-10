@@ -99,7 +99,12 @@ The chat and selection actions run
 [pi](https://github.com/badlogic/pi-mono)
 (`npm install -g @earendil-works/pi-coding-agent`), which Draftmux finds on
 your login shell's PATH. Without pi, editing, previews and copying still work.
-Formatting uses [oxfmt](https://oxc.rs) when it is installed.
+Formatting uses [oxfmt](https://oxc.rs) when it is installed, for GitHub and
+rich-text drafts.
+
+Slack drafts are written in Markdown, not Slack's mrkdwn, with Slack's rules
+on top: every line break shows, and headings and tables paste as a bold line
+and a code block.
 
 To hand a message off from Claude Code or pi, install the agent skill and
 invoke it from the agent's session, for example `/draftmux PR description`:

@@ -87,7 +87,7 @@ fn prompt_round_trip() {
     let session = std::fs::read_to_string(&session_file).unwrap();
     assert!(
         session.lines().any(|line| line.contains("draftmux-context")
-            && line.contains("Target platform: Slack mrkdwn")),
+            && line.contains("Target platform: Markdown for a Slack message")),
         "no Slack context message in the session"
     );
 

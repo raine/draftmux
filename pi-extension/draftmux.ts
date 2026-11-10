@@ -25,7 +25,7 @@ type Config =
 const TARGET_SYNTAX: Record<Target, string> = {
 	github: "GitHub-flavored Markdown",
 	slack:
-		"Slack mrkdwn (*bold*, _italic_, ~strike~, `code`, <url|text> or [text](url) links; Markdown headings and tables are fine and paste into Slack as a bold line and a code block)",
+		"Markdown for a Slack message: every line break shows as written; **bold**, *italic*, ~~strike~~, `code`, [text](url) links; :shortcode: emoji and <@U…> mentions work; headings paste as a bold line and tables as a code block; keep list items to one line",
 	rich: "Markdown, pasted as rich text into an email or document (headings, bold, italic, links, lists, quotes, code and tables carry over; no raw HTML, alerts or @mentions; no subject line)",
 	plain:
 		"plain text, such as an email body (no Markdown syntax such as **bold**, # headings, backticks, [text](url) links or tables; write URLs in full; no subject line)",

@@ -131,8 +131,8 @@ describe("context message", () => {
 		const github = sent(start([]).message.content);
 		setTarget("slack");
 		const slack = start([github]).message.content;
-		assert.match(slack, /Slack mrkdwn/);
-		assert.match(slack, /headings and tables are fine/);
+		assert.match(slack, /Markdown for a Slack message/);
+		assert.match(slack, /headings paste as a bold line/);
 		assert.equal(start([sent(slack)]), undefined);
 		setTarget("rich");
 		const rich = start([sent(slack)]).message.content;
