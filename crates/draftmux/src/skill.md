@@ -127,6 +127,6 @@ this directory, newest first:
 draftmux list --cwd "$PWD"
 ```
 
-Each line is the ID, last edit time, target, directory and title. Show the
-user the drafts that could be this one and ask which to use, then read it
-with `draftmux show <id>`. Never run `open` to recover a draft.
+Each line is the ID, last edit time, target, directory and the title the
+sidebar shows. Show the user the drafts that could be this one and ask which
+to use, then read it with `draftmux show <id>`. Never run `open` to recover a draft.

@@ -30,6 +30,9 @@ pub struct Args {
 struct JsonDraft<'a> {
     id: &'a str,
     title: &'a str,
+    /// The title the sidebar shows, derived from the text when no title is
+    /// stored.
+    display_title: String,
     target: Target,
     status: Status,
     cwd: &'a Path,
@@ -78,6 +81,11 @@ fn run(
                 .is_none_or(|dir| comparable(&draft.meta.cwd).starts_with(dir))
         })
         .collect();
+    let title = |draft: &Draft| {
+        crate::drafts::display_title(&draft.meta.title, || {
+            store.read_text(&draft.id).unwrap_or_default()
+        })
+    };
 
     let output = if args.json {
         let json: Vec<JsonDraft> = drafts
@@ -85,6 +93,7 @@ fn run(
             .map(|draft| JsonDraft {
                 id: &draft.id,
                 title: &draft.meta.title,
+                display_title: title(draft),
                 target: draft.meta.target,
                 status: draft.meta.status,
                 cwd: &draft.meta.cwd,
@@ -112,7 +121,7 @@ fn run(
                 } else {
                     ""
                 },
-                meta.title,
+                title(draft),
             ));
         }
         text
@@ -214,6 +223,26 @@ mod tests {
     }
 
     #[test]
+    fn untitled_drafts_show_the_title_from_their_text() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let draft = create(&store, "", "/home/u/code/app", 0);
+        store
+            .save_text(&draft.id, "---\ntitle: Fix the cache\n---\nBody")
+            .unwrap();
+
+        let output = list(&store, &[]);
+        assert!(
+            output.trim_end().ends_with("~/code/app  Fix the cache"),
+            "{output}"
+        );
+
+        let json: serde_json::Value = serde_json::from_str(&list(&store, &["--json"])).unwrap();
+        assert_eq!(json[0]["title"], "");
+        assert_eq!(json[0]["display_title"], "Fix the cache");
+    }
+
+    #[test]
     fn cwd_filters_to_the_directory_and_below() {
         let root = tempfile::tempdir().unwrap();
         let store = Store::new(root.path());
@@ -235,6 +264,7 @@ mod tests {
         let entry = &json[0];
         assert_eq!(entry["id"], draft.id.as_str());
         assert_eq!(entry["title"], "PR");
+        assert_eq!(entry["display_title"], "PR");
         assert_eq!(entry["target"], "slack");
         assert_eq!(entry["status"], "active");
         assert_eq!(entry["cwd"], "/home/u/code/app");

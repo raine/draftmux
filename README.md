@@ -188,7 +188,9 @@ part of the body so no text is lost.
 
 `draftmux show --json` returns an ordered `fields` map and the body without
 frontmatter. Plain `show` and the file returned by `show --path` retain the
-frontmatter. The JSON top-level `title` remains the stored metadata title.
+frontmatter. The JSON top-level `title` remains the stored metadata title. `draftmux list`
+prints the sidebar's title; its JSON keeps the stored one in `title` and adds
+the sidebar's as `display_title`.
 
 ### Draftmux skill
 

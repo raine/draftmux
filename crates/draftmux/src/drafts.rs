@@ -256,7 +256,7 @@ impl Drafts {
 
 /// The stored title, frontmatter title or subject, then the first body line
 /// without markdown markers, else "Untitled draft".
-fn display_title(title: &str, text: impl FnOnce() -> String) -> String {
+pub fn display_title(title: &str, text: impl FnOnce() -> String) -> String {
     let title = title.trim();
     if !title.is_empty() {
         return title.to_owned();
