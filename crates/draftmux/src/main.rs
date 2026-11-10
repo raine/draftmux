@@ -140,7 +140,6 @@ fn run_app() -> Result<()> {
             selection_popover::init(cx);
             settings_window::init(cx);
             update::init(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new(editor::secondary!("q"), Quit, None)]);
             cx.set_menus([Menu::new("Draftmux").items([
                 MenuItem::action("Check for Updates…", update::CheckForUpdates),
@@ -174,6 +173,17 @@ fn run_app() -> Result<()> {
                 }
             })
             .detach();
+            // Quit from another window, such as Settings, saves the draft
+            // first and stays open if that fails, as the main window's own
+            // Quit handler does.
+            cx.on_action(move |_: &Quit, cx| {
+                let saved = window
+                    .update(cx, |chrome, _, cx| chrome.flush_before_exit(cx))
+                    .unwrap_or(true);
+                if saved {
+                    cx.quit();
+                }
+            });
             server.serve(window, cx);
             cx.activate(true);
         });

@@ -787,7 +787,7 @@ impl Chrome {
 
     /// Saves before the window closes or the app quits. On failure, shows the
     /// error and returns false so the unsaved text stays in the editor.
-    fn flush_before_exit(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn flush_before_exit(&mut self, cx: &mut Context<Self>) -> bool {
         match self.flush() {
             Ok(()) => true,
             Err(_) => {
