@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::ValueEnum;
+use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use claude_convert::ModelSelection;
 use draftmux_pi_rpc::{ForkSpec, ModelOverride};
 use draftmux_settings::Settings;
@@ -34,20 +34,22 @@ pub struct Args {
     pi_agent_dir: Option<PathBuf>,
     /// Platform the message is for. Defaults to the one Draftmux's settings
     /// give the session's directory, else github.
-    #[arg(long, value_enum)]
-    target: Option<TargetArg>,
+    #[arg(long, value_parser = target_parser())]
+    target: Option<Target>,
     /// Note for the draft from the handing-off agent, such as what to write.
     #[arg(long)]
     note: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum TargetArg {
-    Github,
-    Slack,
-    Rich,
-    #[value(alias = "email")]
-    Plain,
+/// Parses `--target`, offering every target's name and accepting its
+/// aliases.
+fn target_parser() -> impl TypedValueParser<Value = Target> {
+    PossibleValuesParser::new(
+        Target::ALL
+            .iter()
+            .map(|target| PossibleValue::new(target.name()).aliases(target.aliases())),
+    )
+    .map(|name| Target::from_name(&name).expect("the parser accepts only target names"))
 }
 
 /// Runs the command and returns the process exit code.
@@ -103,13 +105,7 @@ fn create(
         resolved.profile.value.as_deref(),
         &home,
     )?;
-    let target = match args.target {
-        Some(TargetArg::Github) => Target::Github,
-        Some(TargetArg::Slack) => Target::Slack,
-        Some(TargetArg::Rich) => Target::Rich,
-        Some(TargetArg::Plain) => Target::Plain,
-        None => resolved.target.value,
-    };
+    let target = args.target.unwrap_or(resolved.target.value);
     let model = resolved.model_override();
     let new = |path, cwd, pi_agent_dir| NewDraft {
         target,

@@ -72,6 +72,32 @@ impl Target {
     /// Every target, in the order the app offers them.
     pub const ALL: &[Target] = &[Target::Github, Target::Slack, Target::Rich, Target::Plain];
 
+    /// The name settings, `meta.json` and `draftmux open --target` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Target::Github => "github",
+            Target::Slack => "slack",
+            Target::Rich => "rich",
+            Target::Plain => "plain",
+        }
+    }
+
+    /// Other names that read as this target.
+    pub fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Target::Plain => &["email"],
+            _ => &[],
+        }
+    }
+
+    /// The target `name` or one of its aliases names.
+    pub fn from_name(name: &str) -> Option<Target> {
+        Target::ALL
+            .iter()
+            .copied()
+            .find(|target| target.name() == name || target.aliases().contains(&name))
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Target::Github => "GitHub",
@@ -240,5 +266,20 @@ mod tests {
             serde_json::from_str::<Target>(r#""email""#).unwrap(),
             Target::Plain
         );
+    }
+
+    #[test]
+    fn target_names_match_serde() {
+        for &target in Target::ALL {
+            let json = format!("\"{}\"", target.name());
+            assert_eq!(serde_json::to_string(&target).unwrap(), json);
+            assert_eq!(Target::from_name(target.name()), Some(target));
+            for alias in target.aliases() {
+                let json = format!("\"{alias}\"");
+                assert_eq!(serde_json::from_str::<Target>(&json).unwrap(), target);
+                assert_eq!(Target::from_name(alias), Some(target));
+            }
+        }
+        assert_eq!(Target::from_name("Github"), None);
     }
 }

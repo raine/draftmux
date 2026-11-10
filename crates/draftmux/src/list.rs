@@ -114,7 +114,7 @@ fn run(
                 "{}  {}  {:<6}  {}{}  {}\n",
                 draft.id,
                 updated.format("%Y-%m-%d %H:%M"),
-                target_name(meta.target),
+                meta.target.name(),
                 crate::drafts::tilde(&meta.cwd, home),
                 if meta.status == Status::Archived {
                     "  (archived)"
@@ -127,16 +127,6 @@ fn run(
         text
     };
     crate::write_output(out, output.as_bytes())
-}
-
-/// The name `draftmux open --target` takes.
-fn target_name(target: Target) -> &'static str {
-    match target {
-        Target::Github => "github",
-        Target::Slack => "slack",
-        Target::Rich => "rich",
-        Target::Plain => "plain",
-    }
 }
 
 /// `path` with symlinks resolved when it exists, so `/tmp` and
