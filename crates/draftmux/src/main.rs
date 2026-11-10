@@ -4,6 +4,7 @@ mod block_cache;
 mod bounce;
 #[cfg(feature = "capture")]
 mod capture;
+mod changes;
 mod chat;
 mod chat_model;
 mod chrome;

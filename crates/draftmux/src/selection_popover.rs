@@ -638,6 +638,8 @@ impl SelectionPopover {
         self.editor.update(cx, |editor, cx| {
             if editor.text() == open.text && editor.selected_range() == open.range {
                 editor.replace_range(open.range.clone(), option, cx);
+                let inserted = open.range.start..editor.selected_range().end;
+                editor.flash(vec![inserted], cx);
             }
         });
     }

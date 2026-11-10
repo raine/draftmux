@@ -143,8 +143,9 @@ impl Formatter {
                         this.message = Some("Already formatted".into());
                     }
                     Ok(output) => {
-                        this.editor
-                            .update(cx, |editor, cx| editor.replace_all(&output, cx));
+                        this.editor.update(cx, |editor, cx| {
+                            crate::changes::replace_all(editor, &output, cx)
+                        });
                     }
                     Err(err) => this.message = Some(err.into()),
                 }

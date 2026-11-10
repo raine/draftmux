@@ -603,8 +603,9 @@ impl Chrome {
                 }
             }
             ChatEvent::DraftWritten(text) => {
-                self.editor
-                    .update(cx, |editor, cx| editor.replace_all(text, cx));
+                self.editor.update(cx, |editor, cx| {
+                    crate::changes::replace_all(editor, text, cx)
+                });
                 // The file already holds the text, so loading isn't an edit
                 // to save.
                 self.drafts.loaded(self.editor.read(cx).text());

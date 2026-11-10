@@ -199,6 +199,8 @@ pub struct Palette {
     pub editor_code: Hsla,
     pub selection: Hsla,
     pub inactive_selection: Hsla,
+    /// Tints text the app changed for the user, fading away.
+    pub change_flash: Hsla,
 }
 
 impl Palette {
@@ -274,6 +276,7 @@ impl Palette {
             editor_code: hex(0xa8336aff),
             selection: hex(0xb3d4ffff),
             inactive_selection: hex(0xdcdce0ff),
+            change_flash: hex(0xffcc0066),
         }
     }
 
@@ -339,6 +342,7 @@ impl Palette {
             editor_code: hex(0xff7ab2ff),
             selection: hex(0x0a84ff66),
             inactive_selection: hex(0x3a3a3eff),
+            change_flash: hex(0xffd60a40),
         }
     }
 
@@ -356,6 +360,7 @@ impl Palette {
             caret: self.accent,
             selection: self.selection,
             inactive_selection: self.inactive_selection,
+            flash: self.change_flash,
             ..EditorStyle::default()
         }
     }

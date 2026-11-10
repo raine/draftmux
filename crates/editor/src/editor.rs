@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Action, AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
@@ -228,6 +228,8 @@ pub struct EditorStyle {
     pub caret: Hsla,
     pub selection: Hsla,
     pub inactive_selection: Hsla,
+    /// The tint of text that [`Editor::flash`] points out.
+    pub flash: Hsla,
     /// Size the editor to its text, up to the available width, instead of
     /// filling its parent and scrolling. Scroll events then pass through to
     /// what contains it.
@@ -254,6 +256,7 @@ impl Default for EditorStyle {
             caret: rgb(0x0a6cf5).into(),
             selection: rgb(0xb3d4ff).into(),
             inactive_selection: rgb(0xdcdce0).into(),
+            flash: rgba(0xffd60a59).into(),
             fit_content: false,
         }
     }
@@ -297,7 +300,20 @@ pub struct Editor {
     /// Where the open context menu was requested, in window coordinates.
     context_menu: Option<Point<Pixels>>,
     menu_renderer: Option<ContextMenuRenderer>,
+    pub(crate) flash: Option<Flash>,
 }
+
+/// Text pointed out by a tint that fades away.
+pub(crate) struct Flash {
+    pub(crate) ranges: Vec<Range<usize>>,
+    pub(crate) started: Instant,
+    /// The buffer revision the ranges are for; any later edit ends the
+    /// flash.
+    pub(crate) revision: u64,
+}
+
+/// How long [`Editor::flash`]'s tint takes to fade away.
+pub(crate) const FLASH_DURATION: Duration = Duration::from_millis(900);
 
 /// How long the caret stays on, and then off, while blinking.
 const BLINK_PERIOD: Duration = Duration::from_millis(530);
@@ -337,6 +353,7 @@ impl Editor {
             painted_focused: false,
             blinking: false,
             blink_epoch: 0,
+            flash: None,
         }
     }
 
@@ -446,6 +463,18 @@ impl Editor {
     pub fn replace_all(&mut self, text: &str, cx: &mut Context<Self>) {
         self.buffer.replace_all(text);
         self.after_change(None, false, cx);
+    }
+
+    /// Tints `ranges` of the current text and fades the tint away, to point
+    /// out text that changed without the user typing it. The next edit
+    /// ends it early.
+    pub fn flash(&mut self, ranges: Vec<Range<usize>>, cx: &mut Context<Self>) {
+        self.flash = (!ranges.is_empty()).then(|| Flash {
+            ranges,
+            started: Instant::now(),
+            revision: self.buffer.revision(),
+        });
+        cx.notify();
     }
 
     /// The viewport height, content height and scroll offset as last laid
