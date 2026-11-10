@@ -34,13 +34,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Install build libraries
+      - name: Install build libraries and zsh for the shell-env tests
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config cmake clang \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
             libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
-            libvulkan-dev libzstd-dev
+            libvulkan-dev libzstd-dev zsh
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings -D clippy::all
