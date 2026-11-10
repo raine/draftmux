@@ -130,6 +130,31 @@ fn write_pasteboard(pasteboard: &NSPasteboard, flavours: &Flavours) {
     }
 }
 
+pub fn window_options(options: gpui::WindowOptions) -> gpui::WindowOptions {
+    options
+}
+pub fn toolbar_items(_: &crate::theme::Palette) -> Option<gpui::AnyElement> {
+    None
+}
+pub fn menu_color(palette: &crate::theme::Palette) -> gpui::Hsla {
+    palette.menu_tint
+}
+/// The corner radius the window server gives pop-up windows on macOS 26.
+pub const POPUP_RADIUS: f32 = 14.;
+
+pub fn popup_background() -> gpui::WindowBackgroundAppearance {
+    gpui::WindowBackgroundAppearance::Blurred
+}
+pub fn frame(
+    content: gpui::AnyElement,
+    _: &mut gpui::Window,
+    _: &mut App,
+    _: Box<dyn gpui::Action>,
+    _: &'static str,
+) -> gpui::AnyElement {
+    content
+}
+
 #[cfg(test)]
 mod tests {
     use objc2_app_kit::{
@@ -163,29 +188,4 @@ mod tests {
         assert_eq!(plain.unwrap().to_string(), flavours.plain);
         assert_eq!(flavours.plain, "Hi code 🎉\n• one\n• two");
     }
-}
-
-pub fn window_options(options: gpui::WindowOptions) -> gpui::WindowOptions {
-    options
-}
-pub fn toolbar_items(_: &crate::theme::Palette) -> Option<gpui::AnyElement> {
-    None
-}
-pub fn menu_color(palette: &crate::theme::Palette) -> gpui::Hsla {
-    palette.menu_tint
-}
-/// The corner radius the window server gives pop-up windows on macOS 26.
-pub const POPUP_RADIUS: f32 = 14.;
-
-pub fn popup_background() -> gpui::WindowBackgroundAppearance {
-    gpui::WindowBackgroundAppearance::Blurred
-}
-pub fn frame(
-    content: gpui::AnyElement,
-    _: &mut gpui::Window,
-    _: &mut App,
-    _: Box<dyn gpui::Action>,
-    _: &'static str,
-) -> gpui::AnyElement {
-    content
 }

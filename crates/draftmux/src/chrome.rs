@@ -1141,24 +1141,6 @@ fn clamp_chat_width(width: Pixels, viewport_width: Pixels, show_sidebar: bool) -
     width.min(max).max(CHAT_MIN_WIDTH)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chat_width_reserves_space_only_for_a_visible_sidebar() {
-        assert_eq!(clamp_chat_width(px(900.), px(1000.), true), px(452.));
-        assert_eq!(clamp_chat_width(px(900.), px(1000.), false), px(680.));
-        for visible in [true, false] {
-            assert_eq!(clamp_chat_width(CHAT_WIDTH, px(1200.), visible), CHAT_WIDTH);
-            assert_eq!(
-                clamp_chat_width(px(100.), px(1000.), visible),
-                CHAT_MIN_WIDTH
-            );
-        }
-    }
-}
-
 /// A strip over the chat's left edge that drags to resize it; a double click
 /// restores the default width.
 fn chat_resize_handle(cx: &mut Context<Chrome>) -> impl IntoElement {
@@ -1188,4 +1170,22 @@ fn pane(bg: Hsla, palette: &Palette) -> gpui::Div {
         .min_w_0()
         .bg(bg)
         .border_color(palette.hairline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_width_reserves_space_only_for_a_visible_sidebar() {
+        assert_eq!(clamp_chat_width(px(900.), px(1000.), true), px(452.));
+        assert_eq!(clamp_chat_width(px(900.), px(1000.), false), px(680.));
+        for visible in [true, false] {
+            assert_eq!(clamp_chat_width(CHAT_WIDTH, px(1200.), visible), CHAT_WIDTH);
+            assert_eq!(
+                clamp_chat_width(px(100.), px(1000.), visible),
+                CHAT_MIN_WIDTH
+            );
+        }
+    }
 }

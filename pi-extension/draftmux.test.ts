@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -49,10 +49,12 @@ describe("draft mode tool guard", () => {
 			relative(join(dir, "repo"), draftPath),
 			`@${draftPath}`,
 			pathToFileURL(draftPath).href,
-			draftPath.replace("Draft Dir", "draft dir"),
 			draftPath.replace(" ", " "),
 			join(dir, "repo", "..", "Draft Dir", "draft.md"),
 		];
+		// Another case names the same file only on a case-insensitive filesystem.
+		const otherCase = draftPath.replace("Draft Dir", "draft dir");
+		if (existsSync(otherCase)) forms.push(otherCase);
 		if (draftPath.startsWith(`${homedir()}/`)) forms.push(`~/${relative(homedir(), draftPath)}`);
 		for (const path of forms) {
 			assert.equal(call("edit", { path, edits: [] }), undefined, path);

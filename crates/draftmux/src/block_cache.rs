@@ -168,8 +168,10 @@ impl Element for MeasuredBlock {
             self.block.height.set(Some(height));
             height
         });
-        let mut style = Style::default();
-        style.size = size(relative(1.).into(), height.into());
+        let style = Style {
+            size: size(relative(1.).into(), height.into()),
+            ..Default::default()
+        };
         (window.request_layout(style, [], cx), ())
     }
 
