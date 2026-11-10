@@ -8,8 +8,8 @@
 //! it after the agent writes it, and locks the editor while the agent runs.
 //!
 //! A non-empty selection in the draft editor is attached to the next
-//! message: a chip above the message field shows it, and sending puts it in the
-//! prompt ([`quote`]). It stays attached while the composer has focus, since
+//! message: a chip in the composer's footer shows it, and sending puts it in
+//! the prompt ([`quote`]). It stays attached while the composer has focus, since
 //! the editor keeps its selection when it loses focus. Sending or the chip's
 //! × detaches it, and selecting something else attaches that.
 
@@ -1030,6 +1030,44 @@ impl Chat {
         } else {
             "Ask pi to change the draft, or ask about the session…"
         };
+        // The chip sits in the footer, so attaching a selection doesn't
+        // change the composer's height.
+        let chip = quote.map(|quote| {
+            div()
+                .min_w_0()
+                .max_w(relative(0.6))
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .h(px(22.))
+                .pl(px(7.))
+                .pr(px(2.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(palette.hairline)
+                .bg(palette.hover)
+                .child(quote_label(&quote, palette.faint, palette.text))
+                .child(
+                    div()
+                        .id("detach-selection")
+                        .size(px(18.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .hover(|style| style.bg(palette.control_hover))
+                        .active(|style| style.opacity(0.8))
+                        .tooltip(crate::tooltip::text("Don't attach the selection"))
+                        .on_click(cx.listener(|this, _, _, cx| this.detach(cx)))
+                        .child(
+                            svg()
+                                .path(CLOSE_ICON)
+                                .size(px(10.))
+                                .text_color(palette.muted),
+                        ),
+                )
+        });
         div().flex_none().px(px(12.)).pt(px(8.)).pb(px(12.)).child(
             div()
                 .key_context(KEY_CONTEXT)
@@ -1039,45 +1077,6 @@ impl Chat {
                 .border_1()
                 .border_color(palette.line_strong)
                 .bg(palette.control)
-                .when_some(quote, |composer, quote| {
-                    composer.child(
-                        div().flex().pt(px(6.)).px(px(6.)).child(
-                            div()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(px(2.))
-                                .h(px(22.))
-                                .pl(px(7.))
-                                .pr(px(2.))
-                                .rounded(px(6.))
-                                .border_1()
-                                .border_color(palette.hairline)
-                                .bg(palette.hover)
-                                .child(quote_label(&quote, palette.faint, palette.text))
-                                .child(
-                                    div()
-                                        .id("detach-selection")
-                                        .size(px(18.))
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(4.))
-                                        .hover(|style| style.bg(palette.control_hover))
-                                        .active(|style| style.opacity(0.8))
-                                        .tooltip(crate::tooltip::text("Don't attach the selection"))
-                                        .on_click(cx.listener(|this, _, _, cx| this.detach(cx)))
-                                        .child(
-                                            svg()
-                                                .path(CLOSE_ICON)
-                                                .size(px(10.))
-                                                .text_color(palette.muted),
-                                        ),
-                                ),
-                        ),
-                    )
-                })
                 .child(
                     div()
                         .h(px(58.))
@@ -1107,7 +1106,10 @@ impl Chat {
                         .text_color(palette.faint)
                         .child(div().flex_1().min_w_0().children(model))
                         // While the agent runs, the transcript shows it.
-                        .when(!busy, |footer| footer.child("↵ send · ⇧↵ newline"))
+                        .when(!busy && chip.is_none(), |footer| {
+                            footer.child("↵ send · ⇧↵ newline")
+                        })
+                        .children(chip)
                         .child(
                             div()
                                 .id("send")
