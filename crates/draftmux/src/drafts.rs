@@ -191,6 +191,14 @@ impl Drafts {
         Ok(())
     }
 
+    /// Counts a change to `id`'s file made outside the editor as activity.
+    pub fn touched(&mut self, id: &str) -> Result<()> {
+        self.store
+            .update_meta(id, |meta| meta.updated_at = Utc::now())?;
+        self.refresh();
+        Ok(())
+    }
+
     /// Records that the first draft of `id` was requested.
     pub fn first_draft_requested(&mut self, id: &str) -> Result<()> {
         self.store
@@ -433,6 +441,20 @@ mod tests {
         // The save counts as activity, so A moves to the top right away.
         assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
         assert_eq!(drafts.rows()[0].title, "a edited");
+    }
+
+    #[test]
+    fn an_outside_write_counts_as_activity() {
+        let (_root, store) = store();
+        let a = create(&store, "a", TimeDelta::hours(1));
+        let b = create(&store, "b", TimeDelta::minutes(1));
+        let mut drafts = Drafts::new(store.clone());
+        drafts.select(&b).unwrap();
+
+        std::fs::write(store.load(&a).unwrap().draft_path(), "a rewritten").unwrap();
+        drafts.touched(&a).unwrap();
+        assert_eq!(order(&drafts), [a.as_str(), b.as_str()]);
+        assert_eq!(drafts.rows()[0].title, "a rewritten");
     }
 
     #[test]

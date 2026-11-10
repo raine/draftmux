@@ -83,8 +83,8 @@ pub enum ChatEvent {
     /// The user sent `text`, the prompt with any attached selection. Save
     /// the draft, then pass both to [`Chat::prompt`].
     Send(String),
-    /// The agent wrote the selected draft; this is its new text.
-    DraftWritten(String),
+    /// The agent wrote draft `id`, selected or not; `text` is its new text.
+    DraftWritten { id: String, text: String },
     /// The selected draft's agent started or finished a run.
     Running(bool),
     /// The selected draft was handed off and its agent is ready: record
@@ -618,10 +618,11 @@ impl Chat {
                 session.finished.insert(index, now);
             }
         }
-        if self.current.as_deref() == Some(id)
-            && let Some(text) = written
-        {
-            cx.emit(ChatEvent::DraftWritten(text));
+        if let Some(text) = written {
+            cx.emit(ChatEvent::DraftWritten {
+                id: id.to_owned(),
+                text,
+            });
         }
         self.after_change(id, cx);
     }

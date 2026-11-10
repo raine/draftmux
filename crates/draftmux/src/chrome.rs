@@ -602,14 +602,18 @@ impl Chrome {
                         .update(cx, |chat, cx| chat.prompt(text, saved, cx));
                 }
             }
-            ChatEvent::DraftWritten(text) => {
-                self.editor.update(cx, |editor, cx| {
-                    crate::changes::replace_all(editor, text, cx)
-                });
-                // The file already holds the text, so loading isn't an edit
-                // to save.
-                self.drafts.loaded(self.editor.read(cx).text());
-                self.drafts.refresh();
+            ChatEvent::DraftWritten { id, text } => {
+                if self.drafts.current_id() == Some(id.as_str()) {
+                    self.editor.update(cx, |editor, cx| {
+                        crate::changes::replace_all(editor, text, cx)
+                    });
+                    // The file already holds the text, so loading isn't an
+                    // edit to save.
+                    self.drafts.loaded(self.editor.read(cx).text());
+                }
+                if let Err(err) = self.drafts.touched(id) {
+                    eprintln!("draftmux: recording the agent's edit: {err:#}");
+                }
             }
             ChatEvent::Running(running) => {
                 let running = *running;
