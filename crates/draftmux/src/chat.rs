@@ -163,6 +163,8 @@ struct Session {
     turned: HashMap<usize, Instant>,
     /// Whether the list ends with a placeholder awaiting a visible reply.
     activity_row: bool,
+    /// The composer text left unsent when another draft was selected.
+    unsent: String,
     _events: Task<()>,
 }
 
@@ -253,6 +255,14 @@ impl Chat {
         if let Some(Some(Ok(agent))) = self.session().map(|session| &session.agent) {
             agent.blur();
         }
+        let unsent = self.composer.read(cx).text().to_owned();
+        if let Some(session) = self
+            .current
+            .as_deref()
+            .and_then(|current| self.sessions.get_mut(current))
+        {
+            session.unsent = unsent;
+        }
         self.current = id.clone();
         self.idle = Task::ready(());
         self.text_selection
@@ -289,6 +299,7 @@ impl Chat {
                             finished: HashMap::new(),
                             turned: HashMap::new(),
                             activity_row: false,
+                            unsent: String::new(),
                             _events: Task::ready(()),
                         },
                     );
@@ -296,6 +307,14 @@ impl Chat {
                 }
             }
         }
+        let unsent = self
+            .session()
+            .map(|session| session.unsent.clone())
+            .unwrap_or_default();
+        self.composer.update(cx, |composer, cx| {
+            composer.set_text(&unsent, cx);
+            composer.select_range(unsent.len()..unsent.len(), cx);
+        });
         let scroller = self
             .session()
             .map(|session| Scroller::List(session.list.clone()));
