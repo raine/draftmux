@@ -129,8 +129,7 @@ struct Session {
     /// entrance, by transcript index. Restored history and items that
     /// arrived unseen appear at once.
     entering: HashMap<usize, Instant>,
-    /// Whether the list ends with the activity row, shown while the agent
-    /// runs.
+    /// Whether the list ends with a placeholder awaiting a visible reply.
     activity_row: bool,
     _events: Task<()>,
 }
@@ -602,7 +601,11 @@ impl Chat {
             .entering
             .retain(|_, start| now.saturating_duration_since(*start) < ENTRANCE);
         for index in shown..session.transcript.items.len() {
-            session.entering.insert(index, now);
+            // Streamed replies replace the waiting slot without sliding or
+            // fading; their text already supplies the visible activity.
+            if !matches!(session.transcript.items[index], Item::Assistant { .. }) {
+                session.entering.insert(index, now);
+            }
         }
     }
 
@@ -612,7 +615,7 @@ impl Chat {
         };
         let old_len = session.list.item_count();
         let old_items = old_len - usize::from(session.activity_row);
-        let activity_row = session.transcript.busy || session.starting();
+        let activity_row = needs_activity_row(session.starting(), &session.transcript);
         let items = session.transcript.items.len();
         let from = match session.transcript.take_change(old_items) {
             Some(from) => Some(from),
@@ -620,6 +623,13 @@ impl Chat {
             None => None,
         };
         if let Some(from) = from {
+            // The former last item loses its bottom padding when another
+            // row follows it. Remeasure it along with the changed tail.
+            let from = if items != old_items || activity_row != session.activity_row {
+                from.min(old_items.saturating_sub(1))
+            } else {
+                from
+            };
             session
                 .list
                 .splice(from..old_len, items - from + usize::from(activity_row));
@@ -815,7 +825,9 @@ impl Chat {
         div()
             .px(px(14.))
             .pt(if stacked { px(0.) } else { px(10.) })
-            .when(index + 1 == items.len(), |item| item.pb(px(10.)))
+            .when(index + 1 == items.len() && !session.activity_row, |item| {
+                item.pb(px(10.))
+            })
             .child(body)
             // Offset, not resized, so the list's measured height holds.
             .when_some(entrance, |item, progress| {
@@ -1357,15 +1369,24 @@ const WAVE_PERIOD: f32 = 1.8;
 /// How far behind its predecessor each letter of the label brightens.
 const WAVE_STAGGER: f32 = 0.045;
 
-/// The last row while pi starts or runs: "Starting pi…", then "Thinking…",
-/// or "Writing…" once its reply streams in. Empty while a tool runs, since
-/// the tool's row shows its own spinner.
+/// A streamed reply occupies the waiting slot itself. Tools have their own
+/// spinner; after a tool finishes, show that pi is thinking again.
+fn needs_activity_row(starting: bool, transcript: &Transcript) -> bool {
+    starting
+        || (transcript.busy
+            && match transcript.items.last() {
+                Some(Item::Assistant { .. }) => false,
+                Some(Item::Tool(tool)) => !tool.running(),
+                _ => true,
+            })
+}
+
+/// The waiting slot before a visible reply replaces it.
 fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
-    let text = match session.transcript.items.last() {
-        _ if session.starting() => "Starting pi…",
-        Some(Item::Tool(tool)) if tool.running() => return div().into_any_element(),
-        Some(Item::Assistant { .. }) => "Writing…",
-        _ => "Thinking…",
+    let text = if session.starting() {
+        "Starting pi…"
+    } else {
+        "Thinking…"
     };
     // Inset like the messages: the item padding plus their own 2px.
     let row = div()
@@ -1373,6 +1394,7 @@ fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
         .pb(px(10.))
         .px(px(16.))
         .text_size(px(13.))
+        .line_height(px(19.5))
         // Highlight blending preserves the base alpha. Resolve the muted
         // colour onto the chat background so the wave can reach full contrast.
         .text_color(palette.chat.blend(palette.muted));
@@ -1578,6 +1600,80 @@ mod tests {
     }
 
     #[test]
+    fn streamed_reply_replaces_waiting_slot_and_completion_keeps_it() {
+        use draftmux_pi_rpc::{AssistantDelta, Event};
+        let mut transcript = Transcript::default();
+        let apply = |transcript: &mut Transcript, event| {
+            transcript.apply(&AgentEvent::Pi(event), None, Instant::now());
+        };
+        let rows = |transcript: &Transcript| {
+            transcript.items.len() + usize::from(needs_activity_row(false, transcript))
+        };
+        assert!(needs_activity_row(true, &transcript));
+        assert!(!needs_activity_row(false, &transcript));
+        transcript.sent("hello".into(), String::new());
+        assert!(needs_activity_row(false, &transcript));
+        assert_eq!(rows(&transcript), 2);
+        apply(
+            &mut transcript,
+            Event::MessageStart {
+                message: serde_json::json!({"role": "assistant", "content": []}),
+            },
+        );
+        for delta in ["Hello", " there", "."] {
+            apply(
+                &mut transcript,
+                Event::MessageUpdate(AssistantDelta::TextDelta {
+                    content_index: 0,
+                    delta: delta.into(),
+                }),
+            );
+            assert!(!needs_activity_row(false, &transcript));
+            assert_eq!(rows(&transcript), 2);
+        }
+        apply(
+            &mut transcript,
+            Event::MessageEnd {
+                message: serde_json::json!({"role": "assistant", "content": [{"type": "text", "text": "Hello there."}]}),
+            },
+        );
+        assert_eq!(rows(&transcript), 2);
+        apply(&mut transcript, Event::AgentSettled { aborted: false });
+        assert_eq!(rows(&transcript), 2);
+        assert!(!needs_activity_row(false, &transcript));
+        transcript.sent("again".into(), String::new());
+        assert!(needs_activity_row(false, &transcript));
+        assert_eq!(rows(&transcript), 4);
+    }
+
+    #[test]
+    fn running_tools_own_the_activity_indicator() {
+        use draftmux_pi_rpc::Event;
+        let mut transcript = Transcript::default();
+        transcript.sent("hello".into(), String::new());
+        transcript.apply(
+            &AgentEvent::Pi(Event::ToolExecutionStart {
+                tool_call_id: "read-1".into(),
+                tool_name: "read".into(),
+                args: serde_json::json!({"path": "draft.md"}),
+            }),
+            None,
+            Instant::now(),
+        );
+        assert!(!needs_activity_row(false, &transcript));
+        let Some(Item::Tool(tool)) = transcript.items.last_mut() else {
+            panic!("expected a tool row");
+        };
+        tool.status = transcript::ToolStatus::Done {
+            is_error: false,
+            duration: None,
+        };
+        assert!(needs_activity_row(false, &transcript));
+        transcript.busy = false;
+        assert!(!needs_activity_row(false, &transcript));
+    }
+
+    #[test]
     fn shimmer_can_reach_full_contrast_in_both_themes() {
         for dark in [false, true] {
             let palette = Palette::resolve(dark, false);
@@ -1591,7 +1687,7 @@ mod tests {
 
     #[test]
     fn activity_labels_rest_at_the_reduced_motion_phase() {
-        for text in ["Starting pi…", "Thinking…", "Writing…"] {
+        for text in ["Starting pi…", "Thinking…"] {
             for (ix, _) in text.chars().enumerate() {
                 assert_eq!(wave(-(ix as f32) * WAVE_STAGGER), 0.);
             }
