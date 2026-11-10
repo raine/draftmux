@@ -1795,8 +1795,7 @@ impl Render for SettingsWindow {
         let c = &Colors::get(cx);
         let error = AppSettings::global(cx)
             .read(cx)
-            .error
-            .clone()
+            .error()
             .or(self.error.clone());
         let mut body: Vec<AnyElement> = Vec::new();
         if let Page::Rule(ix) = self.page {
