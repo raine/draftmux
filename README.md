@@ -12,7 +12,7 @@ where it's going. Edit it by hand, rewrite a selection with one click, or ask
 for changes in chat. When it's good enough, tell your agent it's done and it
 uses the text as written.
 
-https://github.com/user-attachments/assets/b2c9635a-439e-4a34-9d72-5b58404d168d
+https://github.com/user-attachments/assets/031ca42d-ae22-48cb-b2e9-9f94e93042c1
 
 Status: early release; expect rough edges.
 
