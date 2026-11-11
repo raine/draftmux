@@ -197,9 +197,10 @@ the sidebar's as `display_title`.
 Agents hand messages off to Draftmux with the `draftmux` skill: it opens the
 conversation in a new draft with `draftmux open`, and reads the polished draft
 back with `draftmux show`. It only runs when you invoke it: `/draftmux PR
-description` in Claude Code or `/skill:draftmux` in pi to hand off, and
-`/draftmux done` plus what to do with it (for example "open the PR") to read
-the draft back. Install it with:
+description` in Claude Code or `/skill:draftmux` in pi to hand off. To read
+the draft back, tell the agent in the same conversation that it's done and what
+to do with it, for example "done, open the PR". In a conversation that didn't
+hand the draft off, invoke the skill again: `/draftmux done, open the PR`. Install it with:
 
 ```sh
 draftmux skill install

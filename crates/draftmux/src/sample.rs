@@ -26,7 +26,7 @@ This is a sample draft. Real drafts arrive from your coding agent: run `/draftmu
 
 ### When you're done
 
-Copy the message out. With a handed-off draft you can instead run `/draftmux done` and the agent reads the draft back. Archive this one once you've had a look.
+Copy the message out. With a handed-off draft you can instead tell the agent it's done, and it reads the draft back. Archive this one once you've had a look.
 ";
 
 /// Whether `store` has never held a draft: no drafts, archived or

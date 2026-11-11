@@ -4,8 +4,8 @@ Draftmux opens the message in its own window, with this conversation as
 context, so the user can polish it there. Later, when the user says the draft
 is done, read it back and use it.
 
-The user runs this skill explicitly, both to hand a message off and to use the
-finished draft:
+The user runs this skill explicitly to hand a message off. To use the finished
+draft, they either say so in the same conversation or run the skill again:
 
 - **Hand off** when they ask for a message to be written, or give no
   instructions. Follow "Hand off" below.
