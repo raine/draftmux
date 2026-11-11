@@ -137,6 +137,12 @@ enum Unit {
 
 impl EventEmitter<SelectionChanged> for TextSelection {}
 
+impl gpui::Focusable for TextSelection {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl TextSelection {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {

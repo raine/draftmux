@@ -29,9 +29,9 @@ use draftmux_storage::Draft;
 use editor::{Editor, EditorEvent};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyWindowHandle, App, Bounds, Context, Div,
-    Entity, KeyBinding, Pixels, SharedString, Size, Stateful, Subscription, Task, Window,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, canvas, div, ease_out_quint,
-    point,
+    Entity, FocusHandle, Focusable, KeyBinding, Pixels, SharedString, Size, Stateful, Subscription,
+    Task, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, canvas, div,
+    ease_out_quint, point,
     popup::{
         PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
     },
@@ -188,7 +188,21 @@ impl SelectionPopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let editor_focus = editor.read(cx).focus_handle(cx);
+        let preview_focus = preview.read(cx).focus_handle(cx);
+        // Focus moving out of both panes, to the chat's composer for one,
+        // dismisses the popover; the selection itself stays.
+        let focus_out = |handle: &FocusHandle, window: &mut Window, cx: &mut Context<Self>| {
+            let panes = [editor_focus.clone(), preview_focus.clone()];
+            cx.on_focus_out(handle, window, move |this, _, window, cx| {
+                if !panes.iter().any(|pane| pane.contains_focused(window, cx)) {
+                    this.dismiss(cx);
+                }
+            })
+        };
         let subscriptions = vec![
+            focus_out(&editor_focus, window, cx),
+            focus_out(&preview_focus, window, cx),
             cx.subscribe(&editor, |this, _, event, cx| this.editor_event(event, cx)),
             cx.observe(&editor, |this, _, cx| this.schedule_reconcile(cx)),
             cx.observe(&AppSettings::global(cx), |this, settings, cx| {
