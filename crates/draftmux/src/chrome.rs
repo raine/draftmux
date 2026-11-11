@@ -512,7 +512,15 @@ impl Chrome {
         self.chat
             .update(cx, |chat, cx| chat.set_draft(draft.as_ref(), cx));
         self.preview_scroll.set_offset(Point::default());
-        if self.show_editor {
+        // pi writes a handed-off draft's first draft, and only into an empty
+        // editor. Keys typed elsewhere as the window comes to the front go to
+        // the composer, so they can't keep it from being requested.
+        if draft
+            .as_ref()
+            .is_some_and(|draft| draft.meta.first_draft_pending)
+        {
+            window.focus(&self.chat.focus_handle(cx), cx);
+        } else if self.show_editor {
             window.focus(&self.editor.focus_handle(cx), cx);
         }
         cx.notify();
@@ -611,8 +619,12 @@ impl Chrome {
                 if let Err(err) = self.drafts.first_draft_requested(&id) {
                     eprintln!("draftmux: recording the first-draft request: {err:#}");
                 }
-                // Text the user typed while pi was starting is kept.
-                if self.editor.read(cx).text().trim().is_empty() {
+                // Text the user typed while pi was starting is kept, and the
+                // request is left in the composer for them to send or drop.
+                if !self.editor.read(cx).text().trim().is_empty() {
+                    let text = text.clone();
+                    self.chat.update(cx, |chat, cx| chat.offer(&text, cx));
+                } else {
                     let saved = self
                         .flush()
                         .map(|()| self.editor.read(cx).text().to_owned())

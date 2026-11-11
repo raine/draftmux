@@ -544,6 +544,18 @@ impl Chat {
         self.after_change(&id, cx);
     }
 
+    /// Puts `text` in the composer for the user to send, unless they have
+    /// started a message there.
+    pub fn offer(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !self.composer.read(cx).text().trim().is_empty() {
+            return;
+        }
+        self.composer.update(cx, |composer, cx| {
+            composer.set_text(text, cx);
+            composer.select_range(text.len()..text.len(), cx);
+        });
+    }
+
     /// The draft editor's selection, unless the user detached it.
     fn attached(&self, cx: &App) -> Option<Quote> {
         self.quote(self.draft_editor.read(cx).selected_range(), cx)
