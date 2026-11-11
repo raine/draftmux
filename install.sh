@@ -46,7 +46,9 @@ fetch() {
   else
     actual=$(shasum -a 256 "$1" | awk '{ print $1 }')
   fi
-  [ -n "$expected" ] && [ "$expected" = "$actual" ] || fail "checksum mismatch for $1"
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    fail "checksum mismatch for $1"
+  fi
 }
 
 install_macos() {
