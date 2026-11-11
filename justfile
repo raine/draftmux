@@ -87,7 +87,7 @@ test-scripts:
 
 # Lint the shell scripts and hooks
 shellcheck:
-    shellcheck scripts/* hooks/*
+    shellcheck install.sh scripts/* hooks/*
 
 # Configure Git to use the repository hooks
 install-hooks:

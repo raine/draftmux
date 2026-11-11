@@ -53,6 +53,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: shellcheck scripts/* hooks/*
+      - run: shellcheck install.sh scripts/* hooks/*
       - run: npm test
         working-directory: pi-extension
