@@ -9,6 +9,7 @@
 mod preview;
 mod preview_work;
 mod sidebar;
+mod skeleton;
 
 use preview::Preview;
 

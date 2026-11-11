@@ -1502,7 +1502,7 @@ fn tool_icon(name: &str) -> &'static str {
 }
 
 /// How long the brightness wave takes to cross the activity label.
-const WAVE_PERIOD: f32 = 1.8;
+pub(crate) const WAVE_PERIOD: f32 = 1.8;
 /// How far behind its predecessor each letter of the label brightens.
 const WAVE_STAGGER: f32 = 0.045;
 
@@ -1562,7 +1562,7 @@ fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
 
 /// The wave's brightness at `time` seconds: rises over the first 15% of
 /// each period, settles by 40%, then rests.
-fn wave(time: f32) -> f32 {
+pub(crate) fn wave(time: f32) -> f32 {
     let p = time.rem_euclid(WAVE_PERIOD) / WAVE_PERIOD;
     let rise = if p < 0.15 {
         p / 0.15

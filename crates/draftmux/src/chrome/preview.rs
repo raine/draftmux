@@ -23,7 +23,8 @@ pub(super) struct Preview {
     pub cache: BlockCache,
     pub appearance: Option<(Target, bool, f32)>,
     /// The agent is writing into the draft, or about to write its first
-    /// draft; an empty preview says so instead of "Nothing to preview".
+    /// draft; an empty preview shows a skeleton of the message instead of
+    /// "Nothing to preview".
     pub writing: bool,
     pub _selection: gpui::Subscription,
 }
@@ -216,6 +217,15 @@ impl Preview {
                     Some(style.background),
                 )
             }
+            _ if self.writing
+                && let Some(target) = self.target =>
+            {
+                let style = markup_view::style(target, theme.dark);
+                (
+                    super::skeleton::render(target, &style),
+                    Some(style.background),
+                )
+            }
             _ => (
                 div()
                     // pt_5 and pb_10 take 3.75 rem of the viewport's height.
@@ -225,11 +235,7 @@ impl Preview {
                     .justify_center()
                     .text_size(px(14.))
                     .text_color(theme.palette.faint)
-                    .child(if self.writing {
-                        "pi is writing the draft…"
-                    } else {
-                        "Nothing to preview"
-                    })
+                    .child("Nothing to preview")
                     .into_any_element(),
                 None,
             ),
