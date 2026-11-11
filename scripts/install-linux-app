@@ -10,7 +10,7 @@ prefix="${DRAFTMUX_INSTALL_PREFIX:-$HOME/.local}"
 data="${XDG_DATA_HOME:-$prefix/share}"
 app="$prefix/lib/draftmux"
 link="$prefix/bin/draftmux"
-desktop="$data/applications/io.github.raine.Draftmux.desktop"
+desktop="$data/applications/fi.zendit.Draftmux.desktop"
 for path in "$prefix" "$data"; do
   if [[ $path != /* || $path == *$'\n'* || $path == *$'\r'* ]]; then
     echo "install paths must be absolute and contain no newlines" >&2
@@ -57,11 +57,11 @@ exec_path=${exec_path//%/%%}
 {
   while IFS= read -r line; do
     case "$line" in Exec=*) printf 'Exec="%s" app\n' "$exec_path" ;; *) printf '%s\n' "$line" ;; esac
-  done < "$app/share/applications/io.github.raine.Draftmux.desktop"
+  done < "$app/share/applications/fi.zendit.Draftmux.desktop"
   printf 'X-Draftmux-Managed=true\n'
 } >| "$desktop"
-install -m644 "$app/share/icons/hicolor/1024x1024/apps/io.github.raine.Draftmux.png" \
-  "$data/icons/hicolor/1024x1024/apps/io.github.raine.Draftmux.png"
+install -m644 "$app/share/icons/hicolor/1024x1024/apps/fi.zendit.Draftmux.png" \
+  "$data/icons/hicolor/1024x1024/apps/fi.zendit.Draftmux.png"
 if command -v update-desktop-database >/dev/null; then
   update-desktop-database "$data/applications" || true
 fi

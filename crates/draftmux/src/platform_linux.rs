@@ -78,7 +78,7 @@ pub fn window_options(mut options: gpui::WindowOptions) -> gpui::WindowOptions {
         titlebar.traffic_light_position = None;
     }
     options.window_background = gpui::WindowBackgroundAppearance::Opaque;
-    options.app_id = Some("io.github.raine.Draftmux".into());
+    options.app_id = Some("fi.zendit.Draftmux".into());
     options
 }
 pub fn toolbar_items(palette: &crate::theme::Palette) -> Option<gpui::AnyElement> {
