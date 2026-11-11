@@ -7,6 +7,8 @@ it starts. Nothing is installed in the user's pi. It:
   tools available,
 - tells the agent the draft path, target platform and drafting instructions
   through a message, never through the system prompt,
+- sends the agent the draft's text before a run when it changed since the agent
+  last saw it, so the agent edits without reading the file first,
 - blocks every tool call in selection calls,
 - reports whether pi trusts the project.
 
@@ -87,6 +89,23 @@ the session, and the chat pane should hide it. It is added again only when its
 text changes, for example after the target changes, so a long
 chat holds one copy. Selection calls add none; their prompt carries the draft
 text and selection.
+
+### Draft message
+
+In draft mode the extension tracks the text of `draft.md` the agent last saw in
+full: after its own `read` (without `offset` or `limit`, not truncated), `edit`
+or `write` of the draft, or a draft message. Before a run, when the file
+differs from that text, it adds a custom message with
+`customType: "draftmux-draft"` and `display: false` holding the file's text,
+after the context message. The agent edits from what it last saw instead of
+reading the file at the start of every run, so the user's edits, the app's own
+writes and changes made through `bash` all reach it this way. The chat pane
+should hide the message.
+
+The tracked text is forgotten when pi starts or switches a session, moves in
+the session tree, compacts, or a draft `edit` or `write` fails, so the next run
+sends the draft again. A draft over 50 KB isn't sent; the message asks the
+agent to read the file instead. A draft that can't be read gets no message.
 
 ### Selection calls
 

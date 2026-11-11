@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const CONTEXT_MESSAGE_TYPE = "draftmux-context";
+export const DRAFT_MESSAGE_TYPE = "draftmux-draft";
 export const TRUST_STATUS_KEY = "draftmux.trust";
 
 type Target = "github" | "slack" | "rich" | "plain";
@@ -84,7 +85,7 @@ function contextMessage(config: Extract<Config, { mode: "draft" }>, target: Targ
 		...(target ? [`Target platform: ${TARGET_SYNTAX[target]}`] : []),
 		"",
 		"- Make every change to the draft by editing that file with the edit or write tool; the user sees it in the Draftmux editor. Don't paste drafts or rewritten versions in chat; use chat for discussion.",
-		"- Read the file before editing: the user may have changed it since your last edit.",
+		"- Draftmux sends you the draft's current content when it differs from what you last read, edited or wrote, for example after the user edits it. Otherwise the file is exactly as you left it, so edit it without reading it first.",
 		"- Put fields in YAML frontmatter at the very top of the draft, between --- lines: title: for PRs and issues; subject:, to: and cc: for emails (only known recipients). Any other key is allowed. Use string values, quoting YAML punctuation as needed; use comma-separated strings rather than lists. Keep these fields separate from the message body. Draftmux displays them separately and copies only the body.",
 		"- Change only what the user asks for; keep the rest of the draft, including its formatting, as it is.",
 		"- edit and write only work on the draft file. read, bash and other tools work as usual for checking facts.",
@@ -93,6 +94,17 @@ function contextMessage(config: Extract<Config, { mode: "draft" }>, target: Targ
 		lines.push("", "Drafting instructions from the user:", config.instructions);
 	}
 	return lines.join("\n");
+}
+
+/** Drafts larger than this are left for the agent to read, as pi's read tool truncates at 50 KB. */
+const MAX_SENT_DRAFT_BYTES = 50 * 1024;
+
+function draftMessage(draft: string): string {
+	if (Buffer.byteLength(draft) > MAX_SENT_DRAFT_BYTES) {
+		return "[Draftmux] The draft file changed since you last read, edited or wrote it. Read it before editing.";
+	}
+	if (draft === "") return "[Draftmux] The draft file is empty.";
+	return `[Draftmux] The draft file holds exactly this text, between the draft tags:\n\n<draft>\n${draft.endsWith("\n") ? draft : `${draft}\n`}</draft>`;
 }
 
 function messageText(content: unknown): string {
@@ -117,6 +129,8 @@ export default function draftmux(pi: ExtensionAPI) {
 		return;
 	}
 
+	const isDraft = (resolved: string) => canonicalPath(resolved) === canonicalPath(config.draftPath);
+
 	pi.on("tool_call", (event, ctx) => {
 		if (event.toolName !== "edit" && event.toolName !== "write") return undefined;
 		const requested = event.input.path;
@@ -124,7 +138,7 @@ export default function draftmux(pi: ExtensionAPI) {
 			return { block: true, reason: `Draftmux: ${event.toolName} needs a path to ${config.draftPath}.` };
 		}
 		const resolved = resolveToolPath(requested, ctx.cwd);
-		if (canonicalPath(resolved) === canonicalPath(config.draftPath)) return undefined;
+		if (isDraft(resolved)) return undefined;
 		const shown = resolved === requested ? `"${requested}"` : `"${requested}" (${resolved})`;
 		return {
 			block: true,
@@ -144,4 +158,50 @@ export default function draftmux(pi: ExtensionAPI) {
 		if (previous && messageText(previous.content) === content) return undefined;
 		return { message: { customType: CONTEXT_MESSAGE_TYPE, content, display: false } };
 	});
+
+	// The draft text the agent last saw in full: through its own read, edit
+	// or write, or a draft message. Each run starts with a draft message when
+	// the file differs from it, so the agent never has to read the file to
+	// catch up with the user's edits. Unknown at first and after anything that
+	// may take the earlier text out of the agent's context.
+	let seen: string | undefined;
+	const forget = () => {
+		seen = undefined;
+	};
+	pi.on("session_start", forget);
+	pi.on("session_tree", forget);
+	pi.on("session_compact", forget);
+
+	pi.on("tool_result", (event, ctx) => {
+		if (event.toolName !== "read" && event.toolName !== "edit" && event.toolName !== "write") return;
+		const path = event.input.path;
+		if (typeof path !== "string" || !isDraft(resolveToolPath(path, ctx.cwd))) return;
+		const partial =
+			event.toolName === "read" &&
+			(event.input.offset !== undefined ||
+				event.input.limit !== undefined ||
+				(event.details as { truncation?: { truncated?: boolean } } | undefined)?.truncation?.truncated);
+		if (partial) return;
+		if (event.isError) {
+			// A failed edit means the agent's idea of the file is off.
+			if (event.toolName !== "read") forget();
+			return;
+		}
+		seen = readDraft(config.draftPath);
+	});
+
+	pi.on("before_agent_start", () => {
+		const draft = readDraft(config.draftPath);
+		if (draft === undefined || draft === seen) return undefined;
+		seen = Buffer.byteLength(draft) > MAX_SENT_DRAFT_BYTES ? undefined : draft;
+		return { message: { customType: DRAFT_MESSAGE_TYPE, content: draftMessage(draft), display: false } };
+	});
+}
+
+function readDraft(path: string): string | undefined {
+	try {
+		return readFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
 }

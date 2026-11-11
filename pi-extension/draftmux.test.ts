@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import draftmux, { CONTEXT_MESSAGE_TYPE, readConfig, TRUST_STATUS_KEY } from "./draftmux.ts";
+import draftmux, { CONTEXT_MESSAGE_TYPE, DRAFT_MESSAGE_TYPE, readConfig, TRUST_STATUS_KEY } from "./draftmux.ts";
 
 type Handler = (event: any, ctx: any) => any;
 
@@ -12,9 +12,10 @@ function load(env: Record<string, string>) {
 	const saved = { ...process.env };
 	for (const key of Object.keys(process.env)) if (key.startsWith("DRAFTMUX_")) delete process.env[key];
 	Object.assign(process.env, env);
-	const handlers = new Map<string, Handler>();
+	const handlers = new Map<string, Handler[]>();
+	const on = (name: string, handler: Handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 	try {
-		draftmux({ on: (name: string, handler: Handler) => handlers.set(name, handler) } as any);
+		draftmux({ on } as any);
 	} finally {
 		process.env = saved;
 	}
@@ -25,10 +26,12 @@ let dir: string;
 let draftPath: string;
 const writeMeta = (content: string) => writeFileSync(join(dir, "Draft Dir", "meta.json"), content);
 const setTarget = (target: string) => writeMeta(JSON.stringify({ target, status: "active" }));
-let handlers: Map<string, Handler>;
+let handlers: Map<string, Handler[]>;
 const ctx = (extra: object = {}) => ({ cwd: join(dir, "repo"), ...extra });
-const call = (toolName: string, input: object) =>
-	handlers.get("tool_call")!({ type: "tool_call", toolName, toolCallId: "1", input }, ctx());
+/** Runs every handler for the event, returning the first result as pi's tool_call does. */
+const emit = (name: string, event: object, context = ctx()) =>
+	(handlers.get(name) ?? []).map((handler) => handler({ type: name, ...event }, context)).find((r) => r !== undefined);
+const call = (toolName: string, input: object) => emit("tool_call", { toolName, toolCallId: "1", input });
 
 beforeEach(() => {
 	dir = realpathSync(mkdtempSync(join(tmpdir(), "draftmux ext ")));
@@ -100,12 +103,20 @@ describe("selection mode", () => {
 	});
 });
 
+/** Every before_agent_start result for a run, given the session's messages so far. */
+const startRun = (messages: object[] = []): any[] =>
+	(handlers.get("before_agent_start") ?? [])
+		.map((handler) =>
+			handler(
+				{ type: "before_agent_start", messageType: "user", prompt: "hi" },
+				ctx({ sessionManager: { buildSessionProjection: () => ({ messages }) } }),
+			),
+		)
+		.filter((result) => result !== undefined);
+
 describe("context message", () => {
 	const start = (messages: object[]) =>
-		handlers.get("before_agent_start")!(
-			{ type: "before_agent_start", messageType: "user", prompt: "hi" },
-			ctx({ sessionManager: { buildSessionProjection: () => ({ messages }) } }),
-		);
+		startRun(messages).find((result) => result.message?.customType === CONTEXT_MESSAGE_TYPE);
 
 	test("carries draft path, target, instructions and editing rules", () => {
 		const result = start([]);
@@ -171,13 +182,90 @@ describe("context message", () => {
 	});
 });
 
+describe("draft message", () => {
+	/** The draft message's text for a run, or undefined when the run has none. */
+	const draftSent = (): string | undefined =>
+		startRun().find((result) => result.message.customType === DRAFT_MESSAGE_TYPE)?.message.content;
+	const toolResult = (toolName: string, input: object, extra: object = {}) =>
+		emit("tool_result", { toolName, toolCallId: "1", input, content: [], isError: false, ...extra });
+
+	test("sends the draft once, then again only after it changes", () => {
+		const first = startRun().find((result) => result.message.customType === DRAFT_MESSAGE_TYPE);
+		assert.equal(first.message.display, false);
+		assert.match(first.message.content, /<draft>\nhello\n<\/draft>/);
+		assert.equal(draftSent(), undefined);
+		writeFileSync(draftPath, "hello there\n");
+		assert.match(draftSent()!, /<draft>\nhello there\n<\/draft>/);
+		assert.equal(draftSent(), undefined);
+		writeFileSync(draftPath, "no newline");
+		assert.match(draftSent()!, /<draft>\nno newline\n<\/draft>/);
+		writeFileSync(draftPath, "");
+		assert.match(draftSent()!, /draft file is empty/);
+	});
+
+	test("counts the agent's own reads, edits and writes of the draft as seen", () => {
+		for (const toolName of ["read", "edit", "write"]) {
+			emit("session_start", {}, ctx({ mode: "print" }));
+			writeFileSync(draftPath, `after ${toolName}\n`);
+			toolResult(toolName, { path: relative(join(dir, "repo"), draftPath) });
+			assert.equal(draftSent(), undefined, toolName);
+		}
+	});
+
+	test("ignores partial reads and other files", () => {
+		const unseen = [
+			["read", { path: draftPath, offset: 2 }],
+			["read", { path: draftPath, limit: 1 }],
+			["read", { path: draftPath }, { details: { truncation: { truncated: true } } }],
+			["read", { path: draftPath }, { isError: true }],
+			["write", { path: join(dir, "repo", "notes.md") }],
+			["bash", { command: `cat ${draftPath}` }],
+		] as const;
+		for (const [toolName, input, extra] of unseen) {
+			emit("session_start", {}, ctx({ mode: "print" }));
+			toolResult(toolName, input, extra);
+			assert.ok(draftSent(), `${toolName} ${JSON.stringify(input)}`);
+		}
+	});
+
+	test("sends the draft again after a failed edit", () => {
+		draftSent();
+		toolResult("edit", { path: draftPath }, { isError: true });
+		assert.ok(draftSent());
+	});
+
+	for (const event of ["session_start", "session_tree", "session_compact"]) {
+		test(`sends the draft again after ${event}`, () => {
+			draftSent();
+			emit(event, {}, ctx({ mode: "print" }));
+			assert.match(draftSent()!, /<draft>\nhello\n<\/draft>/);
+		});
+	}
+
+	test("asks for a read instead of sending a large draft", () => {
+		writeFileSync(draftPath, "x".repeat(60 * 1024));
+		for (let i = 0; i < 2; i++) {
+			const text = draftSent()!;
+			assert.match(text, /Read it before editing/);
+			assert.doesNotMatch(text, /<draft>/);
+		}
+		toolResult("read", { path: draftPath });
+		assert.equal(draftSent(), undefined);
+	});
+
+	test("sends nothing when the draft can't be read", () => {
+		rmSync(draftPath);
+		assert.equal(draftSent(), undefined);
+	});
+});
+
 describe("trust status", () => {
 	for (const trusted of [true, false]) {
 		test(`reports ${trusted ? "trusted" : "untrusted"} in rpc mode`, () => {
 			const statuses: [string, string][] = [];
 			const ui = { setStatus: (key: string, text: string) => statuses.push([key, text]) };
-			handlers.get("session_start")!({}, ctx({ mode: "rpc", ui, isProjectTrusted: () => trusted }));
-			handlers.get("session_start")!({}, ctx({ mode: "print", ui, isProjectTrusted: () => trusted }));
+			emit("session_start", {}, ctx({ mode: "rpc", ui, isProjectTrusted: () => trusted }));
+			emit("session_start", {}, ctx({ mode: "print", ui, isProjectTrusted: () => trusted }));
 			assert.deepEqual(statuses, [[TRUST_STATUS_KEY, trusted ? "trusted" : "untrusted"]]);
 		});
 	}
