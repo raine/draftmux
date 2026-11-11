@@ -22,6 +22,9 @@ pub(super) struct Preview {
     pub scroll: ScrollHandle,
     pub cache: BlockCache,
     pub appearance: Option<(Target, bool, f32)>,
+    /// The agent is writing into the draft, or about to write its first
+    /// draft; an empty preview says so instead of "Nothing to preview".
+    pub writing: bool,
     pub _selection: gpui::Subscription,
 }
 
@@ -215,9 +218,18 @@ impl Preview {
             }
             _ => (
                 div()
+                    // pt_5 and pb_10 take 3.75 rem of the viewport's height.
+                    .h((bounds.size.height - window.rem_size() * 3.75).max(px(0.)))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .text_size(px(14.))
                     .text_color(theme.palette.faint)
-                    .child("Nothing to preview")
+                    .child(if self.writing {
+                        "pi is writing the draft…"
+                    } else {
+                        "Nothing to preview"
+                    })
                     .into_any_element(),
                 None,
             ),

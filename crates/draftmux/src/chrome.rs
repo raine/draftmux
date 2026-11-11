@@ -369,6 +369,7 @@ impl Chrome {
                 scroll: preview_scroll.clone(),
                 cache: Default::default(),
                 appearance: None,
+                writing: false,
                 _selection: cx.observe(&preview_selection, |_, _, cx| cx.notify()),
             }),
             preview_work: preview_work::Work::default(),
@@ -645,6 +646,17 @@ impl Chrome {
             }
             ChatEvent::Running(running) => {
                 let running = *running;
+                let writing = running
+                    || self
+                        .drafts
+                        .current()
+                        .is_some_and(|draft| draft.meta.first_draft_pending);
+                self.preview.update(cx, |preview, cx| {
+                    if preview.writing != writing {
+                        preview.writing = writing;
+                        cx.notify();
+                    }
+                });
                 self.editor
                     .update(cx, |editor, cx| editor.set_read_only(running, cx));
                 self.formatter
