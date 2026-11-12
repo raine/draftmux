@@ -51,16 +51,25 @@ ln -s /Applications "$volume/Applications"
 cp "$layout_dir/DS_Store" "$volume/.DS_Store"
 cp "$layout_dir/background.tiff" "$volume/.background/background.tiff"
 cp "$app/Contents/Resources/AppIcon.icns" "$volume/.VolumeIcon.icns"
-hdiutil create -quiet -volname Draftmux -srcfolder "$volume" -fs HFS+ -format UDRW "$work_dir/layout.dmg"
+# hdiutil's stdout goes to stderr: this script's stdout is only the image path.
+# create fails now and then with "Resource busy" while another image detaches.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname Draftmux -srcfolder "$volume" -fs HFS+ -format UDRW "$work_dir/layout.dmg" >&2; then
+    break
+  fi
+  rm -f "$work_dir/layout.dmg"
+  [[ $attempt == 5 ]] && exit 1
+  sleep $((attempt * 2))
+done
 
 # Finder shows .VolumeIcon.icns once the volume root has the kHasCustomIcon
 # flag. Draftmux.app gets no Finder flags: strict signature checks reject them,
 # and Finder already hides the .app extension of bundles.
-hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$work_dir/mount" "$work_dir/layout.dmg"
+hdiutil attach -nobrowse -noautoopen -mountpoint "$work_dir/mount" "$work_dir/layout.dmg" >&2
 attached=1
 xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000000000000000000 "$work_dir/mount"
 rm -rf "$work_dir/mount/.fseventsd" "$work_dir/mount/.Trashes"
-hdiutil detach -quiet "$work_dir/mount"
+hdiutil detach "$work_dir/mount" >&2
 attached=0
-hdiutil convert -quiet "$work_dir/layout.dmg" -format UDZO -o "$dmg"
+hdiutil convert "$work_dir/layout.dmg" -format UDZO -o "$dmg" >&2
 echo "$dmg"
