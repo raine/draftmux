@@ -16,7 +16,8 @@
 //! color ([`TextSelection::set_marks`]), such as selections kept from before
 //! a press with the secondary modifier (⌘ on macOS), which
 //! [`SelectionStarted`] reports. It can also tint and underline tagged ranges
-//! ([`TextSelection::set_tracked`]) and report where it placed each.
+//! ([`TextSelection::set_tracked`]) and report where it placed each; a
+//! click on one, which selects nothing, reports [`TrackedClicked`].
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -107,6 +108,9 @@ impl Scroller {
 /// The selection changed; the range is in each end's paragraph.
 pub struct SelectionChanged;
 
+/// A click that selected nothing landed on the tracked range with this tag.
+pub struct TrackedClicked(pub u64);
+
 /// A press started a new selection. `adding` is set when the secondary
 /// modifier was held, to keep the earlier selection besides the new one.
 pub struct SelectionStarted {
@@ -148,6 +152,8 @@ pub struct TextSelection {
     autoscrolling: bool,
     /// Whether a press outside the area keeps the selection.
     sticky: bool,
+    /// Where a plain single press landed, until the button is released.
+    pressed: Option<Pos>,
 }
 
 struct Painted {
@@ -165,6 +171,7 @@ enum Unit {
 
 impl EventEmitter<SelectionChanged> for TextSelection {}
 impl EventEmitter<SelectionStarted> for TextSelection {}
+impl EventEmitter<TrackedClicked> for TextSelection {}
 
 impl gpui::Focusable for TextSelection {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -191,6 +198,7 @@ impl TextSelection {
             pointer: Point::default(),
             autoscrolling: false,
             sticky: false,
+            pressed: None,
         }
     }
 
@@ -301,6 +309,25 @@ impl TextSelection {
             .filter_map(|&(start, end)| part_in(start, end, key, len))
             .collect();
         Some((parts, color.opacity(color.a * alpha)))
+    }
+
+    /// Ends a drag; a plain click that selected nothing on a tracked range
+    /// reports it.
+    fn mouse_up(&mut self, cx: &mut Context<Self>) {
+        self.dragging = None;
+        let Some(pos) = self.pressed.take() else {
+            return;
+        };
+        if self.range().is_some() {
+            return;
+        }
+        let clicked = self
+            .tracked
+            .iter()
+            .find(|(_, start, end)| *start <= pos && pos <= *end);
+        if let Some(&(tag, _, _)) = clicked {
+            cx.emit(TrackedClicked(tag));
+        }
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -427,6 +454,8 @@ impl TextSelection {
         cx.emit(SelectionStarted {
             adding: event.modifiers.secondary(cx),
         });
+        let plain = event.click_count == 1 && !event.modifiers.modified();
+        self.pressed = plain.then_some(pos);
         let unit = match event.click_count {
             1 => Unit::Char,
             2 => Unit::Word,
@@ -624,7 +653,7 @@ pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
                     });
                     let state = frame.clone();
                     window.on_mouse_event(move |_: &MouseUpEvent, _, _, cx| {
-                        state.update(cx, |this, _| this.dragging = None);
+                        state.update(cx, |this, cx| this.mouse_up(cx));
                     });
                 },
             )

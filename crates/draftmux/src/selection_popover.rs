@@ -49,7 +49,8 @@
 //! passage and a badge in the editor's left margin, a spinner while its call
 //! runs; the badge, or `⌥↓` and `⌥↑`, reopen its options in the popover, and
 //! `⌘⌫` discards the one shown. A new request on text a request covers
-//! replaces it. The preview marks the passages too. A request's badge and
+//! replaces it. The preview marks the passages too, and a click on one there
+//! reopens its options. A request's badge and
 //! options stay in the pane it was made in, the editor's or the preview's,
 //! and move to the other while that one is hidden.
 
@@ -80,7 +81,7 @@ use crate::app_settings::AppSettings;
 use crate::assets::{COMMENT_ICON, SEND_ICON};
 use crate::markup_view::{self, MarkupStyle};
 use crate::resources;
-use crate::selectable::TextSelection;
+use crate::selectable::{TextSelection, TrackedClicked};
 use crate::selection::{
     self, Action as SelectionAction, Agent, Backend as SelectionBackend, Request, SelectionConfig,
     Warm,
@@ -480,6 +481,20 @@ impl SelectionPopover {
                 }
             }),
             cx.subscribe(&editor, |this, _, event, cx| this.editor_event(event, cx)),
+            // A click on a parked passage in the preview reopens it there.
+            cx.subscribe(&preview, |this, _, TrackedClicked(tag), cx| {
+                let id = this
+                    .parked
+                    .iter()
+                    .filter_map(|open| open.tracked)
+                    .find(|id| u64::from(*id) == *tag);
+                if let Some(id) = id {
+                    if let Some(open) = this.parked.iter_mut().find(|o| o.tracked == Some(id)) {
+                        open.from_preview = true;
+                    }
+                    this.engage(id, cx);
+                }
+            }),
             cx.observe(&editor, |this, _, cx| this.schedule_reconcile(cx)),
             cx.observe(&AppSettings::global(cx), |this, settings, cx| {
                 let actions = settings.read(cx).settings.selection_actions();

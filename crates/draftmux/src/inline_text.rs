@@ -229,8 +229,9 @@ pub struct Hitboxes {
     links: Vec<(Hitbox, SharedString)>,
     /// Marked changes and their hunks.
     marks: Vec<(Hitbox, usize)>,
-    /// Where the selection's tracked ranges fall in this text.
-    tracked: Vec<Bounds<Pixels>>,
+    /// Where the selection's tracked ranges fall in this text, which a
+    /// click opens.
+    tracked: Vec<(Bounds<Pixels>, Hitbox)>,
 }
 
 impl Element for InlineText {
@@ -347,7 +348,10 @@ impl Element for InlineText {
                         state.placed_tracked(*tag, *rect);
                     }
                 });
-                hitboxes.tracked = placed.into_iter().map(|(_, rect)| rect).collect();
+                hitboxes.tracked = placed
+                    .into_iter()
+                    .map(|(_, rect)| (rect, window.insert_hitbox(rect, HitboxBehavior::Normal)))
+                    .collect();
             }
         }
         for (line, top, left) in positioned(laid, bounds) {
@@ -409,7 +413,8 @@ impl Element for InlineText {
             && !hitboxes.tracked.is_empty()
         {
             let (tint, line) = select.state.read(cx).tracked_colors();
-            for rect in &hitboxes.tracked {
+            for (rect, hitbox) in &hitboxes.tracked {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
                 window.paint_quad(fill(*rect, tint));
                 window.paint_quad(fill(
                     Bounds::new(
@@ -1179,6 +1184,29 @@ mod tests {
             assert!(two[0].left() > px(0.), "after \"One \"");
             assert!(state.tracked_rects(9).is_empty());
         });
+        // A click on it reports it; one that selects or lands elsewhere
+        // doesn't.
+        let clicked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let clicked = clicked.clone();
+            cx.subscribe(
+                &state,
+                move |_, event: &crate::selectable::TrackedClicked, _| {
+                    clicked.borrow_mut().push(event.0)
+                },
+            )
+            .detach();
+        });
+        let two = state.read_with(cx, |state, _| state.tracked_rects(7)[0]);
+        cx.simulate_click(two.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(*clicked.borrow(), [7]);
+        cx.simulate_click(
+            point(two.left() - px(20.), two.center().y),
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert_eq!(*clicked.borrow(), [7]);
     }
 
     #[test]

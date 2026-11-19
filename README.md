@@ -29,11 +29,11 @@ Status: early release; expect rough edges.
   it off in the Markdown.
 - **Selection actions.** Select text to get alternatives, Shorten or Tighten, or
   your own actions. `Esc` leaves the options for later while you keep writing:
-  the passage stays marked, and its badge in the margin, `⌥↓` or `⌥↑` bring
-  them back. Several can run at once; `⌘⌫` discards the ones shown, and
-  editing the passage drops them. With text selected, a chat message changes
-  only that part. Hold `⌘` while dragging to select more passages; a chat
-  message then edits each of them.
+  the passage stays marked, and its badge in the margin, a click on it in the
+  preview, `⌥↓` or `⌥↑` bring them back. Several can run at once; `⌘⌫`
+  discards the ones shown, and editing the passage drops them. With text
+  selected, a chat message changes only that part. Hold `⌘` while dragging to
+  select more passages; a chat message then edits each of them.
 - **Continue the sentence.** `⌘↩` asks the draft's agent to finish the sentence
   at the cursor and shows it as faint text: `⇥` takes it, `⌥→` takes a word,
   typing it keeps it going, and `Esc` drops it. `⌘⇧↩` offers several

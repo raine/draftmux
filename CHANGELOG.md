@@ -11,8 +11,8 @@
 - New: Alternatives and selection actions no longer stop when the popover
   closes. `Esc` leaves the options for later while you edit elsewhere: the
   passage stays marked, with a badge in the margin that brings them back, as
-  do `⌥↓` and `⌥↑`. Several can run at once. `⌘⌫` discards the options shown,
-  and editing the passage drops them.
+  do a click on the passage in the preview, `⌥↓` and `⌥↑`. Several can run at
+  once. `⌘⌫` discards the options shown, and editing the passage drops them.
 - Fix: Claude Code drafts keep following the `CLAUDE.md` files and
   `.claude/rules` of the session they continue. Claude Code told the agent
   these no longer applied, so it dropped them, at the latest after the agent
