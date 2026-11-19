@@ -54,7 +54,8 @@
 //! in the pane it was made in, the editor's or the preview's, and move to
 //! the other while that one is hidden.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -130,6 +131,9 @@ const MAX_REQUESTS: usize = 4;
 /// A request's badge in the editor's left margin.
 const BADGE_SIZE: Pixels = px(16.);
 const BADGE_INSET: Pixels = px(4.);
+/// How long a badge takes to fade in when its request parks, and out when
+/// it leaves.
+const BADGE_FADE: Duration = Duration::from_millis(150);
 
 /// How long the selection must stay put before the popover appears, so
 /// shift-arrow selections don't flash it on every step.
@@ -250,6 +254,9 @@ pub struct SelectionPopover {
     /// Whether the editor's and the preview's panes are shown, for where a
     /// request's badge and options go.
     panes_shown: Cell<(bool, bool)>,
+    /// Where badges were drawn, so one can fade out there after its request
+    /// is gone.
+    trail: Rc<RefCell<BadgeTrail>>,
     /// Remembers whether the user has added a selection, after which the
     /// hint on how to is hidden.
     store: Store,
@@ -548,6 +555,7 @@ impl SelectionPopover {
             preview,
             preview_pane: Rc::new(Cell::new(None)),
             panes_shown: Cell::new((true, true)),
+            trail: Rc::default(),
             show_add_hint: !store.selection_added(),
             store,
             pending_show: None,
@@ -733,9 +741,7 @@ impl SelectionPopover {
             })
             .child(child)
             // After the text, so they're placed with its current layout.
-            .when(!popover.parked.is_empty(), |pane| {
-                pane.child(badges(this, preview, cx))
-            })
+            .child(badges(this, preview, cx))
             // Before the panel opens, a hidden copy of its content in the
             // pane measures it, so the panel opens at its final size.
             .when(
@@ -2618,6 +2624,43 @@ fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
 fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
     let popover = this.read(cx);
     let palette = *theme::palette(cx);
+    // Badges whose request left since they were drawn fade out where they
+    // were.
+    let fading = {
+        let mut trail = popover.trail.borrow_mut();
+        let now = Instant::now();
+        let parked: Vec<_> = popover
+            .parked
+            .iter()
+            .filter_map(|open| open.tracked)
+            .collect();
+        let gone: Vec<_> = trail
+            .placed
+            .keys()
+            .filter(|id| !parked.contains(id))
+            .copied()
+            .collect();
+        for id in gone {
+            if let Some((origin, pane, status)) = trail.placed.remove(&id) {
+                trail.leaving.push((origin, pane, status, now));
+            }
+        }
+        trail
+            .leaving
+            .retain(|(.., started)| now.duration_since(*started) < BADGE_FADE);
+        trail
+            .leaving
+            .iter()
+            .filter(|(_, pane, ..)| *pane == preview)
+            .map(|&(origin, _, status, started)| {
+                let delta = now.duration_since(started).as_secs_f32() / BADGE_FADE.as_secs_f32();
+                let badge = badge_frame()
+                    .opacity(1. - ease_out_quint()(delta.min(1.)))
+                    .child(badge_status(status, &palette));
+                (origin, badge.into_any_element())
+            })
+            .collect()
+    };
     let items = popover
         .parked
         .iter()
@@ -2626,29 +2669,11 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
         .filter_map(|(index, open)| {
             let id = open.tracked?;
             let status = Status::of(&open.mode);
-            let badge = div()
+            let badge = badge_frame()
                 .id(("request-badge", index))
-                .size(BADGE_SIZE)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(5.))
                 .occlude()
                 .hover(|style| style.bg(palette.hover))
-                .child(match status {
-                    Status::Running => crate::chat::spinner(&palette).into_any_element(),
-                    Status::Ready => div()
-                        .size(px(6.))
-                        .rounded_full()
-                        .bg(palette.accent)
-                        .into_any_element(),
-                    Status::Failed => div()
-                        .text_size(px(11.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(palette.tool_error)
-                        .child("!")
-                        .into_any_element(),
-                })
+                .child(badge_status(status, &palette))
                 .on_mouse_down(gpui::MouseButton::Left, {
                     let this = this.clone();
                     // The pane takes the keys, as a click in it would, so
@@ -2663,8 +2688,14 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
                         window.focus(&pane, cx);
                         this.update(cx, |this, cx| this.engage(id, cx));
                     }
-                });
-            Some((id, badge.into_any_element()))
+                })
+                // Keyed by the request, so it fades in once when it parks.
+                .with_animation(
+                    ("request-badge-in", u64::from(id)),
+                    Animation::new(BADGE_FADE).with_easing(ease_out_quint()),
+                    |badge, delta| badge.opacity(delta),
+                );
+            Some((id, status, badge.into_any_element()))
         })
         .collect();
     let text = if preview {
@@ -2674,9 +2705,50 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
     };
     Badges {
         text,
+        preview,
+        trail: popover.trail.clone(),
         items,
+        fading,
         shown: Vec::new(),
     }
+}
+
+/// The box a badge's status sits in.
+fn badge_frame() -> Div {
+    div()
+        .size(BADGE_SIZE)
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+}
+
+/// A spinner while the call runs, a dot once the options wait, "!" when it
+/// failed.
+fn badge_status(status: Status, palette: &Palette) -> AnyElement {
+    match status {
+        Status::Running => crate::chat::spinner(palette).into_any_element(),
+        Status::Ready => div()
+            .size(px(6.))
+            .rounded_full()
+            .bg(palette.accent)
+            .into_any_element(),
+        Status::Failed => div()
+            .text_size(px(11.))
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(palette.tool_error)
+            .child("!")
+            .into_any_element(),
+    }
+}
+
+/// Where the badges were last drawn, and those fading out.
+#[derive(Default)]
+struct BadgeTrail {
+    /// Each drawn badge's origin, whether in the preview, and its status.
+    placed: HashMap<TrackedId, (gpui::Point<Pixels>, bool, Status)>,
+    /// Badges whose request is gone, where they were, from when.
+    leaving: Vec<(gpui::Point<Pixels>, bool, Status, Instant)>,
 }
 
 /// What lays out the passages that badges go beside.
@@ -2701,7 +2773,12 @@ impl Passages {
 /// while its row isn't all in view.
 struct Badges {
     text: Passages,
-    items: Vec<(TrackedId, AnyElement)>,
+    /// In the preview's pane rather than the editor's.
+    preview: bool,
+    trail: Rc<RefCell<BadgeTrail>>,
+    items: Vec<(TrackedId, Status, AnyElement)>,
+    /// Badges fading out, at their window-space origins.
+    fading: Vec<(gpui::Point<Pixels>, AnyElement)>,
     /// Which of `items` were placed.
     shown: Vec<bool>,
 }
@@ -2760,11 +2837,12 @@ impl Element for Badges {
         let rows: Vec<_> = self
             .items
             .iter()
-            .map(|(id, _)| self.text.rows(*id, cx))
+            .map(|(id, ..)| self.text.rows(*id, cx))
             .collect();
         let mut taken: Vec<Pixels> = Vec::new();
         self.shown = Vec::new();
-        for ((_, badge), rows) in self.items.iter_mut().zip(rows) {
+        let mut trail = self.trail.borrow_mut();
+        for ((id, status, badge), rows) in self.items.iter_mut().zip(rows) {
             let row = rows
                 .iter()
                 .find(|row| !taken.contains(&row.top()))
@@ -2773,14 +2851,27 @@ impl Element for Badges {
                 row.top() >= bounds.top() && row.bottom() <= bounds.bottom()
             });
             self.shown.push(place.is_some());
-            let Some((row, bounds)) = place else { continue };
+            let Some((row, bounds)) = place else {
+                // Out of view, it leaves without a trace.
+                trail.placed.remove(id);
+                continue;
+            };
             taken.push(row.top());
             badge.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
             let origin = point(
                 bounds.left() + BADGE_INSET,
                 row.top() + (row.size.height - BADGE_SIZE) / 2.,
             );
-            badge.prepaint_at(origin.map(|v| v.round()), window, cx);
+            let origin = origin.map(|v| v.round());
+            badge.prepaint_at(origin, window, cx);
+            trail.placed.insert(*id, (origin, self.preview, *status));
+        }
+        for (origin, badge) in &mut self.fading {
+            badge.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+            badge.prepaint_at(*origin, window, cx);
+        }
+        if !self.fading.is_empty() {
+            window.request_animation_frame();
         }
     }
 
@@ -2794,10 +2885,13 @@ impl Element for Badges {
         window: &mut Window,
         cx: &mut App,
     ) {
-        for ((_, badge), shown) in self.items.iter_mut().zip(&self.shown) {
+        for ((.., badge), shown) in self.items.iter_mut().zip(&self.shown) {
             if *shown {
                 badge.paint(window, cx);
             }
+        }
+        for (_, badge) in &mut self.fading {
+            badge.paint(window, cx);
         }
     }
 }
@@ -3703,6 +3797,14 @@ mod tests {
             assert!(open.reopened && open.tracked == Some(id));
         });
         assert!(cx.update(|window, cx| editor.focus_handle(cx).is_focused(window)));
+        // Its badge fades out where it was.
+        popover.read_with(cx, |popover, _| {
+            let trail = popover.trail.borrow();
+            assert!(trail.placed.is_empty());
+            assert_eq!(trail.leaving.len(), 1);
+            let (origin, ..) = trail.leaving[0];
+            assert!((origin.y - at.y).abs() < BADGE_SIZE);
+        });
         // The click went to the badge, not the editor's caret.
         assert_eq!(editor.read_with(cx, |e, _| e.selected_range()), 16..16);
         // A press in the preview leaves them, though the editor's selection
