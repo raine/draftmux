@@ -4,6 +4,9 @@
 
 - Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
   again while it's in front no longer opens a second copy of the window.
+- UX: An alternative can be applied as soon as it appears, by clicking it or
+  pressing its number, without waiting for the rest; applying it stops the
+  request.
 - UX: Alternatives and other selection actions answer sooner: the agent
   starts loading the conversation when the selection popover opens rather
   than when you pick an action. Each call logs its timings to

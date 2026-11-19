@@ -287,6 +287,16 @@ impl Mode {
         }
     }
 
+    /// The options that can be applied: the results, or the complete
+    /// previews of a call still running.
+    fn options(&self) -> Option<&[String]> {
+        match self {
+            Self::Results(options) => Some(options),
+            Self::Running { previews, .. } if !previews.is_empty() => Some(previews),
+            _ => None,
+        }
+    }
+
     fn is_request(&self, request: &Arc<AtomicBool>) -> bool {
         matches!(self, Self::Running { _cancel, .. } if Arc::ptr_eq(&_cancel.0, request))
     }
@@ -510,10 +520,9 @@ impl SelectionPopover {
     ) -> AnyElement {
         let popover = this.read(cx);
         let mut context = match &popover.open {
-            Some(Open {
-                mode: Mode::Results(_),
-                ..
-            }) => Some(format!("{POPOVER_CONTEXT} {RESULTS_CONTEXT}")),
+            Some(open) if open.mode.options().is_some() => {
+                Some(format!("{POPOVER_CONTEXT} {RESULTS_CONTEXT}"))
+            }
             Some(_) => Some(POPOVER_CONTEXT.to_string()),
             None => None,
         };
@@ -805,8 +814,8 @@ impl SelectionPopover {
         match self.open.as_ref().map(|open| &open.mode) {
             Some(Mode::Actions(actions)) => actions.len() + 2,
             Some(Mode::Several(_)) => 1,
-            Some(Mode::Results(options)) => options.len(),
-            _ => 0,
+            Some(mode) => mode.options().map_or(0, <[String]>::len),
+            None => 0,
         }
     }
 
@@ -846,7 +855,7 @@ impl SelectionPopover {
     fn confirm(&mut self, cx: &mut Context<Self>) {
         let Some(open) = &self.open else { return };
         match &open.mode {
-            Mode::Results(_) => {
+            Mode::Results(_) | Mode::Running { .. } => {
                 if let Some(index) = open.highlighted {
                     self.apply(index, cx);
                 }
@@ -1253,17 +1262,16 @@ impl SelectionPopover {
     }
 
     /// Replaces the selection with option `index` as one undo step, if the
-    /// text is still what the options were made for.
+    /// text is still what the options were made for. A preview applies as
+    /// well: it is complete, and taking it ends the call, so nothing the
+    /// agent sends later reaches the text.
     fn apply(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(open) = self.open.take() else { return };
-        let Mode::Results(options) = &open.mode else {
+        let Some(option) = open.mode.options().and_then(|options| options.get(index)) else {
             self.open = Some(open);
             return;
         };
-        let Some(option) = options.get(index) else {
-            self.open = Some(open);
-            return;
-        };
+        self.staged = None;
         self.changed(cx);
         self.focus_main(cx);
         let text = self.editor.update(cx, |editor, cx| {
@@ -1580,17 +1588,27 @@ impl SelectionPopover {
         .detach();
     }
 
+    /// Shows `options`: the results when `done`, else previews. A
+    /// highlighted preview stays highlighted while it is still there.
     fn show_options(&mut self, options: Vec<String>, done: bool, cx: &mut Context<Self>) {
+        let highlighted = self
+            .open
+            .as_ref()
+            .and_then(|open| open.highlighted)
+            .filter(|&index| index < options.len());
         if done {
-            return self.set_mode(Mode::Results(options), Some(0), cx);
+            let highlighted = highlighted.or(Some(0));
+            return self.set_mode(Mode::Results(options), highlighted, cx);
         }
         if let Some(Open {
             mode: Mode::Running { previews, .. },
+            highlighted: shown,
             ..
         }) = &mut self.open
             && *previews != options
         {
             *previews = options;
+            *shown = highlighted;
             self.changed(cx);
         }
     }
@@ -1903,13 +1921,34 @@ impl SelectionPopover {
                     )
                     .into_any_element()
             }
-            // Previews take the rows the options will, so finishing only
-            // brings in the highlight and the keys.
+            // Previews take the rows the options will, and apply like them;
+            // finishing brings in the keys and the full text color.
             Mode::Running {
                 label,
                 previews: options,
                 ..
-            } if !options.is_empty() => previews(label, options, &palette),
+            } if !options.is_empty() => div()
+                .w(RESULTS_WIDTH - PADDING * 2.)
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .children(options.iter().enumerate().map(|(index, option)| {
+                    let number = tinted(
+                        option_number(index),
+                        ("number-highlight", index),
+                        open.highlighted == Some(index),
+                        (palette.faint, palette.on_accent_muted),
+                    );
+                    let item = option_row(item(index), number, option)
+                        .text_color(palette.muted)
+                        .on_click({
+                            let this = this.clone();
+                            move |_, _, cx| this.update(cx, |this, cx| this.apply(index, cx))
+                        });
+                    highlight(index, item)
+                }))
+                .child(running_footer(label, &palette))
+                .into_any_element(),
             Mode::Running { label, .. } => div()
                 .px(px(10.))
                 .py(px(8.))
@@ -1984,8 +2023,8 @@ fn fade_key(mode: &Mode) -> Option<&'static str> {
     }
 }
 
-/// `options` that aren't final yet, in the rows they will take, with
-/// `label` and a spinner below.
+/// `options` that aren't final yet, laid out as the running state shows
+/// them, with `label` and a spinner below, for measuring.
 fn previews(label: &SharedString, options: &[String], palette: &Palette) -> AnyElement {
     div()
         .w(RESULTS_WIDTH - PADDING * 2.)
@@ -1996,21 +2035,26 @@ fn previews(label: &SharedString, options: &[String], palette: &Palette) -> AnyE
             let number = option_number(index).text_color(palette.faint);
             option_row(div().id(("preview", index)), number, option).text_color(palette.muted)
         }))
-        .child(rule(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(8.))
-                .text_size(px(11.))
-                .text_color(palette.faint)
-                .whitespace_nowrap()
-                .child(crate::chat::spinner(palette))
-                .child(label.clone())
-                .child(div().ml(px(4.)).child("esc cancel")),
-            palette,
-        ))
+        .child(running_footer(label, palette))
         .into_any_element()
+}
+
+/// Below previews: the spinner with what is running, and the keys.
+fn running_footer(label: &SharedString, palette: &Palette) -> gpui::Div {
+    rule(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(8.))
+            .text_size(px(11.))
+            .text_color(palette.faint)
+            .whitespace_nowrap()
+            .child(crate::chat::spinner(palette))
+            .child(label.clone())
+            .child(div().ml(px(4.)).child("esc cancel")),
+        palette,
+    )
 }
 
 /// A row of the options, numbered.
@@ -2184,7 +2228,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn previews_are_read_only_and_final_replacement_is_one_undo(cx: &mut gpui::TestAppContext) {
+    fn a_preview_applies_as_one_undo_and_ends_the_call(cx: &mut gpui::TestAppContext) {
         let config = tempfile::tempdir().unwrap();
         cx.update(|cx| crate::app_settings::init(config.path().to_owned(), cx));
         let window = cx.add_window(|_, _| gpui::EmptyView);
@@ -2215,6 +2259,7 @@ mod tests {
             })
             .detach();
         });
+        let call = Arc::new(AtomicBool::new(false));
         cx.update(|cx| {
             editor.update(cx, |editor, cx| editor.select_range(3..9, cx));
             popover.update(cx, |popover, cx| {
@@ -2225,18 +2270,27 @@ mod tests {
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
-                        previews: vec!["friend\n".into()],
-                        _cancel: CancelOnDrop(Arc::new(AtomicBool::new(false))),
+                        previews: Vec::new(),
+                        _cancel: CancelOnDrop(call.clone()),
                         _task: Task::ready(()),
                     },
                 });
+                // Nothing to apply until a preview is complete.
                 assert_eq!(popover.item_count(), 0);
                 popover.move_highlight(1, cx);
                 popover.confirm(cx);
                 popover.apply(0, cx);
                 assert_eq!(popover.editor.read(cx).text(), "Hi there\n");
-                popover.set_mode(Mode::Results(vec!["friend\n".into()]), Some(0), cx);
+
+                popover.options_arrived(&call, vec!["friend\n".into()], false, cx);
+                assert_eq!(popover.item_count(), 1);
+                popover.move_highlight(1, cx);
                 popover.confirm(cx);
+                assert_eq!(popover.editor.read(cx).text(), "Hi friend\n");
+                assert!(call.load(Ordering::Relaxed), "applying ends the call");
+                // What the call sends after that is ignored.
+                popover.options_arrived(&call, vec!["pal\n".into()], true, cx);
+                assert!(popover.open.is_none());
                 assert_eq!(popover.editor.read(cx).text(), "Hi friend\n");
             });
             editor.update(cx, |editor, cx| {
