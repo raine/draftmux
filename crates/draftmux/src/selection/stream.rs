@@ -61,6 +61,8 @@ pub(super) struct Stream {
     replied: Option<Instant>,
     wrote: Option<Instant>,
     usage: Option<Usage>,
+    /// Thinking blocks started, over every reply.
+    thought: usize,
 }
 
 /// The tokens a reply took, as the agent reported them. Input that was
@@ -126,6 +128,12 @@ impl Stream {
         (self.replied, self.wrote)
     }
 
+    /// How many thinking blocks the replies had. Counted from their starts,
+    /// since Claude Code streams no thinking text.
+    pub fn thought(&self) -> usize {
+        self.thought
+    }
+
     /// The tokens of the last reply, once it has ended.
     pub fn usage(&self) -> Option<Usage> {
         self.usage
@@ -177,6 +185,13 @@ impl Stream {
     ) -> Result<(), String> {
         if self.settled {
             return Ok(());
+        }
+        let event = &frame["event"];
+        if frame["type"] == "stream_event"
+            && event["type"] == "content_block_start"
+            && event["content_block"]["type"] == "thinking"
+        {
+            self.thought += 1;
         }
         if frame["type"] == "result" {
             self.usage = Usage::read(
@@ -232,6 +247,7 @@ impl Stream {
                     Some("text_start") if !self.text.is_empty() => {
                         self.text("\n\n", preview)?;
                     }
+                    Some("thinking_start") => self.thought += 1,
                     Some("text_delta") => {
                         let text = delta["delta"]
                             .as_str()
@@ -553,6 +569,30 @@ mod tests {
             "cache_creation_input_tokens": 391, "output_tokens": 96});
         claude_send(&mut claude, result, &mut updates);
         assert_eq!(claude.usage(), Some(usage));
+    }
+
+    #[test]
+    fn thinking_is_counted_for_both_agents() {
+        let mut updates = Vec::new();
+        let mut pi = Stream::new(Agent::Pi, Format::default());
+        let thinking = json!({"type": "message_update",
+            "assistantMessageEvent": {"type": "thinking_start", "contentIndex": 0}});
+        let delta = json!({"type": "message_update",
+            "assistantMessageEvent": {"type": "thinking_delta", "delta": "hmm"}});
+        send(&mut pi, thinking.clone(), &mut updates);
+        send(&mut pi, delta, &mut updates);
+        send(&mut pi, thinking, &mut updates);
+        assert_eq!(pi.thought(), 2);
+
+        let mut claude = Stream::new(Agent::Claude, Format::default());
+        let thinking = json!({"type": "stream_event", "event": {"type": "content_block_start",
+            "content_block": {"type": "thinking", "thinking": ""}}});
+        let delta = json!({"type": "stream_event", "event": {"type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": ""}}});
+        claude_send(&mut claude, thinking, &mut updates);
+        claude_send(&mut claude, delta, &mut updates);
+        assert_eq!(claude.thought(), 1);
+        assert!(updates.is_empty());
     }
 
     #[test]

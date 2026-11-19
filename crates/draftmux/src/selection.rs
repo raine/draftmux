@@ -19,8 +19,9 @@
 //! text and the selection, and the agent answers with replacement options as
 //! JSON. Continuing the sentence at the cursor is the same call about an
 //! empty selection, answered with options or with plain text. Each call logs
-//! how long the agent took to start replying, to start its text and to
-//! finish.
+//! the model and thinking it asked for, how long the agent took to start
+//! replying, to start its text and to finish, how many thinking blocks the
+//! reply had and the tokens it took.
 
 use std::ffi::OsString;
 use std::ops::Range;
@@ -389,10 +390,12 @@ pub fn run(
     });
     drop(temp);
     eprintln!(
-        "{} draftmux: selection call on {} {}{}",
+        "{} draftmux: selection call on {} {} ({}); thinking blocks {}{}",
         crate::diagnostics::timestamp(),
         agent.name(),
         timings(sent, reused, stream.timings(), &output),
+        settings(agent, config),
+        stream.thought(),
         stream
             .usage()
             .map(|usage| format!(
@@ -411,6 +414,20 @@ pub fn run(
         preview(Vec::new());
     }
     result
+}
+
+/// The model and thinking a call on `agent` asked for. Without a model of
+/// its own a call continues on the session's; without a thinking level pi
+/// restores the session's and Claude Code uses the model's default.
+fn settings(agent: Agent, config: &SelectionConfig) -> String {
+    let model = config.model.as_deref().unwrap_or("of the session");
+    let thinking = match (&config.effort, config.thinking, agent) {
+        (Some(effort), _, _) => format!("effort {effort}"),
+        (None, Some(thinking), _) => format!("thinking {}", thinking.as_str()),
+        (None, None, Agent::Pi) => "thinking of the session".to_owned(),
+        (None, None, Agent::Claude) => "default effort".to_owned(),
+    };
+    format!("model {model}, {thinking}")
 }
 
 /// How a call went, from sending the prompt at `sent`: when the reply
