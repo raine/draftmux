@@ -410,7 +410,7 @@ mod tests {
     /// A catalog the size of a real profile: 120 models over 6 providers.
     fn catalog() -> Vec<ModelRef> {
         let providers = [
-            "portkey",
+            "openrouter",
             "anthropic",
             "openai",
             "google",
@@ -453,7 +453,7 @@ mod tests {
                 "google",
                 "minimax",
                 "openai",
-                "portkey"
+                "openrouter"
             ]
         );
         assert_eq!(rows[1], Row::Model(ModelRef::new("anthropic", "model-001")));
@@ -463,17 +463,20 @@ mod tests {
     fn every_word_must_match_and_empty_groups_go() {
         let list = [
             ModelRef::new("anthropic", "claude-opus-5-5"),
-            ModelRef::new("portkey", "claude-opus-5-5"),
-            ModelRef::new("portkey", "claude-sonnet-5-5"),
+            ModelRef::new("openrouter", "claude-opus-5-5"),
+            ModelRef::new("openrouter", "claude-sonnet-5-5"),
             ModelRef::new("openai", "gpt-6"),
         ];
         assert_eq!(
             models(&filter_rows(&list, "OPUS")),
-            ["anthropic/claude-opus-5-5", "portkey/claude-opus-5-5"]
+            ["anthropic/claude-opus-5-5", "openrouter/claude-opus-5-5"]
         );
         assert_eq!(
-            filter_rows(&list, "port opus"),
-            [Row::Provider("portkey".into()), Row::Model(list[1].clone())]
+            filter_rows(&list, "router opus"),
+            [
+                Row::Provider("openrouter".into()),
+                Row::Model(list[1].clone())
+            ]
         );
         assert!(filter_rows(&list, "gemini").is_empty());
     }

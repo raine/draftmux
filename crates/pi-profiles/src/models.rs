@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 
 /// A model as pi names it: provider and model ID, compared exactly. IDs
-/// differ between profiles (`anthropic/…` and `portkey/…` for one model).
+/// differ between profiles (`anthropic/…` and `openrouter/…` for one model).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModelRef {
     pub provider: String,
@@ -195,7 +195,7 @@ openai-codex  gpt-5.5                                  400K     128K     yes    
     #[test]
     fn availability_needs_a_loaded_list() {
         let opus = ModelRef::new("anthropic", "claude-opus-5-5");
-        let list = [ModelRef::new("portkey", "claude-opus-5-5")];
+        let list = [ModelRef::new("openrouter", "claude-opus-5-5")];
         assert_eq!(availability(None, &opus), Availability::Unknown);
         assert_eq!(availability(Some(&list), &opus), Availability::Missing);
         assert_eq!(availability(Some(&list), &list[0]), Availability::Available);

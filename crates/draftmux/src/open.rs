@@ -1269,7 +1269,7 @@ cat > /dev/null
             command
         };
         let settings = drafting_on(ModelOverride {
-            provider: "portkey".into(),
+            provider: "openrouter".into(),
             model_id: "missing".into(),
             thinking: ThinkingLevel::High,
         });
