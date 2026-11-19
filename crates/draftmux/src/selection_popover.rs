@@ -710,7 +710,7 @@ impl SelectionPopover {
             })
             .child(child)
             // After the text, so they're placed with its current layout.
-            .when(popover.has_requests(), |pane| {
+            .when(!popover.parked.is_empty(), |pane| {
                 pane.child(badges(this, preview, cx))
             })
             // Before the panel opens, a hidden copy of its content in the
@@ -2582,19 +2582,20 @@ fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
     a == b || (a.start < b.end && b.start < a.end)
 }
 
-/// The badges of the editor's requests in its left margin, beside each
-/// passage's first row that another badge hasn't taken. A click reopens a
-/// request's options, or parks them again.
+/// The badges of the parked requests that show in the editor's pane, or
+/// with `preview` the preview's, in its left margin beside each passage's
+/// first row that another badge hasn't taken. The request the popover shows
+/// has none: the popover tells how it's doing. A click reopens a request's
+/// options.
 fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
     let popover = this.read(cx);
     let palette = *theme::palette(cx);
-    let shown = popover.open.iter().filter(|open| open.tracked.is_some());
-    let items = shown
-        .map(|open| (open, true))
-        .chain(popover.parked.iter().map(|open| (open, false)))
+    let items = popover
+        .parked
+        .iter()
         .enumerate()
-        .filter(|(_, (open, _))| popover.shows_in_preview(open) == preview)
-        .filter_map(|(index, (open, engaged))| {
+        .filter(|(_, open)| popover.shows_in_preview(open) == preview)
+        .filter_map(|(index, open)| {
             let id = open.tracked?;
             let status = Status::of(&open.mode);
             let badge = div()
@@ -2605,10 +2606,7 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
                 .justify_center()
                 .rounded(px(5.))
                 .occlude()
-                .when(engaged, |badge| badge.bg(palette.accent.opacity(0.18)))
-                .when(!engaged, |badge| {
-                    badge.hover(|style| style.bg(palette.hover))
-                })
+                .hover(|style| style.bg(palette.hover))
                 .child(match status {
                     Status::Running => crate::chat::spinner(&palette).into_any_element(),
                     Status::Ready => div()
@@ -2627,13 +2625,7 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
                     let this = this.clone();
                     move |_, _, cx| {
                         cx.stop_propagation();
-                        this.update(cx, |this, cx| {
-                            if engaged {
-                                this.dismiss(cx);
-                            } else {
-                                this.engage(id, cx);
-                            }
-                        });
+                        this.update(cx, |this, cx| this.engage(id, cx));
                     }
                 });
             Some((id, badge.into_any_element()))
