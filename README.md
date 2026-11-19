@@ -68,6 +68,15 @@ brew install --cask raine/draftmux/draftmux
 
 Draftmux keeps itself up to date either way.
 
+To install from the disk image instead, download the `.dmg` from the
+[latest release](https://github.com/raine/draftmux/releases/latest) and drag
+Draftmux into Applications. The disk image doesn't install the `draftmux`
+command that the Pi and Claude Code skills run: open Draftmux from
+Applications and choose **Draftmux › Install Command Line Tool…**, which the
+first launch also offers. It links the command into `/usr/local/bin`, which
+is on the PATH by default, and asks for an administrator password when that
+folder isn't writable.
+
 ### Linux
 
 Runs on x86_64 and arm64 with glibc 2.35 or later, such as Ubuntu 22.04 or

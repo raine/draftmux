@@ -148,6 +148,18 @@ impl ShellEnv {
         })
     }
 
+    /// The first executable file called `name` on the captured `PATH`,
+    /// with symlinks unresolved.
+    pub fn find(&self, name: &str) -> Option<PathBuf> {
+        find_executable(&[name], get(&self.vars, "PATH").map(OsString::as_os_str))
+    }
+
+    /// Why the login shell couldn't be read, when the app's own environment
+    /// with common install directories added to `PATH` stands in for it.
+    pub fn capture_error(&self) -> Option<&str> {
+        self.capture_error.as_deref()
+    }
+
     /// The captured variables, for a process that builds its own
     /// environment from them.
     pub fn vars(&self) -> &[(OsString, OsString)] {

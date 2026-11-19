@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- New: Draftmux › Install Command Line Tool… links the `draftmux` command
+  into `/usr/local/bin` for a Draftmux.app installed from the disk image, so
+  the Pi and Claude Code skills can run it. The first launch from
+  Applications offers it. It asks for an administrator password when the
+  folder isn't writable and never replaces a file that isn't Draftmux's
+  command.
 - Fix: Claude Code drafts keep following the `CLAUDE.md` files and
   `.claude/rules` of the session they continue. Claude Code told the agent
   these no longer applied, so it dropped them, at the latest after the agent

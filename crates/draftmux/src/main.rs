@@ -9,6 +9,8 @@ mod changes;
 mod chat;
 mod chat_model;
 mod chrome;
+#[cfg(target_os = "macos")]
+mod cli_setup;
 mod copy;
 mod diagnostics;
 mod drafts;
@@ -141,6 +143,8 @@ fn run_app() -> Result<()> {
         ipc::Claim::Taken => return ipc::activate_running(),
     };
     let data_dir = draftmux_storage::data_dir()?;
+    #[cfg(target_os = "macos")]
+    let cli_setup_dir = data_dir.clone();
     // Before the log takes over stderr from a console that goes away.
     #[cfg(windows)]
     platform::release_console();
@@ -173,15 +177,23 @@ fn run_app() -> Result<()> {
         help_window::init(cx);
         update::init(cx);
         cx.bind_keys([KeyBinding::new(editor::secondary!("q"), Quit, None)]);
+        let mut app_menu = vec![
+            MenuItem::action("About Draftmux", about_window::OpenAbout),
+            MenuItem::separator(),
+            MenuItem::action("Check for Updates…", update::CheckForUpdates),
+            MenuItem::action("Settings…", settings_window::OpenSettings),
+        ];
+        #[cfg(target_os = "macos")]
+        app_menu.push(MenuItem::action(
+            "Install Command Line Tool…",
+            cli_setup::InstallCommandLineTool,
+        ));
+        app_menu.extend([
+            MenuItem::separator(),
+            MenuItem::action("Quit Draftmux", Quit),
+        ]);
         cx.set_menus([
-            Menu::new("Draftmux").items([
-                MenuItem::action("About Draftmux", about_window::OpenAbout),
-                MenuItem::separator(),
-                MenuItem::action("Check for Updates…", update::CheckForUpdates),
-                MenuItem::action("Settings…", settings_window::OpenSettings),
-                MenuItem::separator(),
-                MenuItem::action("Quit Draftmux", Quit),
-            ]),
+            Menu::new("Draftmux").items(app_menu),
             Menu::new("Edit").items([
                 MenuItem::action("Undo", editor::Undo),
                 MenuItem::action("Redo", editor::Redo),
@@ -230,6 +242,8 @@ fn run_app() -> Result<()> {
                 cx.quit();
             }
         });
+        #[cfg(target_os = "macos")]
+        cli_setup::init(window.into(), &cli_setup_dir, cx);
         server.serve(window, cx);
         cx.activate(true);
     });
