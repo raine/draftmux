@@ -131,7 +131,12 @@ impl Action {
     fn instruction(&self) -> &str {
         match self {
             Action::Alternatives => {
-                "Suggest alternative phrasings that preserve the meaning and fit the surrounding text."
+                "Suggest alternatives for it that fit the surrounding text, ranging from close to far. \
+                 The first keeps the meaning and changes only the wording. Each later one departs \
+                 further and does the passage's job in the draft another way: a different angle, \
+                 emphasis, structure or level of detail, or a different thing to say at that point, \
+                 drawn from the draft and this conversation. Don't offer several rewordings of the \
+                 same sentence, and don't contradict the draft or make up facts."
             }
             Action::Instruction(text) => text,
             Action::Continue { .. } => "",

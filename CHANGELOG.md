@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- UX: Alternatives now range from a close rewording to options that make the
+  point another way or say something different at that spot, instead of
+  several rewordings of the same sentence.
 - UX: Alternatives, selection actions and continuations answer faster:
   - Click an alternative or press its number as soon as it appears, without
     waiting for the rest.
