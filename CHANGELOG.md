@@ -2,27 +2,25 @@
 
 ## Unreleased
 
-- Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
-  again while it's in front no longer opens a second copy of the window.
-- UX: An alternative can be applied as soon as it appears, by clicking it or
-  pressing its number, without waiting for the rest; applying it stops the
-  request.
-- UX: Alternatives and other selection actions answer sooner: the agent
-  starts loading the conversation when the selection popover opens rather
-  than when you pick an action. Each call logs its timings to
-  `draftmux.log`.
-- UX: In pi drafts on Claude models, alternatives and continuations reuse the
-  conversation cached by the previous one, so each request within an hour of
-  the last skips reprocessing the conversation.
-- UX: In Claude Code drafts, alternatives and continuations reuse the
-  conversation cached by the previous one instead of reprocessing it every
-  time.
-- Fix: Claude Code drafts work when Claude Code logs in through
-  `settings.json`, such as a gateway's `ANTHROPIC_BASE_URL` with an
-  `apiKeyHelper`. They failed with "Not logged in".
+- UX: Alternatives, selection actions and continuations answer faster:
+  - Click an alternative or press its number as soon as it appears, without
+    waiting for the rest.
+  - The agent starts loading the conversation when the selection popover
+    opens, before you pick an action.
+  - On long conversations, requests after the first are much quicker: the
+    conversation is read from the model provider's cache instead of being
+    processed again. This works in Claude Code drafts and in pi drafts on
+    Claude models, where the cache now lasts an hour instead of five
+    minutes.
+  - Each request logs how long it took to `draftmux.log`.
+- Fix: Claude Code drafts no longer fail with "Not logged in" when Claude Code
+  signs in through its `settings.json`, for example through a company API
+  gateway with an `apiKeyHelper`.
 - Fix: In Claude Code drafts, alternatives, selection actions and
   continuations now use the effort chosen in the chat, unless a separate
   selection model is set.
+- Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
+  again while it's in front no longer opens a second copy of the window.
 
 ## v0.4.0 (2026-11-19)
 
