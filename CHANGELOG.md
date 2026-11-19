@@ -12,6 +12,10 @@
   `.claude/rules` of the session they continue. Claude Code told the agent
   these no longer applied, so it dropped them, at the latest after the agent
   restarted on going idle or switching drafts.
+- UX: The selection popover shows alternatives and action results formatted,
+  with bold, italics, code and links instead of their Markdown markers. Text
+  from a hard-wrapped passage flows as one paragraph instead of breaking
+  mid-line with its indent showing.
 - UX: Alternatives now range from a close rewording to options that make the
   point another way or say something different at that spot, instead of
   several rewordings of the same sentence.

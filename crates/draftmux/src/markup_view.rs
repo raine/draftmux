@@ -880,6 +880,22 @@ pub fn render(
     root(style).id(id).children(blocks).into_any_element()
 }
 
+/// [`render`] with the text in its parent's color, for a body on a surface
+/// whose text color changes, such as a highlighted row. Bullets, links and
+/// other marks keep the style's colors.
+pub fn render_in_parent_color(
+    doc: &Document,
+    style: &MarkupStyle,
+    id: impl Into<ElementId>,
+) -> AnyElement {
+    let mut renderer = Renderer::new(style, None);
+    let blocks = renderer.body(doc);
+    uncolored_root(style)
+        .id(id)
+        .children(blocks)
+        .into_any_element()
+}
+
 /// The text [`render`] draws for `doc`: each text's path in the
 /// document's [`SourceMap`] and its segments, with any redline marks.
 #[cfg(any(test, feature = "capture"))]
@@ -1178,13 +1194,16 @@ fn reveal(
 
 /// The body's container, in the style's text settings.
 fn root(style: &MarkupStyle) -> Div {
+    uncolored_root(style).text_color(style.text_color)
+}
+
+fn uncolored_root(style: &MarkupStyle) -> Div {
     div()
         .w_full()
         .min_w_0()
         .font_family(style.font_family.clone())
         .text_size(style.text_size)
         .line_height(relative(style.line_height))
-        .text_color(style.text_color)
 }
 
 /// Parses `text` for previewing it on `target`. With [`style`], the one

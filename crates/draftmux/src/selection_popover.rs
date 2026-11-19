@@ -48,7 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use draftmux_storage::{Backend, Draft, Store};
+use draftmux_storage::{Backend, Draft, Store, Target};
 use editor::{Editor, EditorEvent, EditorStyle};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyWindowHandle, App, Bounds, Context, Div,
@@ -65,6 +65,7 @@ use shell_env::ShellEnv;
 
 use crate::app_settings::AppSettings;
 use crate::assets::{COMMENT_ICON, SEND_ICON};
+use crate::markup_view::{self, MarkupStyle};
 use crate::resources;
 use crate::selectable::TextSelection;
 use crate::selection::{
@@ -1024,6 +1025,13 @@ impl SelectionPopover {
         }
     }
 
+    /// The format of the current draft, which its options are shown in.
+    fn target(&self) -> Target {
+        self.draft
+            .as_ref()
+            .map_or(Target::Github, |draft| draft.meta.target)
+    }
+
     /// The agent a call on the current draft runs on, the draft's working
     /// directory and the call's settings.
     fn backend(&self, cx: &App) -> Result<(SelectionBackend, PathBuf, SelectionConfig), String> {
@@ -1668,7 +1676,7 @@ impl SelectionPopover {
         else {
             return None;
         };
-        Some(previews(label, &staged.options, theme::palette(cx)))
+        Some(previews(label, &staged.options, self.target(), cx))
     }
 
     /// Called by the panel after layout with the content's natural size.
@@ -1693,6 +1701,7 @@ impl SelectionPopover {
             return div().into_any_element();
         };
         let palette = *theme::palette(cx);
+        let (target, dark) = (self.target(), theme::get(cx).dark);
         let item = |index: usize| {
             div()
                 .id(("item", index))
@@ -1939,7 +1948,13 @@ impl SelectionPopover {
                         open.highlighted == Some(index),
                         (palette.faint, palette.on_accent_muted),
                     );
-                    let item = option_row(item(index), number, option)
+                    let marks = if open.highlighted == Some(index) {
+                        palette.on_accent
+                    } else {
+                        palette.muted
+                    };
+                    let text = option_text(target, option, index, marks, dark);
+                    let item = option_row(item(index), number, text)
                         .text_color(palette.muted)
                         .on_click({
                             let this = this.clone();
@@ -1978,7 +1993,13 @@ impl SelectionPopover {
                             open.highlighted == Some(index),
                             (palette.faint, palette.on_accent_muted),
                         );
-                        let item = option_row(item(index), number, option).on_click({
+                        let marks = if open.highlighted == Some(index) {
+                            palette.on_accent
+                        } else {
+                            palette.text
+                        };
+                        let text = option_text(target, option, index, marks, dark);
+                        let item = option_row(item(index), number, text).on_click({
                             let this = this.clone();
                             move |_, _, cx| this.update(cx, |this, cx| this.apply(index, cx))
                         });
@@ -2025,7 +2046,9 @@ fn fade_key(mode: &Mode) -> Option<&'static str> {
 
 /// `options` that aren't final yet, laid out as the running state shows
 /// them, with `label` and a spinner below, for measuring.
-fn previews(label: &SharedString, options: &[String], palette: &Palette) -> AnyElement {
+fn previews(label: &SharedString, options: &[String], target: Target, cx: &App) -> AnyElement {
+    let palette = theme::palette(cx);
+    let dark = theme::get(cx).dark;
     div()
         .w(RESULTS_WIDTH - PADDING * 2.)
         .flex()
@@ -2033,7 +2056,8 @@ fn previews(label: &SharedString, options: &[String], palette: &Palette) -> AnyE
         .gap(px(2.))
         .children(options.iter().enumerate().map(|(index, option)| {
             let number = option_number(index).text_color(palette.faint);
-            option_row(div().id(("preview", index)), number, option).text_color(palette.muted)
+            let text = option_text(target, option, index, palette.muted, dark);
+            option_row(div().id(("preview", index)), number, text).text_color(palette.muted)
         }))
         .child(running_footer(label, palette))
         .into_any_element()
@@ -2058,14 +2082,54 @@ fn running_footer(label: &SharedString, palette: &Palette) -> gpui::Div {
 }
 
 /// A row of the options, numbered.
-fn option_row(row: Stateful<Div>, number: impl IntoElement, option: &str) -> Stateful<Div> {
+fn option_row(row: Stateful<Div>, number: impl IntoElement, text: AnyElement) -> Stateful<Div> {
     row.flex()
         .gap(px(8.))
         .px(px(8.))
         .py(px(7.))
         .line_height(px(19.))
         .child(number)
-        .child(div().flex_1().min_w_0().child(option.trim().to_string()))
+        .child(div().flex_1().min_w_0().child(text))
+}
+
+/// An option formatted as the draft's target shows it, in the row's text
+/// color: lines wrapped in the source flow as one paragraph, and bullets
+/// and links take `marks`.
+fn option_text(target: Target, option: &str, index: usize, marks: Hsla, dark: bool) -> AnyElement {
+    let document = option_document(target, option);
+    markup_view::render_in_parent_color(&document, &option_style(marks, dark), ("text", index))
+}
+
+/// An option parsed in the draft's format. Markdown joins the lines of a
+/// paragraph, which an option keeps from a hard-wrapped selection.
+fn option_document(target: Target, option: &str) -> markup::Document {
+    let option = option.trim();
+    match target {
+        Target::Github | Target::GithubFile | Target::Rich => markup::github::parse_file(option),
+        Target::Slack => markup::slack::parse(option),
+        Target::Plain => markup::plain::parse(option),
+    }
+}
+
+/// Markdown at the popover's text size and line height, its blocks spaced
+/// for a row.
+fn option_style(marks: Hsla, dark: bool) -> MarkupStyle {
+    let mut style = MarkupStyle::github(dark);
+    style.text_size = px(13.);
+    style.line_height = 19. / 13.;
+    style.text_color = marks;
+    style.link_color = marks;
+    style.link_underline = true;
+    style.heading_scale = [1.; 6];
+    style.heading_rule_max_level = 0;
+    style.heading_gap = px(6.);
+    style.block_gap = px(6.);
+    style.text_gap = px(6.);
+    style.list_indent = px(18.);
+    style.bullet.left = px(6.);
+    style.bullet.top = px(7.);
+    style.code_padding = px(6.);
+    style
 }
 
 fn option_number(index: usize) -> Div {
@@ -2225,6 +2289,24 @@ fn measured(content: AnyElement, report: impl Fn(Size<Pixels>, &mut App) + 'stat
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn options_show_formatted_with_wrapped_lines_joined() {
+        let document = super::option_document(
+            draftmux_storage::Target::Github,
+            "The editor keeps **its colors**\n  while the agent edits.\n",
+        );
+        let [markup::Block::Paragraph(spans)] = document.blocks.as_slice() else {
+            panic!("expected one paragraph: {document:?}");
+        };
+        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(text, "The editor keeps its colors while the agent edits.");
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style.strong && span.text == "its colors")
+        );
+    }
+
     use super::*;
 
     #[gpui::test]
