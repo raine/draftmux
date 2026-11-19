@@ -41,11 +41,11 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Select text", "Rewrite it with an action or a comment"),
             (
                 "esc",
-                "Leave the options for later; its badge brings them back",
+                "Leave options still coming for later; a badge brings them",
             ),
             (
                 editor::by_platform!("⌥↓  ⌥↑", "Alt+Down  Alt+Up"),
-                "Next or previous options left for later",
+                "Next or previous options waiting",
             ),
             (
                 editor::by_platform!("⌘⌫", "Ctrl+Backspace"),

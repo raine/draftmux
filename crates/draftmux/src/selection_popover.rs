@@ -40,19 +40,19 @@
 //! ghost, which goes when focus leaves the editor but stays while the app is
 //! inactive. Starting either ends the other.
 //!
-//! An action's call and its options outlive the popover. Dismissing the
-//! popover while a call runs or its options wait parks it as a request on
-//! its passage, which the editor keeps as the text changes (see
-//! [`Editor::track`]): edits elsewhere move it, and an edit that touches it
-//! discards it with its call, since the options were written for the old
-//! wording. Several requests run at once. Each shows as a tint on its
-//! passage and a badge in the editor's left margin, a spinner while its call
-//! runs; the badge, or `⌥↓` and `⌥↑`, reopen its options in the popover, and
-//! `⌘⌫` discards the one shown. A new request on text a request covers
-//! replaces it. The preview marks the passages too, and a click on one there
-//! reopens its options. A request's badge and
-//! options stay in the pane it was made in, the editor's or the preview's,
-//! and move to the other while that one is hidden.
+//! An action's call outlives the popover. Dismissing the popover while the
+//! call runs parks it as a request on its passage, which the editor keeps as
+//! the text changes (see [`Editor::track`]): edits elsewhere move it, and an
+//! edit that touches it discards it with its call, since the options were
+//! written for the old wording. Several requests run at once. Each shows as
+//! a tint on its passage and a badge in the left margin, a spinner while its
+//! call runs and a dot once its options wait; the badge, a click on the
+//! passage in the preview, or `⌥↓` and `⌥↑` reopen its options in the
+//! popover. Finished options are kept only until they're shown: dismissing
+//! them then discards the request, as `⌘⌫` does at any time. A new request
+//! on text a request covers replaces it. A request's badge and options stay
+//! in the pane it was made in, the editor's or the preview's, and move to
+//! the other while that one is hidden.
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -909,23 +909,31 @@ impl SelectionPopover {
         }
     }
 
-    /// Keeps `open` on its passage if it's a request whose call runs or
-    /// whose options wait; anything else goes, a failure once it was seen.
+    /// Keeps `open` on its passage if it's a request whose call still runs,
+    /// or whose options came in but weren't shown; anything else goes,
+    /// options and failures that were seen included.
     fn park(&mut self, mut open: Open, cx: &mut Context<Self>) {
         let Some(id) = open.tracked else { return };
-        // Options held back for the panel's size are the request's now.
+        // Options held back for the panel's size are the request's now, and
+        // weren't seen yet.
+        let mut unseen = false;
         if let Some(staged) = self.staged.take() {
             match &mut open.mode {
-                _ if staged.done => open.mode = Mode::Results(staged.options),
+                _ if staged.done => {
+                    open.mode = Mode::Results(staged.options);
+                    unseen = true;
+                }
                 Mode::Running { previews, .. } => *previews = staged.options,
                 _ => {}
             }
         }
+        // Finished options that were shown were passed over.
         let keep = matches!(open.mode, Mode::Running { .. })
-            || open
-                .mode
-                .options()
-                .is_some_and(|options| !options.is_empty());
+            || unseen
+                && open
+                    .mode
+                    .options()
+                    .is_some_and(|options| !options.is_empty());
         if !keep {
             self.editor.update(cx, |editor, cx| editor.untrack(id, cx));
             return;
@@ -2424,10 +2432,7 @@ impl SelectionPopover {
                         });
                         highlight(index, item)
                     }))
-                    .child(footer(
-                        &[keys.as_str(), "↑↓ move", "esc later", DISCARD_HINT],
-                        &palette,
-                    ))
+                    .child(footer(&[keys.as_str(), "↑↓ move", "esc close"], &palette))
                     .into_any_element()
             }
             Mode::Error(message) => div()
@@ -3663,13 +3668,18 @@ mod tests {
             editor.update(cx, |editor, cx| editor.select_range(4..7, cx));
             popover.update(cx, |popover, cx| {
                 running(popover, 4..7, &call, cx);
-                popover.request_done(&call, Ok(vec!["2".into()]), cx);
             });
         });
         cx.run_until_parked();
-        // Escape parks it, and the caret goes on to the next line.
+        // Escape parks it while it runs, and the caret goes on to the next
+        // line; its options come in meanwhile.
         cx.simulate_keystrokes("escape");
-        cx.update(|_, cx| editor.update(cx, |editor, cx| editor.select_range(16..16, cx)));
+        cx.update(|_, cx| {
+            editor.update(cx, |editor, cx| editor.select_range(16..16, cx));
+            popover.update(cx, |popover, cx| {
+                popover.request_done(&call, Ok(vec!["2".into()]), cx)
+            });
+        });
         cx.run_until_parked();
         let id = popover.read_with(cx, |popover, _| {
             assert!(popover.open.is_none());
@@ -3696,17 +3706,22 @@ mod tests {
         // The click went to the badge, not the editor's caret.
         assert_eq!(editor.read_with(cx, |e, _| e.selected_range()), 16..16);
         // A press in the preview leaves them, though the editor's selection
-        // stays as it was.
+        // stays as it was, and options seen and left behind are discarded.
         let preview = popover.read_with(cx, |popover, _| popover.preview.clone());
         cx.update(|_, cx| preview.update(cx, |_, cx| cx.emit(SelectionStarted { adding: false })));
         cx.run_until_parked();
         assert!(popover.read_with(cx, |p, _| p.open.is_none()));
-        cx.simulate_keystrokes("alt-up");
-        cx.run_until_parked();
-        assert!(popover.read_with(cx, |p, _| p.open.is_some()));
+        assert!(!popover.read_with(cx, |p, _| p.has_requests()));
+        // Another, parked while running, comes back with ⌥↑ once done.
+        let again = Arc::new(AtomicBool::new(false));
+        cx.update(|_, cx| popover.update(cx, |popover, cx| running(popover, 4..7, &again, cx)));
         cx.simulate_keystrokes("escape");
+        cx.update(|_, cx| {
+            popover.update(cx, |popover, cx| {
+                popover.request_done(&again, Ok(vec!["2".into()]), cx)
+            })
+        });
         cx.run_until_parked();
-        assert!(popover.read_with(cx, |p, _| p.open.is_none()));
         cx.simulate_keystrokes("alt-up");
         cx.run_until_parked();
         assert!(popover.read_with(cx, |p, _| p.open.is_some()));
