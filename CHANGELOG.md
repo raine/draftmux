@@ -2,52 +2,35 @@
 
 ## Unreleased
 
-- New: Draftmux › Install Command Line Tool… links the `draftmux` command
-  into `/usr/local/bin` for a Draftmux.app installed from the disk image, so
-  the Pi and Claude Code skills can run it. The first launch from
-  Applications offers it. It asks for an administrator password when the
-  folder isn't writable and never replaces a file that isn't Draftmux's
-  command.
-- New: Alternatives and selection actions no longer stop when the popover
-  closes before they're ready. `Esc` leaves them for later while you edit
-  elsewhere: the passage stays marked, with a badge in the margin that brings
-  the options back once they're in, as do a click on the passage, `⌥↓` and
-  `⌥↑`. Several can run at once. Options you've seen go when you close them,
-  unless `⇥` keeps them; `⌘⌫` discards them sooner, and editing the passage
-  drops them.
-- Fix: Claude Code drafts keep following the `CLAUDE.md` files and
-  `.claude/rules` of the session they continue. Claude Code told the agent
-  these no longer applied, so it dropped them, at the latest after the agent
-  restarted on going idle or switching drafts.
-- Fix: A continuation typed right after an opening `**`, `_`, backtick, quote
-  or bracket starts right after it instead of after a space, so bold or code
-  you've just opened doesn't break.
-- UX: The selection popover shows alternatives and action results formatted,
-  with bold, italics, code and links instead of their Markdown markers. Text
-  from a hard-wrapped passage flows as one paragraph instead of breaking
-  mid-line with its indent showing.
-- UX: Alternatives now range from a close rewording to options that make the
-  point another way or say something different at that spot, instead of
-  several rewordings of the same sentence.
-- UX: Alternatives, selection actions and continuations answer faster:
-  - Click an alternative or press its number as soon as it appears, without
-    waiting for the rest.
-  - The agent starts loading the conversation when the selection popover
-    opens, before you pick an action.
-  - On long conversations, requests after the first are much quicker: the
-    conversation is read from the model provider's cache instead of being
-    processed again. This works in Claude Code drafts and in pi drafts on
-    Claude models, where the cache now lasts an hour instead of five
-    minutes.
-  - Each request logs how long it took to `draftmux.log`.
+- New: Alternatives and selection actions keep running when you close the
+  popover. `Esc` leaves them for later: the passage stays marked, and its badge
+  in the margin, a click on it, `⌥↓` or `⌥↑` brings the options back. Seen
+  options go when closed unless `⇥` keeps them; `⌘⌫` or editing the passage
+  discards them.
+- New: Draftmux › Install Command Line Tool… puts the `draftmux` command on
+  your PATH when you installed from the disk image, so the Pi and Claude Code
+  skills can run it. The first launch from Applications offers it.
+- Fix: Claude Code drafts no longer stop following the session's `CLAUDE.md`
+  files and `.claude/rules`.
 - Fix: Claude Code drafts no longer fail with "Not logged in" when Claude Code
   signs in through its `settings.json`, for example through a company API
   gateway with an `apiKeyHelper`.
-- Fix: In Claude Code drafts, alternatives, selection actions and
-  continuations now use the effort chosen in the chat, unless a separate
-  selection model is set.
+- Fix: In Claude Code drafts, alternatives, selection actions and continuations
+  now use the effort chosen in the chat, unless a separate selection model is
+  set.
+- Fix: A continuation typed right after an opening `**`, `_`, backtick, quote or
+  bracket starts right after it instead of after a space
 - Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
   again while it's in front no longer opens a second copy of the window.
+- UX: Alternatives, selection actions and continuations answer faster:
+  - Pick an alternative as soon as it appears.
+  - The agent starts loading when the popover opens.
+  - On long conversations, later requests reuse the model provider's cache
+    (Claude Code drafts, and pi drafts on Claude models).
+- UX: Alternatives are more varied. The first is a close rewording, and the rest
+  try different ways of making the point or say something else there.
+- UX: Alternatives and action results show formatted text instead of Markdown
+  markers, and hard-wrapped text reads as one paragraph.
 
 ## v0.4.0 (2026-11-19)
 
