@@ -2638,8 +2638,16 @@ fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
                 })
                 .on_mouse_down(gpui::MouseButton::Left, {
                     let this = this.clone();
-                    move |_, _, cx| {
+                    // The pane takes the keys, as a click in it would, so
+                    // the popover's keys reach the options.
+                    let pane = if preview {
+                        popover.preview.focus_handle(cx)
+                    } else {
+                        popover.editor.focus_handle(cx)
+                    };
+                    move |_, window, cx| {
                         cx.stop_propagation();
+                        window.focus(&pane, cx);
                         this.update(cx, |this, cx| this.engage(id, cx));
                     }
                 });
@@ -3668,12 +3676,15 @@ mod tests {
                 row.center().y,
             )
         });
+        // Focus elsewhere, as in the chat, moves to the editor with it.
+        cx.update(|window, cx| window.blur(cx));
         cx.simulate_click(at, gpui::Modifiers::none());
         cx.run_until_parked();
         popover.read_with(cx, |popover, _| {
             let open = popover.open.as_ref().expect("reopened");
             assert!(open.reopened && open.tracked == Some(id));
         });
+        assert!(cx.update(|window, cx| editor.focus_handle(cx).is_focused(window)));
         // The click went to the badge, not the editor's caret.
         assert_eq!(editor.read_with(cx, |e, _| e.selected_range()), 16..16);
         cx.simulate_keystrokes("escape");
