@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
+  again while it's in front no longer opens a second copy of the window.
+
 ## v0.4.0 (2026-11-19)
 
 - New: `⌘↩` continues the sentence at the cursor, shown as faint text you take

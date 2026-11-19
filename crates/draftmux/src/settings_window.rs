@@ -56,9 +56,7 @@ impl Global for OpenWindow {}
 /// Opens the Settings window, or brings it to the front.
 pub fn open(cx: &mut App) {
     if let Some(handle) = cx.try_global::<OpenWindow>().map(|open| open.0)
-        && handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+        && crate::single_window::activate(handle, cx)
     {
         return;
     }

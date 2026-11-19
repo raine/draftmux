@@ -43,6 +43,7 @@ mod selection;
 mod selection_popover;
 mod settings_window;
 mod show;
+mod single_window;
 mod skill;
 mod source;
 mod source_map;

@@ -98,9 +98,7 @@ impl Global for OpenWindow {}
 
 pub fn open(cx: &mut App) {
     if let Some(handle) = cx.try_global::<OpenWindow>().map(|open| open.0)
-        && handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+        && crate::single_window::activate(handle, cx)
     {
         return;
     }
@@ -196,6 +194,24 @@ fn section(title: &str, rows: &[(&str, &str)], c: &Palette) -> gpui::Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn shortcut_inside_help_reuses_window(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(cx);
+            init(cx);
+            open(cx);
+        });
+        let handle = cx.update(|cx| cx.global::<OpenWindow>().0);
+        let mut window = gpui::VisualTestContext::from_window(handle.into(), cx);
+        window.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-/"
+        } else {
+            "ctrl-/"
+        });
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(cx.windows().len(), 1));
+    }
 
     #[gpui::test]
     fn reuses_open_window_and_closes_on_escape(cx: &mut gpui::TestAppContext) {
