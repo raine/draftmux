@@ -28,14 +28,10 @@ Status: early release; expect rough edges.
   text or plain text. Click a task list checkbox in the GitHub preview to tick
   it off in the Markdown.
 - **Selection actions.** Select text to get alternatives, Shorten or Tighten, or
-  your own actions. `Esc` before the options are ready leaves them for later
-  while you keep writing: the passage stays marked, and its badge in the
-  margin, a click on the passage, `⌥↓` or `⌥↑` bring them back once they're
-  in. Several can run at once. Options you've seen go when you close them,
-  unless `⇥` keeps them; `⌘⌫` discards them sooner, and editing the passage
-  drops them. With text selected, a chat message changes only that part. Hold
-  `⌘` while dragging to select more passages; a chat message then edits each
-  of them.
+  your own actions. Keep writing while they load, on several passages at once,
+  and come back to each when it's ready. With text selected, a chat message
+  changes only that part. Hold `⌘` while dragging to select more passages; a
+  chat message then edits each of them.
 - **Continue the sentence.** `⌘↩` asks the draft's agent to finish the sentence
   at the cursor and shows it as faint text: `⇥` takes it, `⌥→` takes a word,
   typing it keeps it going, and `Esc` drops it. `⌘⇧↩` offers several
