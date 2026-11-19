@@ -1612,6 +1612,7 @@ exit {status}
 
     /// The prompt the fake claude in `dir` got: the text of the one user
     /// message on its stdin.
+    #[cfg(unix)]
     fn claude_prompt(dir: &Path) -> String {
         let stdin = fs::read_to_string(dir.join("stdin")).unwrap();
         let mut lines = stdin.lines();
