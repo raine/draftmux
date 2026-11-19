@@ -60,6 +60,31 @@ pub(super) struct Stream {
     /// When the first reply started, and when its first text arrived.
     replied: Option<Instant>,
     wrote: Option<Instant>,
+    usage: Option<Usage>,
+}
+
+/// The tokens a reply took, as the agent reported them. Input that was
+/// neither read from nor written to the prompt cache is `input`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Usage {
+    pub input: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub output: u64,
+}
+
+impl Usage {
+    /// From `usage` with the agent's names for the counts: input, cache
+    /// read, cache write and output. `None` when it reports no input.
+    fn read(usage: &Value, [input, read, write, output]: [&str; 4]) -> Option<Self> {
+        let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+        usage[input].is_u64().then(|| Self {
+            input: count(input),
+            cache_read: count(read),
+            cache_write: count(write),
+            output: count(output),
+        })
+    }
 }
 
 impl Stream {
@@ -99,6 +124,11 @@ impl Stream {
     /// which tells waiting for the model from its thinking.
     pub fn timings(&self) -> (Option<Instant>, Option<Instant>) {
         (self.replied, self.wrote)
+    }
+
+    /// The tokens of the last reply, once it has ended.
+    pub fn usage(&self) -> Option<Usage> {
+        self.usage
     }
 
     /// The error the agent reported, if any, which says more than its exit
@@ -147,6 +177,17 @@ impl Stream {
     ) -> Result<(), String> {
         if self.settled {
             return Ok(());
+        }
+        if frame["type"] == "result" {
+            self.usage = Usage::read(
+                &frame["usage"],
+                [
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                    "output_tokens",
+                ],
+            );
         }
         match Reply::of(frame) {
             Reply::Message => self.reset(preview),
@@ -202,6 +243,10 @@ impl Stream {
             }
             Some("message_end") if event["message"]["role"] == "assistant" => {
                 let message = &event["message"];
+                self.usage = Usage::read(
+                    &message["usage"],
+                    ["input", "cacheRead", "cacheWrite", "output"],
+                );
                 let result = if message["stopReason"] == "stop" {
                     let text = message["content"]
                         .as_array()
@@ -483,6 +528,31 @@ mod tests {
 
     fn claude_result(text: &str) -> Value {
         json!({"type":"result","subtype":"success","is_error":false,"result":text,"stop_reason":"end_turn"})
+    }
+
+    #[test]
+    fn usage_comes_from_the_reply_s_end() {
+        let mut updates = Vec::new();
+        let mut pi = Stream::new(Agent::Pi, Format::default());
+        assert_eq!(pi.usage(), None);
+        let mut end = end(r#"{"alternatives":["a"]}"#, "stop");
+        end["message"]["usage"] =
+            json!({"input": 4, "output": 96, "cacheRead": 193973, "cacheWrite": 391});
+        send(&mut pi, end, &mut updates);
+        let usage = Usage {
+            input: 4,
+            cache_read: 193973,
+            cache_write: 391,
+            output: 96,
+        };
+        assert_eq!(pi.usage(), Some(usage));
+
+        let mut claude = Stream::new(Agent::Claude, Format::default());
+        let mut result = claude_result(r#"{"alternatives":["a"]}"#);
+        result["usage"] = json!({"input_tokens": 4, "cache_read_input_tokens": 193973,
+            "cache_creation_input_tokens": 391, "output_tokens": 96});
+        claude_send(&mut claude, result, &mut updates);
+        assert_eq!(claude.usage(), Some(usage));
     }
 
     #[test]

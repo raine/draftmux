@@ -389,10 +389,17 @@ pub fn run(
     });
     drop(temp);
     eprintln!(
-        "{} draftmux: selection call on {} {}",
+        "{} draftmux: selection call on {} {}{}",
         crate::diagnostics::timestamp(),
         agent.name(),
         timings(sent, reused, stream.timings(), &output),
+        stream
+            .usage()
+            .map(|usage| format!(
+                "; tokens: {} input, {} cache read, {} cache write, {} output",
+                usage.input, usage.cache_read, usage.cache_write, usage.output
+            ))
+            .unwrap_or_default(),
     );
     let result = match output {
         Ok(()) => stream.finish(),
