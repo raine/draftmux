@@ -47,6 +47,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 editor::by_platform!("⌥↓  ⌥↑", "Alt+Down  Alt+Up"),
                 "Next or previous options waiting",
             ),
+            ("⇥", "Keep the options shown for later"),
             (
                 editor::by_platform!("⌘⌫", "Ctrl+Backspace"),
                 "Discard the options shown",

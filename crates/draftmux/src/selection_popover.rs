@@ -47,9 +47,10 @@
 //! written for the old wording. Several requests run at once. Each shows as
 //! a tint on its passage and a badge in the left margin, a spinner while its
 //! call runs and a dot once its options wait; the badge, a click on the
-//! passage, or `⌥↓` and `⌥↑` reopen its options in the popover. Finished options are kept only until they're shown: dismissing
-//! them then discards the request, as `⌘⌫` does at any time. A new request
-//! on text a request covers replaces it. A request's badge and options stay
+//! passage, or `⌥↓` and `⌥↑` reopen its options in the popover. Finished
+//! options are kept only until they're shown: dismissing them then discards
+//! the request, as `⌘⌫` does at any time, unless `⇥` keeps them. A new
+//! request on text a request covers replaces it. A request's badge and options stay
 //! in the pane it was made in, the editor's or the preview's, and move to
 //! the other while that one is hidden.
 
@@ -99,6 +100,7 @@ actions!(
         ContinueSentence,
         ContinueOptions,
         NextRequest,
+        Keep,
         PreviousRequest,
         Discard
     ]
@@ -178,6 +180,7 @@ pub fn init(cx: &mut App) {
             Discard,
             request.as_deref(),
         ));
+        bindings.push(KeyBinding::new("tab", Keep, results.as_deref()));
         for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
             .into_iter()
             .enumerate()
@@ -319,6 +322,9 @@ struct Open {
     reopened: bool,
     /// The name of the action, for the edit history.
     action: SharedString,
+    /// Set aside with its options shown, to be parked rather than
+    /// discarded when the popover closes.
+    kept: bool,
     /// Made from a selection in the preview, where it then shows.
     from_preview: bool,
 }
@@ -333,6 +339,7 @@ impl Open {
             tracked: None,
             reopened: false,
             action: SharedString::default(),
+            kept: false,
             from_preview: false,
         }
     }
@@ -735,6 +742,10 @@ impl SelectionPopover {
                 let this = this.clone();
                 move |_: &Discard, _, cx| this.update(cx, |this, cx| this.discard(cx))
             })
+            .on_action({
+                let this = this.clone();
+                move |_: &Keep, _, cx| this.update(cx, |this, cx| this.keep(cx))
+            })
             .child(child)
             // After the text, so they're placed with its current layout.
             .child(badges(this, preview, cx))
@@ -930,9 +941,9 @@ impl SelectionPopover {
                 _ => {}
             }
         }
-        // Finished options that were shown were passed over.
+        // Finished options that were shown were passed over, unless kept.
         let keep = matches!(open.mode, Mode::Running { .. })
-            || unseen
+            || (unseen || open.kept)
                 && open
                     .mode
                     .options()
@@ -943,6 +954,7 @@ impl SelectionPopover {
         }
         open.reopened = true;
         open.highlighted = None;
+        open.kept = false;
         self.parked.push(open);
     }
 
@@ -989,6 +1001,16 @@ impl SelectionPopover {
             open.from_preview = from_preview;
         }
         cx.notify();
+    }
+
+    /// Closes the popover, parking the request it shows with its options
+    /// even once they've been seen.
+    fn keep(&mut self, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_mut().filter(|open| open.tracked.is_some()) else {
+            return;
+        };
+        open.kept = true;
+        self.dismiss(cx);
     }
 
     /// Discards the request the popover shows, ending its call.
@@ -2446,7 +2468,10 @@ impl SelectionPopover {
                         });
                         highlight(index, item)
                     }))
-                    .child(footer(&[keys.as_str(), "↑↓ move", "esc close"], &palette))
+                    .child(footer(
+                        &[keys.as_str(), "↑↓ move", "⇥ keep", "esc close"],
+                        &palette,
+                    ))
                     .into_any_element()
             }
             Mode::Error(message) => div()
@@ -3083,6 +3108,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
@@ -3294,6 +3320,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: None,
                     mode: Mode::Comment(field.clone()),
@@ -3369,6 +3396,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
@@ -3420,6 +3448,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
@@ -3479,6 +3508,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: Some(1),
                     mode: Mode::Results(vec!["a".into(), "b".into()]),
@@ -3852,8 +3882,19 @@ mod tests {
         popover.read_with(cx, |popover, _| {
             assert_eq!(popover.open.as_ref().unwrap().tracked, Some(ids[1]));
         });
+        // ⇥ keeps it though it was seen; closed after another look, it goes.
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+        popover.read_with(cx, |popover, _| {
+            assert!(popover.open.is_none());
+            assert_eq!(popover.parked.len(), 2);
+        });
+        cx.simulate_keystrokes("alt-up");
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_some()));
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
+        assert_eq!(popover.read_with(cx, |p, _| p.parked.len()), 1);
         // A drag across the other's passage in the editor just selects; a
         // plain click on it reopens its options, the caret where it landed.
         let row = editor.read_with(cx, |editor, _| editor.tracked_bounds(ids[0])[0]);
@@ -3917,6 +3958,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    kept: false,
                     from_preview: false,
                     highlighted: Some(0),
                     mode: Mode::Results(vec![" three".into()]),
