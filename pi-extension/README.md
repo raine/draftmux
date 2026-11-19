@@ -9,7 +9,8 @@ it starts. Nothing is installed in the user's pi. It:
   through a message, never through the system prompt,
 - sends the agent the draft's text before a run when it changed since the agent
   last saw it, so the agent edits without reading the file first,
-- blocks every tool call in selection calls,
+- blocks every tool call in selection calls, and caches their conversation for
+  the next one,
 - reports whether pi trusts the project.
 
 It has no runtime dependencies; pi loads the TypeScript file directly. Tests:
@@ -120,6 +121,15 @@ agent to read the file instead. A draft that can't be read gets no message.
 Every tool call is blocked with `Draftmux: tools are disabled for this request.
 Reply with text only.` The model gets that as the tool result and answers in
 text.
+
+On Anthropic models, pi marks the cache breakpoint for the conversation on the
+request's last block. In a selection call that is the prompt, or a message
+another extension added after it, which no later call repeats. The extension
+moves that breakpoint to the last block before the prompt: the end of the
+conversation. Selection calls on the same conversation then read one cache
+entry, and each read keeps it for another five minutes. The chat's next turn
+reads it too. Requests to other APIs, or where the prompt can't be found, are
+sent unchanged.
 
 ### Project trust
 

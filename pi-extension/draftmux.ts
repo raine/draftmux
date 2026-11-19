@@ -109,6 +109,50 @@ function draftMessage(draft: string): string {
 	return `[Draftmux] The draft file holds exactly this text, between the draft tags:\n\n<draft>\n${draft.endsWith("\n") ? draft : `${draft}\n`}</draft>`;
 }
 
+type Block = { type?: unknown; text?: unknown; cache_control?: unknown };
+
+/** Blocks the Anthropic API refuses a cache breakpoint on. */
+const UNCACHEABLE_BLOCKS = new Set(["thinking", "redacted_thinking"]);
+
+/**
+ * In an Anthropic messages payload, moves pi's conversation cache breakpoint
+ * from the payload's last block to the last block before the user block
+ * holding `prompt`: the end of the conversation the prompt continues.
+ *
+ * A selection request's prompt is unique to it, and other extensions may add
+ * messages after it, so a breakpoint on the last block caches nothing a later
+ * request repeats. At the end of the conversation it lets every selection
+ * request on the same conversation read one entry and keep it alive.
+ *
+ * Leaves the payload alone if the last block has no breakpoint or the prompt
+ * isn't found. Returns whether it moved the breakpoint.
+ */
+export function moveCacheBreakpoint(payload: unknown, prompt: string): boolean {
+	const messages = (payload as { messages?: unknown } | undefined)?.messages;
+	if (!Array.isArray(messages) || prompt.trim() === "") return false;
+	const blocks = (message: { content?: unknown }): Block[] => {
+		// Text content can only carry a breakpoint as a block, which the API
+		// reads the same as the string.
+		if (typeof message?.content === "string") message.content = [{ type: "text", text: message.content }];
+		return Array.isArray(message?.content) ? (message.content as Block[]) : [];
+	};
+	const all = messages.flatMap((message) =>
+		blocks(message).map((block) => ({ block, user: message?.role === "user" })),
+	);
+	const last = all.at(-1)?.block;
+	if (!last?.cache_control) return false;
+	const at = all.findLastIndex(
+		({ block, user }) => user && block.type === "text" && typeof block.text === "string" && block.text.trim() === prompt.trim(),
+	);
+	const boundary = all
+		.slice(0, Math.max(at, 0))
+		.findLast(({ block }) => typeof block.type === "string" && !UNCACHEABLE_BLOCKS.has(block.type))?.block;
+	if (!boundary) return false;
+	boundary.cache_control = last.cache_control;
+	delete last.cache_control;
+	return true;
+}
+
 function messageText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -128,6 +172,13 @@ export default function draftmux(pi: ExtensionAPI) {
 			block: true,
 			reason: "Draftmux: tools are disabled for this request. Reply with text only.",
 		}));
+		let prompt = "";
+		pi.on("before_agent_start", (event) => {
+			prompt = event.messageType === "user" ? event.prompt : "";
+		});
+		pi.on("before_provider_request", (event) => {
+			moveCacheBreakpoint(event.payload, prompt);
+		});
 		return;
 	}
 

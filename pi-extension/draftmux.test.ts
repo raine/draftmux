@@ -4,7 +4,13 @@ import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import draftmux, { CONTEXT_MESSAGE_TYPE, DRAFT_MESSAGE_TYPE, readConfig, TRUST_STATUS_KEY } from "./draftmux.ts";
+import draftmux, {
+	CONTEXT_MESSAGE_TYPE,
+	DRAFT_MESSAGE_TYPE,
+	moveCacheBreakpoint,
+	readConfig,
+	TRUST_STATUS_KEY,
+} from "./draftmux.ts";
 
 type Handler = (event: any, ctx: any) => any;
 
@@ -99,7 +105,7 @@ describe("selection mode", () => {
 			assert.equal(result?.block, true);
 			assert.match(result.reason, /tools are disabled/);
 		}
-		assert.equal(handlers.has("before_agent_start"), false);
+		assert.deepEqual(startRun(), []);
 	});
 });
 
@@ -113,6 +119,72 @@ const startRun = (messages: object[] = []): any[] =>
 			),
 		)
 		.filter((result) => result !== undefined);
+
+describe("selection cache breakpoint", () => {
+	const mark = { type: "ephemeral" };
+	const text = (text: string, cached = false) => ({ type: "text", text, ...(cached && { cache_control: mark }) });
+	const prompt = "Give alternatives";
+
+	test("moves to the end of the conversation, past messages added after the prompt", () => {
+		const payload = {
+			system: [text("system", true)],
+			messages: [
+				{ role: "user", content: [text("question")] },
+				{ role: "assistant", content: [text("answer"), { type: "thinking", thinking: "", signature: "s" }] },
+				{ role: "user", content: [text(prompt)] },
+				{ role: "user", content: [text("added by another extension", true)] },
+			],
+		};
+		assert.equal(moveCacheBreakpoint(payload, `${prompt}\n`), true);
+		assert.deepEqual(payload.messages[1].content[0], text("answer", true));
+		assert.equal("cache_control" in payload.messages[1].content[1], false, "never on thinking");
+		assert.deepEqual(payload.messages[3].content[0], text("added by another extension"));
+		assert.deepEqual(payload.system[0], text("system", true), "other breakpoints stay");
+	});
+
+	test("turns text content into a block and takes the prompt's own message's earlier blocks", () => {
+		const payload = {
+			messages: [
+				{ role: "user", content: "question" },
+				{ role: "user", content: [text("draft"), text(prompt, true)] },
+			],
+		};
+		assert.equal(moveCacheBreakpoint(payload, prompt), true);
+		assert.deepEqual(payload.messages[1].content, [text("draft", true), text(prompt)]);
+		assert.equal(moveCacheBreakpoint({ messages: [{ role: "user", content: "a" }, { role: "user", content: [text(prompt, true)] }] }, prompt), true);
+	});
+
+	test("leaves the payload alone when the prompt or the breakpoint isn't there", () => {
+		const cases = [
+			{ messages: [{ role: "user", content: [text("a")] }, { role: "user", content: [text(prompt)] }] },
+			{ messages: [{ role: "user", content: [text("a")] }, { role: "user", content: [text("other", true)] }] },
+			{ messages: [{ role: "assistant", content: [text(prompt)] }, { role: "user", content: [text("b", true)] }] },
+			{ messages: [{ role: "user", content: [text(prompt, true)] }] },
+		];
+		for (const payload of cases) {
+			const before = structuredClone(payload);
+			assert.equal(moveCacheBreakpoint(payload, prompt), false);
+			assert.deepEqual(payload, before);
+		}
+		assert.equal(moveCacheBreakpoint({ messages: [{ role: "user", content: [text("", true)] }] }, ""), false);
+		assert.equal(moveCacheBreakpoint({ input: [] }, prompt), false);
+		assert.equal(moveCacheBreakpoint(undefined, prompt), false);
+	});
+
+	test("selection mode moves it for the prompt the run started with", () => {
+		const selection = load({ DRAFTMUX_MODE: "selection" });
+		const payload = {
+			messages: [
+				{ role: "assistant", content: [text("answer")] },
+				{ role: "user", content: [text(prompt, true)] },
+			],
+		};
+		for (const handler of selection.get("before_agent_start") ?? []) handler({ messageType: "user", prompt }, ctx());
+		for (const handler of selection.get("before_provider_request") ?? []) handler({ payload }, ctx());
+		assert.deepEqual(payload.messages[0].content[0], text("answer", true));
+		assert.equal(load({ DRAFTMUX_DRAFT_PATH: "/tmp/draft.md" }).get("before_provider_request"), undefined);
+	});
+});
 
 describe("context message", () => {
 	const start = (messages: object[]) =>
