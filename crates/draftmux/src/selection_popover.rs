@@ -1918,7 +1918,7 @@ impl SelectionPopover {
                 .gap(px(8.))
                 .text_color(palette.muted)
                 .whitespace_nowrap()
-                .child(crate::chat::spinner(&palette))
+                .child(crate::chat::spinner(&palette).size(px(13.)))
                 .child(label.clone())
                 .into_any_element(),
             Mode::Results(options) => {

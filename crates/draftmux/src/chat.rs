@@ -2114,8 +2114,8 @@ pub(crate) fn wave(time: f32) -> f32 {
     rise * rise * (3. - 2. * rise)
 }
 
-/// A grey ring with a turning accent arc.
-pub(crate) fn spinner(palette: &Palette) -> impl IntoElement {
+/// A grey ring with a turning accent arc, 11px unless resized with `.size`.
+pub(crate) fn spinner(palette: &Palette) -> gpui::Div {
     div()
         .size(px(11.))
         .relative()
