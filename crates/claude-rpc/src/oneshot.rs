@@ -9,6 +9,13 @@
 //! is known, where a plain-text prompt must arrive within a few seconds.
 //! Closing stdin after it ends the session once the reply is done.
 //!
+//! On Anthropic's own API, Claude Code otherwise opens a server-side thread
+//! for the request and marks the prompt cache only at the request's end,
+//! after the prompt. No later request repeats that prompt, so every request
+//! wrote the whole conversation again and read only the system prompt. With
+//! threads off (`CLAUDE_CODE_TETHER_LIVE=0`) it also marks the end of the
+//! conversation, which the next request on it reads.
+//!
 //! Claude Code 2.1.293 was observed to keep the copy byte-identical, write
 //! no transcript for either session and still answer from the conversation,
 //! including one with tool calls, when run this way.
@@ -109,6 +116,7 @@ impl Oneshot {
         if let Some(dir) = &self.session.config_dir {
             command.env("CLAUDE_CONFIG_DIR", dir);
         }
+        command.env("CLAUDE_CODE_TETHER_LIVE", "0");
         Ok(command)
     }
 }
@@ -244,6 +252,7 @@ mod tests {
         for dropped in ["CLAUDECODE", "CLAUDE_CONFIG_DIR"] {
             assert!(!envs.iter().any(|(key, _)| *key == dropped), "{dropped}");
         }
+        assert!(envs.contains(&("CLAUDE_CODE_TETHER_LIVE".as_ref(), Some("0".as_ref()))));
         assert_eq!(fs::read_dir(&temp).unwrap().count(), 0);
     }
 

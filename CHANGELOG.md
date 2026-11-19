@@ -14,6 +14,9 @@
 - UX: In pi drafts on Claude models, alternatives and continuations reuse the
   conversation cached by the previous one, so each request within an hour of
   the last skips reprocessing the conversation.
+- UX: In Claude Code drafts, alternatives and continuations reuse the
+  conversation cached by the previous one instead of reprocessing it every
+  time.
 - Fix: In Claude Code drafts, alternatives, selection actions and
   continuations now use the effort chosen in the chat, unless a separate
   selection model is set.
