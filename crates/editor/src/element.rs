@@ -379,6 +379,11 @@ impl Element for EditorElement {
         let caret_on = editor.caret_on;
         let read_only = editor.read_only;
         let marked = editor.marked.clone();
+        let tracked: Vec<_> = editor
+            .buffer
+            .tracked_ranges()
+            .map(|(_, range)| range)
+            .collect();
         let waiting = editor
             .ghost
             .as_ref()
@@ -408,6 +413,32 @@ impl Element for EditorElement {
                     }
                 }
                 window.request_animation_frame();
+            }
+            for range in tracked {
+                if range.is_empty() {
+                    let at = layout.caret_bounds(range.start, Affinity::Downstream);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            at.origin - point(px(1.), px(0.)),
+                            size(px(2.), at.size.height),
+                        ),
+                        style.caret.opacity(0.55),
+                    ));
+                    continue;
+                }
+                for rect in layout.range_rects(range, false) {
+                    if rect.bottom() < bounds.top() || rect.top() > bounds.bottom() {
+                        continue;
+                    }
+                    window.paint_quad(fill(rect, style.tracked));
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(rect.left(), rect.bottom() - px(1.5)),
+                            size(rect.size.width, px(1.)),
+                        ),
+                        style.caret.opacity(0.55),
+                    ));
+                }
             }
             if let Some(marked) = marked {
                 if marked.is_empty() {

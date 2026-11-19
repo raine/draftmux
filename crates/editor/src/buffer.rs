@@ -103,7 +103,14 @@ pub struct Buffer {
     /// Whether the next edit may join the top undo transaction.
     can_coalesce: bool,
     revision: u64,
+    /// Ranges kept on their text as it changes; see [`Buffer::track`].
+    tracked: Vec<(TrackedId, Range<usize>)>,
+    next_tracked: u64,
 }
+
+/// Names a range kept by [`Buffer::track`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TrackedId(u64);
 
 impl Buffer {
     pub fn new(text: &str) -> Self {
@@ -154,6 +161,60 @@ impl Buffer {
         self.redo.clear();
         self.can_coalesce = false;
         self.revision += 1;
+        self.tracked.clear();
+    }
+
+    /// Keeps `range` on its text from now on: edits before it move it, and
+    /// edits after it leave it alone. An edit that touches it drops it, as
+    /// does loading new text: inside a non-empty range or across either end,
+    /// and for an empty range, at its offset. Text inserted right before or
+    /// after a non-empty range is not part of it.
+    pub fn track(&mut self, range: Range<usize>) -> TrackedId {
+        let id = TrackedId(self.next_tracked);
+        self.next_tracked += 1;
+        self.tracked.push((id, self.clamp_range(range)));
+        id
+    }
+
+    /// Where the range `id` is now; `None` once an edit has dropped it.
+    pub fn tracked(&self, id: TrackedId) -> Option<Range<usize>> {
+        self.tracked
+            .iter()
+            .find(|(tracked, _)| *tracked == id)
+            .map(|(_, range)| range.clone())
+    }
+
+    /// The ranges kept now, in the order they were tracked.
+    pub fn tracked_ranges(&self) -> impl Iterator<Item = (TrackedId, Range<usize>)> + '_ {
+        self.tracked.iter().cloned()
+    }
+
+    /// Stops keeping the range `id`.
+    pub fn untrack(&mut self, id: TrackedId) {
+        self.tracked.retain(|(tracked, _)| *tracked != id);
+    }
+
+    /// Moves the tracked ranges for `old_len` bytes at `start` replaced by
+    /// `new_len`, dropping those it touches.
+    fn map_tracked(&mut self, start: usize, old_len: usize, new_len: usize) {
+        let end = start + old_len;
+        self.tracked.retain_mut(|(_, range)| {
+            let empty = range.start == range.end;
+            let before = if empty {
+                end < range.start
+            } else {
+                end <= range.start
+            };
+            if before {
+                *range = range.start - old_len + new_len..range.end - old_len + new_len;
+                return true;
+            }
+            if empty {
+                start > range.start
+            } else {
+                start >= range.end
+            }
+        });
     }
 
     /// Moves the selection. Ends any undo grouping and the vertical goal, and
@@ -291,6 +352,7 @@ impl Buffer {
             new: new.to_string(),
         };
         self.text.replace_range(range.clone(), new);
+        self.map_tracked(range.start, range.len(), new.len());
         self.revision += 1;
         self.marked = None;
 
@@ -410,6 +472,7 @@ impl Buffer {
         for change in transaction.changes.iter().rev() {
             self.text
                 .replace_range(change.start..change.start + change.new.len(), &change.old);
+            self.map_tracked(change.start, change.new.len(), change.old.len());
         }
         self.selection = transaction.before;
         self.finish_history_step();
@@ -425,6 +488,7 @@ impl Buffer {
         for change in &transaction.changes {
             self.text
                 .replace_range(change.start..change.start + change.old.len(), &change.new);
+            self.map_tracked(change.start, change.old.len(), change.new.len());
         }
         self.selection = transaction.after;
         self.finish_history_step();
@@ -530,6 +594,54 @@ pub fn offset_from_utf16(text: &str, offset_utf16: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracked_ranges_move_with_edits_around_them_and_go_with_edits_to_them() {
+        let mut b = Buffer::new("one two three");
+        let two = b.track(4..7);
+        let end = b.track(13..13);
+        // Before it, and right at its start: it moves.
+        b.replace_range(0..0, "zero ");
+        b.replace_range(9..9, ">");
+        assert_eq!(b.tracked(two), Some(10..13));
+        assert_eq!(&b.text()[10..13], "two");
+        // Right after it: it stays, without what was added.
+        b.replace_range(13..13, "<");
+        assert_eq!(b.tracked(two), Some(10..13));
+        // An empty range goes with an edit at its offset.
+        assert_eq!(b.tracked(end), Some(20..20));
+        b.replace_range(18..19, "E");
+        assert_eq!(b.tracked(end), Some(20..20));
+        b.replace_range(20..20, "!");
+        assert_eq!(b.tracked(end), None);
+        // Inside it.
+        b.replace_range(11..12, "W");
+        assert_eq!(b.tracked(two), None);
+    }
+
+    #[test]
+    fn tracked_ranges_follow_undo_and_redo_and_go_with_new_text() {
+        let mut b = Buffer::new("ab cd");
+        let cd = b.track(3..5);
+        b.replace_range(0..2, "xyz");
+        assert_eq!(b.tracked(cd), Some(4..6));
+        b.undo();
+        assert_eq!(b.tracked(cd), Some(3..5));
+        b.redo();
+        assert_eq!(b.tracked(cd), Some(4..6));
+        // Undoing an edit across it drops it, like the edit itself would.
+        let mut b = Buffer::new("ab cd");
+        b.replace_range(2..3, "");
+        let bc = b.track(1..3);
+        b.undo();
+        assert_eq!(b.tracked(bc), None);
+        let kept = b.track(0..1);
+        b.untrack(kept);
+        assert_eq!(b.tracked(kept), None);
+        let gone = b.track(0..1);
+        b.set_text("new");
+        assert_eq!(b.tracked(gone), None);
+    }
 
     fn type_str(buffer: &mut Buffer, text: &str) {
         for ch in text.chars() {

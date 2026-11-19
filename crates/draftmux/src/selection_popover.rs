@@ -39,6 +39,17 @@
 //! the user accepts or dismisses in the editor; the call ends with the
 //! ghost, which goes when focus leaves the editor but stays while the app is
 //! inactive. Starting either ends the other.
+//!
+//! An action's call and its options outlive the popover. Dismissing the
+//! popover while a call runs or its options wait parks it as a request on
+//! its passage, which the editor keeps as the text changes (see
+//! [`Editor::track`]): edits elsewhere move it, and an edit that touches it
+//! discards it with its call, since the options were written for the old
+//! wording. Several requests run at once. Each shows as a tint on its
+//! passage and a badge in the editor's left margin, a spinner while its call
+//! runs; the badge, or `⌥↓` and `⌥↑`, reopen its options in the popover, and
+//! `⌘⌫` discards the one shown. A new request on text a request covers
+//! replaces it.
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -49,7 +60,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use draftmux_storage::{Backend, Draft, Store, Target};
-use editor::{Editor, EditorEvent, EditorStyle};
+use editor::{Editor, EditorEvent, EditorStyle, TrackedId};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyWindowHandle, App, Bounds, Context, Div,
     ElementId, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyBinding, Pixels,
@@ -83,7 +94,10 @@ actions!(
         Previous,
         Back,
         ContinueSentence,
-        ContinueOptions
+        ContinueOptions,
+        NextRequest,
+        PreviousRequest,
+        Discard
     ]
 );
 
@@ -100,6 +114,19 @@ const COMMENT_CONTEXT: &str = "SelectionComment";
 /// Around the draft's editor, always: the continue keys are bound there and
 /// not in other editors.
 const DRAFT_EDITOR_CONTEXT: &str = "DraftEditor";
+/// Around the draft's editor while it has requests, for the keys that move
+/// between them.
+const REQUESTS_CONTEXT: &str = "SelectionRequests";
+/// Around the editor while the popover shows a request, which it can
+/// discard.
+const REQUEST_CONTEXT: &str = "SelectionRequest";
+
+/// How many requests run or wait at once; a new one past this discards
+/// the one parked longest.
+const MAX_REQUESTS: usize = 4;
+/// A request's badge in the editor's left margin.
+const BADGE_SIZE: Pixels = px(16.);
+const BADGE_INSET: Pixels = px(4.);
 
 /// How long the selection must stay put before the popover appears, so
 /// shift-arrow selections don't flash it on every step.
@@ -134,6 +161,12 @@ pub fn init(cx: &mut App) {
             KeyBinding::new("down", Next, results.as_deref()),
             KeyBinding::new("enter", Confirm, results.as_deref()),
         ]);
+        let request = Some(format!("{REQUEST_CONTEXT} > {focused}"));
+        bindings.push(KeyBinding::new(
+            editor::secondary!("backspace"),
+            Discard,
+            request.as_deref(),
+        ));
         for (index, key) in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
             .into_iter()
             .enumerate()
@@ -159,6 +192,11 @@ pub fn init(cx: &mut App) {
             ContinueOptions,
             draft_editor.as_deref(),
         ),
+    ]);
+    let requests = Some(format!("{REQUESTS_CONTEXT} > Editor"));
+    bindings.extend([
+        KeyBinding::new("alt-down", NextRequest, requests.as_deref()),
+        KeyBinding::new("alt-up", PreviousRequest, requests.as_deref()),
     ]);
     // Bound after the editor's keys, so these win at the same depth.
     cx.bind_keys(bindings);
@@ -188,6 +226,9 @@ pub struct SelectionPopover {
     main: AnyWindowHandle,
     draft: Option<Draft>,
     open: Option<Open>,
+    /// Requests whose call runs or whose options wait while the popover
+    /// shows something else, in the order they were parked.
+    parked: Vec<Open>,
     panel: Option<Panel>,
     /// The popover content's size, measured by the panel after layout.
     content_size: Option<Size<Pixels>>,
@@ -218,8 +259,8 @@ pub struct SelectionPopover {
     /// its state meanwhile, so a running call goes on and its options wait.
     hidden: bool,
     main_bounds: Option<Bounds<Pixels>>,
-    /// The name of the action that was run last, which the edit history
-    /// shows for an option applied from it.
+    /// The name of the action being started, which its request keeps for
+    /// the edit history to show with an option applied from it.
     action_name: SharedString,
     /// The call streaming into the editor's ghost.
     ghost: Option<GhostCall>,
@@ -250,13 +291,54 @@ impl GhostCall {
     }
 }
 
-/// The popover is shown for `range` of `text`.
+/// The popover is shown for `range` of `text`. Once an action runs, it is a
+/// request: its passage is tracked in the editor, and it lasts until an
+/// option is applied, it is discarded or an edit touches its passage.
 struct Open {
     range: Range<usize>,
     text: String,
     mode: Mode,
     /// The one highlighted item; the mouse and the arrow keys both move it.
     highlighted: Option<usize>,
+    /// The passage, where the text has it now; set once an action runs.
+    tracked: Option<TrackedId>,
+    /// Reopened from the park: placed at its passage in the editor, which
+    /// the selection no longer is.
+    reopened: bool,
+    /// The name of the action, for the edit history.
+    action: SharedString,
+}
+
+impl Open {
+    fn new(range: Range<usize>, text: String, mode: Mode) -> Self {
+        Self {
+            range,
+            text,
+            mode,
+            highlighted: None,
+            tracked: None,
+            reopened: false,
+            action: SharedString::default(),
+        }
+    }
+}
+
+/// How a request's badge shows its call.
+#[derive(Clone, Copy, PartialEq)]
+enum Status {
+    Running,
+    Ready,
+    Failed,
+}
+
+impl Status {
+    fn of(mode: &Mode) -> Self {
+        match mode {
+            Mode::Running { .. } => Self::Running,
+            Mode::Error(_) => Self::Failed,
+            _ => Self::Ready,
+        }
+    }
 }
 
 enum Mode {
@@ -426,6 +508,7 @@ impl SelectionPopover {
             main: window.window_handle(),
             draft: None,
             open: None,
+            parked: Vec::new(),
             panel: None,
             content_size: None,
             staged: None,
@@ -451,6 +534,7 @@ impl SelectionPopover {
     pub fn set_draft(&mut self, draft: Option<Draft>, cx: &mut Context<Self>) {
         self.draft = draft;
         self.dismiss(cx);
+        self.discard_parked(cx);
         self.end_ghost(cx);
         self.drop_warm(cx);
     }
@@ -527,10 +611,22 @@ impl SelectionPopover {
             Some(_) => Some(POPOVER_CONTEXT.to_string()),
             None => None,
         };
+        if popover
+            .open
+            .as_ref()
+            .is_some_and(|open| open.tracked.is_some())
+        {
+            context = context.map(|context| format!("{context} {REQUEST_CONTEXT}"));
+        }
         if !preview {
+            let requests = if popover.has_requests() {
+                format!(" {REQUESTS_CONTEXT}")
+            } else {
+                String::new()
+            };
             context = Some(match context {
-                Some(context) => format!("{DRAFT_EDITOR_CONTEXT} {context}"),
-                None => DRAFT_EDITOR_CONTEXT.to_string(),
+                Some(context) => format!("{DRAFT_EDITOR_CONTEXT}{requests} {context}"),
+                None => format!("{DRAFT_EDITOR_CONTEXT}{requests}"),
             });
         }
         let entity = this.clone();
@@ -573,7 +669,21 @@ impl SelectionPopover {
                     this.update(cx, |this, cx| this.continue_options(cx))
                 }
             })
+            .on_action({
+                let this = this.clone();
+                move |_: &NextRequest, _, cx| this.update(cx, |this, cx| this.cycle(true, cx))
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &PreviousRequest, _, cx| this.update(cx, |this, cx| this.cycle(false, cx))
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &Discard, _, cx| this.update(cx, |this, cx| this.discard(cx))
+            })
             .child(child)
+            // After the editor, so they're placed with its current layout.
+            .when(!preview, |pane| pane.child(badges(this, cx)))
             // Before the panel opens, a hidden copy of its content in the
             // pane measures it, so the panel opens at its final size.
             .when(
@@ -617,7 +727,9 @@ impl SelectionPopover {
     /// Whether the selection was made in the preview, so the popover goes
     /// there. Continuing at the cursor is always in the editor.
     fn in_preview(&self, cx: &App) -> bool {
-        self.open.as_ref().is_none_or(|open| !open.range.is_empty())
+        self.open
+            .as_ref()
+            .is_none_or(|open| !open.range.is_empty() && !open.reopened)
             && self.preview.read(cx).range().is_some()
     }
 
@@ -646,9 +758,16 @@ impl SelectionPopover {
         match event {
             EditorEvent::GhostAccepted(text) => self.ghost_accepted(text, cx),
             EditorEvent::GhostDismissed => self.ghost = None,
-            EditorEvent::Edited => self.dismiss(cx),
+            EditorEvent::Edited => {
+                self.drop_touched(cx);
+                self.dismiss(cx);
+            }
             EditorEvent::SelectionChanged(range) => {
-                if self.open.as_ref().is_some_and(|open| open.range != *range) {
+                if self
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| open.reopened || open.range != *range)
+                {
                     self.dismiss(cx);
                 }
                 self.pending_show = None;
@@ -698,12 +817,7 @@ impl SelectionPopover {
                     return;
                 }
                 let mode = this.items_mode(cx);
-                this.open = Some(Open {
-                    range,
-                    text: editor.text().to_string(),
-                    mode,
-                    highlighted: None,
-                });
+                this.open = Some(Open::new(range, editor.text().to_string(), mode));
                 this.changed(cx);
                 this.prestart(cx);
             })
@@ -725,16 +839,197 @@ impl SelectionPopover {
         }
     }
 
+    /// Closes the popover. A request it shows is parked, with its call
+    /// and options.
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.pending_show = None;
         self.comment_observer = None;
         self.hidden = false;
-        if self.open.take().is_some() {
+        if let Some(open) = self.open.take() {
+            self.park(open, cx);
             // Closed now rather than after the main window's next draw: a
             // window covered by another app may not draw until it's shown
             // again, which would leave the empty panel on screen meanwhile.
             self.close_panel(cx);
             self.changed(cx);
+        }
+    }
+
+    /// Keeps `open` on its passage if it's a request whose call runs or
+    /// whose options wait; anything else goes, a failure once it was seen.
+    fn park(&mut self, mut open: Open, cx: &mut Context<Self>) {
+        let Some(id) = open.tracked else { return };
+        // Options held back for the panel's size are the request's now.
+        if let Some(staged) = self.staged.take() {
+            match &mut open.mode {
+                _ if staged.done => open.mode = Mode::Results(staged.options),
+                Mode::Running { previews, .. } => *previews = staged.options,
+                _ => {}
+            }
+        }
+        let keep = matches!(open.mode, Mode::Running { .. })
+            || open
+                .mode
+                .options()
+                .is_some_and(|options| !options.is_empty());
+        if !keep {
+            self.editor.update(cx, |editor, cx| editor.untrack(id, cx));
+            return;
+        }
+        open.reopened = true;
+        open.highlighted = None;
+        self.parked.push(open);
+    }
+
+    /// Whether a request runs or waits, shown or parked.
+    fn has_requests(&self) -> bool {
+        !self.parked.is_empty()
+            || self
+                .open
+                .as_ref()
+                .is_some_and(|open| open.tracked.is_some())
+    }
+
+    /// Makes `range` of the current text the shown popover's request,
+    /// replacing those on the same text and, past [`MAX_REQUESTS`], the one
+    /// parked longest.
+    fn start_request(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let mut gone = Vec::new();
+        let editor = self.editor.read(cx);
+        let parked = std::mem::take(&mut self.parked);
+        for open in parked {
+            let current = open.tracked.and_then(|id| editor.tracked(id));
+            if current.is_none_or(|current| overlaps(&current, &range)) {
+                gone.push(open);
+            } else {
+                self.parked.push(open);
+            }
+        }
+        while self.parked.len() >= MAX_REQUESTS {
+            gone.push(self.parked.remove(0));
+        }
+        let action = self.action_name.clone();
+        let id = self.editor.update(cx, |editor, cx| {
+            for id in gone.iter().filter_map(|open| open.tracked) {
+                editor.untrack(id, cx);
+            }
+            editor.track(range, cx)
+        });
+        if let Some(open) = &mut self.open {
+            if let Some(old) = open.tracked.replace(id) {
+                self.editor.update(cx, |editor, cx| editor.untrack(old, cx));
+            }
+            open.action = action;
+        }
+        cx.notify();
+    }
+
+    /// Discards the request the popover shows, ending its call.
+    fn discard(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.open.as_ref().and_then(|open| open.tracked) else {
+            return;
+        };
+        self.open = None;
+        self.staged = None;
+        self.editor.update(cx, |editor, cx| editor.untrack(id, cx));
+        self.close_panel(cx);
+        self.changed(cx);
+    }
+
+    /// Discards every parked request.
+    fn discard_parked(&mut self, cx: &mut Context<Self>) {
+        let parked = std::mem::take(&mut self.parked);
+        if parked.is_empty() {
+            return;
+        }
+        self.editor.update(cx, |editor, cx| {
+            for id in parked.iter().filter_map(|open| open.tracked) {
+                editor.untrack(id, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Drops the requests whose passage an edit touched, with their calls.
+    fn drop_touched(&mut self, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        let gone = |open: &Open| open.tracked.is_some_and(|id| editor.tracked(id).is_none());
+        let shown_gone = self.open.as_ref().is_some_and(gone);
+        let count = self.parked.len();
+        self.parked.retain(|open| !gone(open));
+        let parked_gone = self.parked.len() != count;
+        if shown_gone {
+            self.open = None;
+            self.staged = None;
+            self.close_panel(cx);
+            self.changed(cx);
+        } else if parked_gone {
+            cx.notify();
+        }
+    }
+
+    /// Shows the parked request on the passage `id` in the popover, parking
+    /// what it showed.
+    fn engage(&mut self, id: TrackedId, cx: &mut Context<Self>) {
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|open| open.tracked == Some(id))
+        {
+            return;
+        }
+        self.dismiss(cx);
+        let Some(index) = self.parked.iter().position(|open| open.tracked == Some(id)) else {
+            return;
+        };
+        let mut open = self.parked.remove(index);
+        open.highlighted = open
+            .mode
+            .options()
+            .is_some_and(|options| !options.is_empty())
+            .then_some(0);
+        if let Some(range) = self.editor.read(cx).tracked(id) {
+            self.editor
+                .update(cx, |editor, cx| editor.reveal(range, cx));
+        }
+        self.open = Some(open);
+        self.changed(cx);
+    }
+
+    /// Shows the next request in the text after the one shown, or after the
+    /// caret; with `forward` false, the previous one. Both wrap around.
+    fn cycle(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        let mut requests: Vec<(usize, TrackedId)> = self
+            .open
+            .iter()
+            .chain(&self.parked)
+            .filter_map(|open| {
+                let id = open.tracked?;
+                Some((editor.tracked(id)?.start, id))
+            })
+            .collect();
+        requests.sort_by_key(|(start, _)| *start);
+        let shown = self.open.as_ref().and_then(|open| open.tracked);
+        let caret = editor.selected_range().start;
+        let next = match requests.iter().position(|(_, id)| Some(*id) == shown) {
+            Some(at) if forward => requests.get(at + 1).or(requests.first()),
+            Some(at) => at
+                .checked_sub(1)
+                .and_then(|at| requests.get(at))
+                .or(requests.last()),
+            None if forward => requests
+                .iter()
+                .find(|(start, _)| *start > caret)
+                .or(requests.first()),
+            None => requests
+                .iter()
+                .rev()
+                .find(|(start, _)| *start < caret)
+                .or(requests.last()),
+        };
+        if let Some(&(_, id)) = next {
+            self.engage(id, cx);
         }
     }
 
@@ -992,35 +1287,26 @@ impl SelectionPopover {
         let (text, range) = (open.text.clone(), open.range.clone());
         let call = self.call(
             text,
-            range,
+            range.clone(),
             action,
             |this, request, options, cx| this.options_arrived(request, options, false, cx),
-            |this, request, result, cx| {
-                if !this
-                    .open
-                    .as_ref()
-                    .is_some_and(|open| open.mode.is_request(request))
-                {
-                    return;
-                }
-                match result {
-                    Ok(options) => this.options_arrived(request, options, true, cx),
-                    Err(err) => this.set_mode(Mode::Error(err.into()), None, cx),
-                }
-            },
+            |this, request, result, cx| this.request_done(request, result, cx),
             cx,
         );
         match call {
-            Ok((cancel, task)) => self.set_mode(
-                Mode::Running {
-                    label,
-                    previews: Vec::new(),
-                    _cancel: cancel,
-                    _task: task,
-                },
-                None,
-                cx,
-            ),
+            Ok((cancel, task)) => {
+                self.start_request(range, cx);
+                self.set_mode(
+                    Mode::Running {
+                        label,
+                        previews: Vec::new(),
+                        _cancel: cancel,
+                        _task: task,
+                    },
+                    None,
+                    cx,
+                )
+            }
             Err(err) => self.set_mode(Mode::Error(err.into()), None, cx),
         }
     }
@@ -1030,6 +1316,43 @@ impl SelectionPopover {
         self.draft
             .as_ref()
             .map_or(Target::Github, |draft| draft.meta.target)
+    }
+
+    /// The call of `request` ended with `result`: shown, or kept with the
+    /// parked request for when it's reopened.
+    fn request_done(
+        &mut self,
+        request: &Arc<AtomicBool>,
+        result: Result<Vec<String>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|open| open.mode.is_request(request))
+        {
+            match result {
+                Ok(options) => self.options_arrived(request, options, true, cx),
+                Err(err) => self.set_mode(Mode::Error(err.into()), None, cx),
+            }
+        } else if let Some(index) = self
+            .parked
+            .iter()
+            .position(|open| open.mode.is_request(request))
+        {
+            match result {
+                // Nothing came of it: nothing to come back to.
+                Ok(options) if options.is_empty() => {
+                    let open = self.parked.remove(index);
+                    if let Some(id) = open.tracked {
+                        self.editor.update(cx, |editor, cx| editor.untrack(id, cx));
+                    }
+                }
+                Ok(options) => self.parked[index].mode = Mode::Results(options),
+                Err(err) => self.parked[index].mode = Mode::Error(err.into()),
+            }
+            cx.notify();
+        }
     }
 
     /// The agent a call on the current draft runs on, the draft's working
@@ -1149,12 +1472,11 @@ impl SelectionPopover {
                 if editor.selected_range() != (at..at) {
                     return;
                 }
-                this.open = Some(Open {
-                    range: at..at,
-                    text: editor.text().to_string(),
-                    mode: Mode::Error(SharedString::default()),
-                    highlighted: None,
-                });
+                this.open = Some(Open::new(
+                    at..at,
+                    editor.text().to_string(),
+                    Mode::Error(SharedString::default()),
+                ));
                 this.action_name = "Continue".into();
                 this.run(
                     SelectionAction::Continue { text: false },
@@ -1269,10 +1591,11 @@ impl SelectionPopover {
         }
     }
 
-    /// Replaces the selection with option `index` as one undo step, if the
-    /// text is still what the options were made for. A preview applies as
-    /// well: it is complete, and taking it ends the call, so nothing the
-    /// agent sends later reaches the text.
+    /// Replaces the request's passage with option `index` as one undo step,
+    /// if it still reads as when the options were asked for. The caret goes
+    /// after the option from within the passage, and stays where it is from
+    /// elsewhere. A preview applies as well: it is complete, and taking it
+    /// ends the call, so nothing the agent sends later reaches the text.
     fn apply(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(open) = self.open.take() else { return };
         let Some(option) = open.mode.options().and_then(|options| options.get(index)) else {
@@ -1282,20 +1605,30 @@ impl SelectionPopover {
         self.staged = None;
         self.changed(cx);
         self.focus_main(cx);
-        let text = self.editor.update(cx, |editor, cx| {
-            if editor.text() != open.text || editor.selected_range() != open.range {
+        let passage = open.text.get(open.range.clone());
+        let applied = self.editor.update(cx, |editor, cx| {
+            let id = open.tracked?;
+            let range = editor.tracked(id)?;
+            editor.untrack(id, cx);
+            if editor.text().get(range.clone()) != passage {
                 return None;
             }
-            editor.replace_range(open.range.clone(), option, cx);
-            let inserted = open.range.start..editor.selected_range().end;
+            let before = editor.text().to_string();
+            let selected = editor.selected_range();
+            if selected.start >= range.start && selected.end <= range.end {
+                editor.replace_range(range.clone(), option, cx);
+            } else {
+                editor.replace_range_in_place(range.clone(), option, cx);
+            }
+            let inserted = range.start..range.start + option.len();
             editor.flash(vec![inserted], cx);
-            Some(editor.text().to_string())
+            Some((before, editor.text().to_string()))
         });
-        if let Some(text) = text {
+        if let Some((before, text)) = applied {
             cx.emit(SelectionPopoverEvent::OptionApplied {
-                before: open.text,
+                before,
                 text,
-                prompt: self.action_name.clone(),
+                prompt: open.action,
             });
         }
     }
@@ -1384,6 +1717,13 @@ impl SelectionPopover {
         let (pane, rows) = if self.in_preview(cx) {
             let rows = self.preview.read(cx).selection_rects().to_vec();
             (self.preview_pane.get()?, rows)
+        } else if let Some(id) = self
+            .open
+            .as_ref()?
+            .tracked
+            .filter(|_| self.open.as_ref().is_some_and(|open| open.reopened))
+        {
+            (self.pane.get()?, self.editor.read(cx).tracked_bounds(id))
         } else if self.open.as_ref()?.range.is_empty() {
             let caret = self.editor.read(cx).caret_bounds();
             (self.pane.get()?, caret.into_iter().collect())
@@ -1566,8 +1906,22 @@ impl SelectionPopover {
         done: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = &self.open else { return };
-        if !open.mode.is_request(request) {
+        if !self
+            .open
+            .as_ref()
+            .is_some_and(|open| open.mode.is_request(request))
+        {
+            if let Some(Open {
+                mode: Mode::Running { previews, .. },
+                ..
+            }) = self
+                .parked
+                .iter_mut()
+                .find(|open| open.mode.is_request(request))
+            {
+                *previews = options;
+                cx.notify();
+            }
             return;
         }
         if self.panel.is_none() {
@@ -2005,7 +2359,10 @@ impl SelectionPopover {
                         });
                         highlight(index, item)
                     }))
-                    .child(footer(&[keys.as_str(), "↑↓ move", "esc cancel"], &palette))
+                    .child(footer(
+                        &[keys.as_str(), "↑↓ move", "esc later", DISCARD_HINT],
+                        &palette,
+                    ))
                     .into_any_element()
             }
             Mode::Error(message) => div()
@@ -2076,7 +2433,8 @@ fn running_footer(label: &SharedString, palette: &Palette) -> gpui::Div {
             .whitespace_nowrap()
             .child(crate::chat::spinner(palette))
             .child(label.clone())
-            .child(div().ml(px(4.)).child("esc cancel")),
+            .child(div().ml(px(4.)).child("esc later"))
+            .child(DISCARD_HINT),
         palette,
     )
 }
@@ -2171,6 +2529,177 @@ fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
         a: lerp(a.a, b.a),
     }
     .into()
+}
+
+/// The key that discards the request shown, and what it does.
+const DISCARD_HINT: &str = editor::by_platform!("⌘⌫ discard", "Ctrl+⌫ discard");
+
+/// Whether two ranges share text, or an empty one sits inside or on the
+/// other.
+fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
+    a == b || (a.start < b.end && b.start < a.end)
+}
+
+/// The badges of the editor's requests in its left margin, beside each
+/// passage's first row that another badge hasn't taken. A click reopens a
+/// request's options, or parks them again.
+fn badges(this: &Entity<SelectionPopover>, cx: &App) -> Badges {
+    let popover = this.read(cx);
+    let palette = *theme::palette(cx);
+    let shown = popover.open.iter().filter(|open| open.tracked.is_some());
+    let items = shown
+        .map(|open| (open, true))
+        .chain(popover.parked.iter().map(|open| (open, false)))
+        .enumerate()
+        .filter_map(|(index, (open, engaged))| {
+            let id = open.tracked?;
+            let status = Status::of(&open.mode);
+            let badge = div()
+                .id(("request-badge", index))
+                .size(BADGE_SIZE)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .occlude()
+                .when(engaged, |badge| badge.bg(palette.accent.opacity(0.18)))
+                .when(!engaged, |badge| {
+                    badge.hover(|style| style.bg(palette.hover))
+                })
+                .child(match status {
+                    Status::Running => crate::chat::spinner(&palette).into_any_element(),
+                    Status::Ready => div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(palette.accent)
+                        .into_any_element(),
+                    Status::Failed => div()
+                        .text_size(px(11.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(palette.tool_error)
+                        .child("!")
+                        .into_any_element(),
+                })
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let this = this.clone();
+                    move |_, _, cx| {
+                        cx.stop_propagation();
+                        this.update(cx, |this, cx| {
+                            if engaged {
+                                this.dismiss(cx);
+                            } else {
+                                this.engage(id, cx);
+                            }
+                        });
+                    }
+                });
+            Some((id, badge.into_any_element()))
+        })
+        .collect();
+    Badges {
+        editor: popover.editor.clone(),
+        items,
+        shown: Vec::new(),
+    }
+}
+
+/// Elements placed beside tracked passages in the editor's left margin. It
+/// takes no space; each badge is laid out and placed in prepaint, after the
+/// editor before it has laid out the text, and hidden while its row isn't
+/// all in view.
+struct Badges {
+    editor: Entity<Editor>,
+    items: Vec<(TrackedId, AnyElement)>,
+    /// Which of `items` were placed.
+    shown: Vec<bool>,
+}
+
+impl IntoElement for Badges {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Badges {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        let style = gpui::Style {
+            position: gpui::Position::Absolute,
+            ..Default::default()
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let editor = self.editor.read(cx);
+        let bounds = editor.bounds();
+        let rows: Vec<_> = self
+            .items
+            .iter()
+            .map(|(id, _)| editor.tracked_bounds(*id))
+            .collect();
+        let mut taken: Vec<Pixels> = Vec::new();
+        self.shown = Vec::new();
+        for ((_, badge), rows) in self.items.iter_mut().zip(rows) {
+            let row = rows
+                .iter()
+                .find(|row| !taken.contains(&row.top()))
+                .or(rows.first());
+            let place = row.zip(bounds).filter(|(row, bounds)| {
+                row.top() >= bounds.top() && row.bottom() <= bounds.bottom()
+            });
+            self.shown.push(place.is_some());
+            let Some((row, bounds)) = place else { continue };
+            taken.push(row.top());
+            badge.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+            let origin = point(
+                bounds.left() + BADGE_INSET,
+                row.top() + (row.size.height - BADGE_SIZE) / 2.,
+            );
+            badge.prepaint_at(origin.map(|v| v.round()), window, cx);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for ((_, badge), shown) in self.items.iter_mut().zip(&self.shown) {
+            if *shown {
+                badge.paint(window, cx);
+            }
+        }
+    }
 }
 
 fn footer(keys: &[&str], palette: &Palette) -> gpui::Div {
@@ -2349,6 +2878,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "Hi there\n".into(),
                     range: 3..9,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -2357,6 +2889,7 @@ mod tests {
                         _task: Task::ready(()),
                     },
                 });
+                popover.start_request(3..9, cx);
                 // Nothing to apply until a preview is complete.
                 assert_eq!(popover.item_count(), 0);
                 popover.move_highlight(1, cx);
@@ -2390,6 +2923,122 @@ mod tests {
                 "Alternatives".to_owned()
             )]
         );
+    }
+
+    /// A popover showing a call running on `range` of the editor's text.
+    fn running(
+        popover: &mut SelectionPopover,
+        range: Range<usize>,
+        call: &Arc<AtomicBool>,
+        cx: &mut Context<SelectionPopover>,
+    ) {
+        let text = popover.editor.read(cx).text().to_string();
+        popover.action_name = "Alternatives".into();
+        popover.open = Some(Open::new(
+            range.clone(),
+            text,
+            Mode::Running {
+                label: "Generating alternatives…".into(),
+                previews: Vec::new(),
+                _cancel: CancelOnDrop(call.clone()),
+                _task: Task::ready(()),
+            },
+        ));
+        popover.start_request(range, cx);
+    }
+
+    #[gpui::test]
+    fn a_parked_request_follows_the_text_and_applies_where_its_passage_is(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let config = tempfile::tempdir().unwrap();
+        cx.update(|cx| crate::app_settings::init(config.path().to_owned(), cx));
+        let window = cx.add_window(|_, _| gpui::EmptyView);
+        let (editor, popover) = window
+            .update(cx, |_, window, cx| {
+                let editor = cx.new(|cx| Editor::new("Hi there. Bye now.\n", cx));
+                let preview = cx.new(TextSelection::new);
+                let store = Store::new(config.path().join("drafts"));
+                let popover =
+                    cx.new(|cx| SelectionPopover::new(editor.clone(), preview, store, window, cx));
+                (editor, popover)
+            })
+            .unwrap();
+        let (there, bye) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        cx.update(|cx| {
+            popover.update(cx, |popover, cx| {
+                running(popover, 3..8, &there, cx);
+                // Escape parks it; the call goes on.
+                popover.dismiss(cx);
+                assert!(popover.open.is_none());
+                assert_eq!(popover.parked.len(), 1);
+                running(popover, 10..13, &bye, cx);
+                popover.dismiss(cx);
+                assert_eq!(popover.parked.len(), 2);
+            });
+        });
+        assert!(!there.load(Ordering::Relaxed));
+        // Typing before a passage moves it; typing in one discards it.
+        cx.update(|cx| {
+            editor.update(cx, |editor, cx| {
+                editor.select_range(0..0, cx);
+                editor.replace_range(0..0, "Oh. ", cx);
+            })
+        });
+        cx.update(|cx| editor.update(cx, |editor, cx| editor.replace_range(15..16, "Y", cx)));
+        assert!(bye.load(Ordering::Relaxed), "its call ends with it");
+        assert!(!there.load(Ordering::Relaxed));
+        cx.update(|cx| {
+            popover.update(cx, |popover, cx| {
+                assert_eq!(popover.parked.len(), 1);
+                // Its options come in while it's parked, and wait.
+                popover.options_arrived(&there, vec!["you".into()], false, cx);
+                popover.request_done(&there, Ok(vec!["you".into(), "all".into()]), cx);
+                assert!(matches!(
+                    &popover.parked[0].mode,
+                    Mode::Results(options) if options.len() == 2
+                ));
+                // ⌥↓ reopens it, with the first option highlighted.
+                popover.cycle(true, cx);
+                let open = popover.open.as_ref().expect("reopened");
+                assert!(open.reopened);
+                assert_eq!(open.highlighted, Some(0));
+                assert!(popover.parked.is_empty());
+                popover.confirm(cx);
+                assert_eq!(popover.editor.read(cx).text(), "Oh. Hi you. BYe now.\n");
+                // The caret stays where the user was writing, after the Y.
+                assert_eq!(popover.editor.read(cx).selected_range(), 14..14);
+                assert!(!popover.has_requests());
+            });
+        });
+        // ⌘⌫ discards the request shown, ending its call.
+        let again = Arc::new(AtomicBool::new(false));
+        cx.update(|cx| {
+            popover.update(cx, |popover, cx| {
+                running(popover, 4..6, &again, cx);
+                popover.discard(cx);
+                assert!(!popover.has_requests());
+            })
+        });
+        assert!(again.load(Ordering::Relaxed));
+        // A new request on the same text replaces the parked one.
+        let (first, second) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        cx.update(|cx| {
+            popover.update(cx, |popover, cx| {
+                running(popover, 4..6, &first, cx);
+                popover.dismiss(cx);
+                running(popover, 5..9, &second, cx);
+                assert!(popover.parked.is_empty());
+            })
+        });
+        assert!(first.load(Ordering::Relaxed));
+        assert!(!second.load(Ordering::Relaxed));
     }
 
     #[gpui::test]
@@ -2427,6 +3076,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "Hi there\n".into(),
                     range: 3..8,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: None,
                     mode: Mode::Comment(field.clone()),
                 });
@@ -2498,6 +3150,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "Hi there\n".into(),
                     range: 3..9,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -2545,6 +3200,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "Hi there\n".into(),
                     range: 3..8,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -2600,6 +3258,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "Hi there\n".into(),
                     range: 3..8,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: Some(1),
                     mode: Mode::Results(vec!["a".into(), "b".into()]),
                 });
@@ -2834,6 +3495,7 @@ mod tests {
         });
         cx.update(|_, cx| {
             popover.update(cx, |popover, cx| {
+                popover.start_request(7..7, cx);
                 popover.set_mode(Mode::Results(vec![" and a half".into()]), Some(0), cx);
                 popover.confirm(cx);
             });
@@ -2859,6 +3521,78 @@ mod tests {
                 None => gpui::div().child(editor).into_any_element(),
             }
         }
+    }
+
+    #[gpui::test]
+    fn a_badge_click_and_the_request_keys_reopen_parked_options(cx: &mut gpui::TestAppContext) {
+        let config = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            crate::app_settings::init(config.path().to_owned(), cx);
+            crate::theme::init(cx);
+            editor::init(cx);
+            init(cx);
+        });
+        let (root, cx) = cx.add_window_view(|_, cx| Wrapped {
+            editor: cx.new(|cx| Editor::new("One two three\nfour five\n", cx)),
+            popover: None,
+        });
+        let editor = root.read_with(cx, |root, _| root.editor.clone());
+        let popover = cx.update(|window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+            let preview = cx.new(TextSelection::new);
+            let store = Store::new(config.path().join("drafts"));
+            let popover =
+                cx.new(|cx| SelectionPopover::new(editor.clone(), preview, store, window, cx));
+            root.update(cx, |root, _| root.popover = Some(popover.clone()));
+            popover
+        });
+        let call = Arc::new(AtomicBool::new(false));
+        cx.update(|_, cx| {
+            editor.update(cx, |editor, cx| editor.select_range(4..7, cx));
+            popover.update(cx, |popover, cx| {
+                running(popover, 4..7, &call, cx);
+                popover.request_done(&call, Ok(vec!["2".into()]), cx);
+            });
+        });
+        cx.run_until_parked();
+        // Escape parks it, and the caret goes on to the next line.
+        cx.simulate_keystrokes("escape");
+        cx.update(|_, cx| editor.update(cx, |editor, cx| editor.select_range(16..16, cx)));
+        cx.run_until_parked();
+        let id = popover.read_with(cx, |popover, _| {
+            assert!(popover.open.is_none());
+            popover.parked[0].tracked.unwrap()
+        });
+        // Its badge sits in the margin beside the passage's row.
+        let at = editor.read_with(cx, |editor, _| {
+            let bounds = editor.bounds().expect("laid out");
+            let row = editor.tracked_bounds(id)[0];
+            point(
+                bounds.left() + BADGE_INSET + BADGE_SIZE / 2.,
+                row.center().y,
+            )
+        });
+        cx.simulate_click(at, gpui::Modifiers::none());
+        cx.run_until_parked();
+        popover.read_with(cx, |popover, _| {
+            let open = popover.open.as_ref().expect("reopened");
+            assert!(open.reopened && open.tracked == Some(id));
+        });
+        // The click went to the badge, not the editor's caret.
+        assert_eq!(editor.read_with(cx, |e, _| e.selected_range()), 16..16);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_none()));
+        cx.simulate_keystrokes("alt-up");
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_some()));
+        cx.simulate_keystrokes("1");
+        cx.run_until_parked();
+        assert_eq!(
+            editor.read_with(cx, |e, _| e.text().to_owned()),
+            "One 2 three\nfour five\n"
+        );
+        assert!(!popover.read_with(cx, |p, _| p.has_requests()));
     }
 
     #[gpui::test]
@@ -2890,6 +3624,9 @@ mod tests {
                 popover.open = Some(Open {
                     text: "One two".into(),
                     range: 7..7,
+                    tracked: None,
+                    reopened: false,
+                    action: SharedString::default(),
                     highlighted: Some(0),
                     mode: Mode::Results(vec![" three".into()]),
                 });

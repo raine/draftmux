@@ -12,6 +12,7 @@ use gpui::{
     actions, anchored, deferred, div, font, prelude::*, px, rgb, rgba,
 };
 
+pub use crate::buffer::TrackedId;
 use crate::buffer::{Affinity, Buffer, Selection, offset_from_utf16, offset_to_utf16};
 use crate::element::{EditorElement, Layout};
 use crate::highlight::{Styles, highlight};
@@ -282,6 +283,9 @@ pub struct EditorStyle {
     /// The dots after the caret while the ghost waits for text, faded and
     /// raised in a wave.
     pub ghost_waiting: Hsla,
+    /// The tint of the ranges [`Editor::track`] keeps, which are underlined
+    /// in the caret's color; an empty one is a bar in that color.
+    pub tracked: Hsla,
     /// Size the editor to its text, up to the available width, instead of
     /// filling its parent and scrolling. Scroll events then pass through to
     /// what contains it.
@@ -311,6 +315,7 @@ impl Default for EditorStyle {
             flash: rgba(0xffd60a59).into(),
             marked: rgba(0x0a6cf524).into(),
             ghost_waiting: rgba(0x3c3c4373).into(),
+            tracked: rgba(0x0a6cf512).into(),
             fit_content: false,
         }
     }
@@ -657,6 +662,49 @@ impl Editor {
         self.reveal_marked = range.is_some();
         self.marked = range;
         cx.notify();
+    }
+
+    /// Keeps `range` on its text as the text changes, tinted, until
+    /// [`Editor::untrack`] or an edit that touches it; see
+    /// [`Editor::tracked`].
+    pub fn track(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> TrackedId {
+        cx.notify();
+        self.buffer.track(range)
+    }
+
+    /// Where the range `id` is now: edits before it move it. `None` once an
+    /// edit has touched it, inside it, across either end or at an empty
+    /// range's offset, or new text was loaded.
+    pub fn tracked(&self, id: TrackedId) -> Option<Range<usize>> {
+        self.buffer.tracked(id)
+    }
+
+    pub fn untrack(&mut self, id: TrackedId, cx: &mut Context<Self>) {
+        self.buffer.untrack(id);
+        cx.notify();
+    }
+
+    /// Window-space rectangles of the tracked range `id`, one per visual
+    /// row, or a caret's for an empty one; empty when it's gone or the text
+    /// has changed since the last layout. Elements after the editor see this
+    /// frame's layout in their prepaint.
+    pub fn tracked_bounds(&self, id: TrackedId) -> Vec<Bounds<Pixels>> {
+        let (Some(layout), Some(range)) = (&self.layout, self.buffer.tracked(id)) else {
+            return Vec::new();
+        };
+        if layout.revision != self.buffer.revision() {
+            return Vec::new();
+        }
+        if range.is_empty() {
+            return vec![layout.caret_bounds(range.start, Affinity::Downstream)];
+        }
+        layout.range_rects(range, false)
+    }
+
+    /// The editor's bounds in the window as last laid out; the text sits
+    /// inside them, `padding_x` from either side.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.layout.as_ref().map(|layout| layout.bounds)
     }
 
     /// Shows `text` after buffer offset `offset` as faint text that isn't

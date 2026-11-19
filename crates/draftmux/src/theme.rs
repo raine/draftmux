@@ -401,6 +401,7 @@ impl Palette {
             flash: self.change_flash,
             marked: self.change_mark,
             ghost_waiting: self.ghost_waiting,
+            tracked: self.change_mark.opacity(0.5),
             ..EditorStyle::default()
         }
     }

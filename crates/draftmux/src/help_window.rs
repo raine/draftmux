@@ -40,6 +40,18 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("Select text", "Rewrite it with an action or a comment"),
             (
+                "esc",
+                "Leave the options for later; its badge brings them back",
+            ),
+            (
+                editor::by_platform!("⌥↓  ⌥↑", "Alt+Down  Alt+Up"),
+                "Next or previous options left for later",
+            ),
+            (
+                editor::by_platform!("⌘⌫", "Ctrl+Backspace"),
+                "Discard the options shown",
+            ),
+            (
                 editor::by_platform!("⌘-drag", "Ctrl-drag"),
                 "Add another selection",
             ),
