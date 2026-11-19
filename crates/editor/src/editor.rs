@@ -244,6 +244,9 @@ pub enum EditorEvent {
     /// The ghost went away by the user's doing: dismissed, or an edit or
     /// caret movement other than accepting it.
     GhostDismissed,
+    /// A plain click, which placed the caret and selected nothing, landed
+    /// on the tracked range `id`; see [`Editor::track`].
+    TrackedClicked(TrackedId),
 }
 
 /// Display-only text after a buffer offset; see [`Editor::set_ghost`].
@@ -337,6 +340,9 @@ pub struct Editor {
     pub(crate) markdown: bool,
     /// A mouse drag selection is in progress.
     selecting: bool,
+    /// The tracked range a plain press landed on, until the button is
+    /// released.
+    pressed_tracked: Option<TrackedId>,
     /// What the drag selects by, and the unit it started on.
     drag: (Granularity, Range<usize>),
     /// Where the dragging pointer last was, in window coordinates.
@@ -425,6 +431,7 @@ impl Editor {
             autoscroll: false,
             layout: None,
             selecting: false,
+            pressed_tracked: None,
             drag: (Granularity::Char, 0..0),
             drag_pointer: Point::default(),
             drag_scrolling: false,
@@ -1105,6 +1112,12 @@ impl Editor {
             self.drag = (granularity, unit);
         }
         self.selecting = true;
+        let plain = granularity == Granularity::Char && !event.modifiers.modified();
+        self.pressed_tracked = self
+            .buffer
+            .tracked_ranges()
+            .find(|(_, range)| plain && range.start <= offset && offset <= range.end)
+            .map(|(id, _)| id);
         self.after_change(Some(window), false, cx);
     }
 
@@ -1291,6 +1304,12 @@ impl Editor {
         if self.selecting {
             self.selecting = false;
             cx.notify();
+        }
+        if let Some(id) = self.pressed_tracked.take()
+            && self.selected_range().is_empty()
+            && self.buffer.tracked(id).is_some()
+        {
+            cx.emit(EditorEvent::TrackedClicked(id));
         }
     }
 

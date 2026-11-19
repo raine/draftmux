@@ -512,7 +512,9 @@ impl Chrome {
                     this.mark_preview(cx);
                 }
                 EditorEvent::ExtraSelectionsChanged => this.mark_preview(cx),
-                EditorEvent::GhostAccepted(_) | EditorEvent::GhostDismissed => {}
+                EditorEvent::GhostAccepted(_)
+                | EditorEvent::GhostDismissed
+                | EditorEvent::TrackedClicked(_) => {}
             }),
             // Appearance is app-wide, and this window lives as long as the
             // app, so it reports appearance changes for every window.

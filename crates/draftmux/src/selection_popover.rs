@@ -47,8 +47,7 @@
 //! written for the old wording. Several requests run at once. Each shows as
 //! a tint on its passage and a badge in the left margin, a spinner while its
 //! call runs and a dot once its options wait; the badge, a click on the
-//! passage in the preview, or `⌥↓` and `⌥↑` reopen its options in the
-//! popover. Finished options are kept only until they're shown: dismissing
+//! passage, or `⌥↓` and `⌥↑` reopen its options in the popover. Finished options are kept only until they're shown: dismissing
 //! them then discards the request, as `⌘⌫` does at any time. A new request
 //! on text a request covers replaces it. A request's badge and options stay
 //! in the pane it was made in, the editor's or the preview's, and move to
@@ -504,10 +503,7 @@ impl SelectionPopover {
                     .filter_map(|open| open.tracked)
                     .find(|id| u64::from(*id) == *tag);
                 if let Some(id) = id {
-                    if let Some(open) = this.parked.iter_mut().find(|o| o.tracked == Some(id)) {
-                        open.from_preview = true;
-                    }
-                    this.engage(id, cx);
+                    this.reopen_clicked(id, true, cx);
                 }
             }),
             cx.observe(&editor, |this, _, cx| this.schedule_reconcile(cx)),
@@ -818,6 +814,7 @@ impl SelectionPopover {
         match event {
             EditorEvent::GhostAccepted(text) => self.ghost_accepted(text, cx),
             EditorEvent::GhostDismissed => self.ghost = None,
+            EditorEvent::TrackedClicked(id) => self.reopen_clicked(*id, false, cx),
             EditorEvent::Edited => {
                 self.drop_touched(cx);
                 self.dismiss(cx);
@@ -1064,6 +1061,17 @@ impl SelectionPopover {
         }
         self.open = Some(open);
         self.changed(cx);
+    }
+
+    /// Reopens the parked request `id` whose passage was clicked, in the
+    /// pane clicked, the preview's or the editor's, which it then belongs
+    /// to.
+    fn reopen_clicked(&mut self, id: TrackedId, in_preview: bool, cx: &mut Context<Self>) {
+        let Some(open) = self.parked.iter_mut().find(|open| open.tracked == Some(id)) else {
+            return;
+        };
+        open.from_preview = in_preview;
+        self.engage(id, cx);
     }
 
     /// Shows the next request in the text after the one shown, or after the
@@ -3814,19 +3822,60 @@ mod tests {
         cx.run_until_parked();
         assert!(popover.read_with(cx, |p, _| p.open.is_none()));
         assert!(!popover.read_with(cx, |p, _| p.has_requests()));
-        // Another, parked while running, comes back with ⌥↑ once done.
-        let again = Arc::new(AtomicBool::new(false));
-        cx.update(|_, cx| popover.update(cx, |popover, cx| running(popover, 4..7, &again, cx)));
-        cx.simulate_keystrokes("escape");
+        // Two more, parked while running, wait once done.
+        let (again, four) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        for (range, call) in [(4..7, &again), (12..16, &four)] {
+            cx.update(|_, cx| popover.update(cx, |popover, cx| running(popover, range, call, cx)));
+            cx.simulate_keystrokes("escape");
+        }
         cx.update(|_, cx| {
             popover.update(cx, |popover, cx| {
-                popover.request_done(&again, Ok(vec!["2".into()]), cx)
+                popover.request_done(&again, Ok(vec!["2".into()]), cx);
+                popover.request_done(&four, Ok(vec!["4".into()]), cx);
             })
         });
         cx.run_until_parked();
+        let ids = popover.read_with(cx, |popover, _| {
+            let ids: Vec<_> = popover
+                .parked
+                .iter()
+                .map(|open| open.tracked.unwrap())
+                .collect();
+            ids
+        });
+        // ⌥↑ brings back the one before the caret, at 16.
         cx.simulate_keystrokes("alt-up");
         cx.run_until_parked();
-        assert!(popover.read_with(cx, |p, _| p.open.is_some()));
+        popover.read_with(cx, |popover, _| {
+            assert_eq!(popover.open.as_ref().unwrap().tracked, Some(ids[1]));
+        });
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // A drag across the other's passage in the editor just selects; a
+        // plain click on it reopens its options, the caret where it landed.
+        let row = editor.read_with(cx, |editor, _| editor.tracked_bounds(ids[0])[0]);
+        let below = point(row.center().x, row.bottom() + row.size.height);
+        cx.simulate_mouse_down(
+            row.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_move(below, gpui::MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_up(below, gpui::MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_none()));
+        assert!(!editor.read_with(cx, |e, _| e.selected_range().is_empty()));
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        popover.read_with(cx, |popover, _| {
+            let open = popover.open.as_ref().expect("reopened");
+            assert!(open.reopened && open.tracked == Some(ids[0]));
+        });
+        let caret = editor.read_with(cx, |e, _| e.selected_range());
+        assert!(caret.is_empty() && (4..=7).contains(&caret.start));
         cx.simulate_keystrokes("1");
         cx.run_until_parked();
         assert_eq!(

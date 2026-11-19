@@ -30,8 +30,8 @@ Status: early release; expect rough edges.
 - **Selection actions.** Select text to get alternatives, Shorten or Tighten, or
   your own actions. `Esc` before the options are ready leaves them for later
   while you keep writing: the passage stays marked, and its badge in the
-  margin, a click on it in the preview, `⌥↓` or `⌥↑` bring them back once
-  they're in. Several can run at once. Options you've seen go when you close
+  margin, a click on the passage, `⌥↓` or `⌥↑` bring them back once they're
+  in. Several can run at once. Options you've seen go when you close
   them, `⌘⌫` discards them sooner, and editing the passage drops them. With
   text selected, a chat message changes only that part. Hold `⌘` while
   dragging to select more passages; a chat message then edits each of them.
