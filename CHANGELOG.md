@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 (2026-11-20)
 
 - New: Alternatives and selection actions keep running when you close the
   popover. `Esc` leaves them for later: the passage stays marked, and its badge
