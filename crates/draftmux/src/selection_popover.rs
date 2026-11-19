@@ -81,7 +81,7 @@ use crate::app_settings::AppSettings;
 use crate::assets::{COMMENT_ICON, SEND_ICON};
 use crate::markup_view::{self, MarkupStyle};
 use crate::resources;
-use crate::selectable::{TextSelection, TrackedClicked};
+use crate::selectable::{SelectionStarted, TextSelection, TrackedClicked};
 use crate::selection::{
     self, Action as SelectionAction, Agent, Backend as SelectionBackend, Request, SelectionConfig,
     Warm,
@@ -481,6 +481,14 @@ impl SelectionPopover {
                 }
             }),
             cx.subscribe(&editor, |this, _, event, cx| this.editor_event(event, cx)),
+            // A press in the preview leaves reopened options, as a press in
+            // the editor does by moving the caret; the selection mirrored
+            // into the editor needn't change.
+            cx.subscribe(&preview, |this, _, _: &SelectionStarted, cx| {
+                if this.open.as_ref().is_some_and(|open| open.reopened) {
+                    this.dismiss(cx);
+                }
+            }),
             // A click on a parked passage in the preview reopens it there.
             cx.subscribe(&preview, |this, _, TrackedClicked(tag), cx| {
                 let id = this
@@ -3687,6 +3695,15 @@ mod tests {
         assert!(cx.update(|window, cx| editor.focus_handle(cx).is_focused(window)));
         // The click went to the badge, not the editor's caret.
         assert_eq!(editor.read_with(cx, |e, _| e.selected_range()), 16..16);
+        // A press in the preview leaves them, though the editor's selection
+        // stays as it was.
+        let preview = popover.read_with(cx, |popover, _| popover.preview.clone());
+        cx.update(|_, cx| preview.update(cx, |_, cx| cx.emit(SelectionStarted { adding: false })));
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_none()));
+        cx.simulate_keystrokes("alt-up");
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |p, _| p.open.is_some()));
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
         assert!(popover.read_with(cx, |p, _| p.open.is_none()));
