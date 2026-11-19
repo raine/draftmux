@@ -679,6 +679,11 @@ impl Editor {
         self.buffer.tracked(id)
     }
 
+    /// Every tracked range, by where it is now.
+    pub fn tracked_ranges(&self) -> Vec<(TrackedId, Range<usize>)> {
+        self.buffer.tracked_ranges().collect()
+    }
+
     pub fn untrack(&mut self, id: TrackedId, cx: &mut Context<Self>) {
         self.buffer.untrack(id);
         cx.notify();

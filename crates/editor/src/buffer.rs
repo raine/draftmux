@@ -112,6 +112,12 @@ pub struct Buffer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TrackedId(u64);
 
+impl From<TrackedId> for u64 {
+    fn from(id: TrackedId) -> u64 {
+        id.0
+    }
+}
+
 impl Buffer {
     pub fn new(text: &str) -> Self {
         Self {

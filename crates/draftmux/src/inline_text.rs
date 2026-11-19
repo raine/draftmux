@@ -229,6 +229,8 @@ pub struct Hitboxes {
     links: Vec<(Hitbox, SharedString)>,
     /// Marked changes and their hunks.
     marks: Vec<(Hitbox, usize)>,
+    /// Where the selection's tracked ranges fall in this text.
+    tracked: Vec<Bounds<Pixels>>,
 }
 
 impl Element for InlineText {
@@ -289,6 +291,7 @@ impl Element for InlineText {
             text: None,
             links: Vec::new(),
             marks: Vec::new(),
+            tracked: Vec::new(),
         };
         if let Some(select) = &self.select {
             let laid = self.laid.clone();
@@ -310,6 +313,42 @@ impl Element for InlineText {
         if !laid.shaped.nowrap && laid.wrap != Some(bounds.size.width) {
             laid.lines = break_lines(&laid.shaped, Some(bounds.size.width), true);
             laid.wrap = Some(bounds.size.width);
+        }
+        // Placed now rather than in paint, so what's beside the text can
+        // follow them in the same frame.
+        if let Some(select) = &self.select {
+            let len = self.segments.iter().map(|s| s.text.len()).sum();
+            let parts = select.state.read(cx).tracked_in(select.key, len);
+            let mut placed = Vec::new();
+            for (line, top, left) in positioned(laid, bounds).filter(|_| !parts.is_empty()) {
+                for frag in &line.frags {
+                    let piece = &laid.shaped.pieces[frag.piece];
+                    let x = left + frag.x;
+                    let at = |ix: usize| {
+                        x + piece.line.x_for_index(ix - piece.start)
+                            - piece.line.x_for_index(frag.range.start)
+                    };
+                    for (tag, part) in &parts {
+                        let start = part.start.max(piece.start + frag.range.start);
+                        let end = part.end.min(piece.start + frag.range.end);
+                        if start < end {
+                            let rect = Bounds::from_corners(
+                                point(at(start), top),
+                                point(at(end), top + laid.shaped.line_height),
+                            );
+                            placed.push((*tag, rect));
+                        }
+                    }
+                }
+            }
+            if !placed.is_empty() {
+                select.state.update(cx, |state, _| {
+                    for (tag, rect) in &placed {
+                        state.placed_tracked(*tag, *rect);
+                    }
+                });
+                hitboxes.tracked = placed.into_iter().map(|(_, rect)| rect).collect();
+            }
         }
         for (line, top, left) in positioned(laid, bounds) {
             for frag in &line.frags {
@@ -365,6 +404,21 @@ impl Element for InlineText {
         let shaped = &laid.shaped;
         if let Some(hitbox) = &hitboxes.text {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
+        }
+        if let Some(select) = &self.select
+            && !hitboxes.tracked.is_empty()
+        {
+            let (tint, line) = select.state.read(cx).tracked_colors();
+            for rect in &hitboxes.tracked {
+                window.paint_quad(fill(*rect, tint));
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(rect.left(), rect.bottom() - px(1.5)),
+                        size(rect.size.width, px(1.)),
+                    ),
+                    line,
+                ));
+            }
         }
         // A flash, the marks, then the selection, whose rectangles are
         // reported.
@@ -1075,6 +1129,57 @@ pub fn is_emoji(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled};
+
+    struct Tracked {
+        state: Entity<crate::selectable::TextSelection>,
+    }
+
+    impl Render for Tracked {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let paragraph = InlineText::new(vec![Segment {
+                text: "One two three".into(),
+                ..Default::default()
+            }])
+            .selectable(Some(crate::selectable::Select {
+                state: self.state.clone(),
+                key: (0, 1),
+                color: Hsla::default(),
+                registry: None,
+            }));
+            crate::selectable::area(&self.state, cx)
+                .w(px(400.))
+                .child(paragraph)
+        }
+    }
+
+    #[gpui::test]
+    fn tracked_ranges_are_placed_where_their_text_is(cx: &mut gpui::TestAppContext) {
+        use crate::selectable::{Pos, TextSelection};
+        let (root, cx) = cx.add_window_view(|_, cx| Tracked {
+            state: cx.new(TextSelection::new),
+        });
+        let state = root.read_with(cx, |root, _| root.state.clone());
+        let at = |offset| Pos {
+            key: (0, 1),
+            offset,
+        };
+        cx.update(|_, cx| {
+            state.update(cx, |state, cx| {
+                // "two", and a range in no paragraph drawn here.
+                let ranges = vec![(7, at(4), at(7)), (9, at(13), at(13))];
+                state.set_tracked(ranges, Hsla::default(), Hsla::default(), cx)
+            })
+        });
+        cx.run_until_parked();
+        state.read_with(cx, |state, _| {
+            let two = state.tracked_rects(7);
+            assert_eq!(two.len(), 1);
+            assert!(two[0].size.width > px(0.) && two[0].size.height > px(0.));
+            assert!(two[0].left() > px(0.), "after \"One \"");
+            assert!(state.tracked_rects(9).is_empty());
+        });
+    }
 
     #[test]
     fn collects_offscreen_paragraph_text_without_layout() {

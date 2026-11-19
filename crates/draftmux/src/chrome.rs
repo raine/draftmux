@@ -151,6 +151,8 @@ pub struct Chrome {
     mirrored: Option<Range<usize>>,
     /// When the editor flash last tinted in the preview started.
     mirrored_flash: Option<Instant>,
+    /// The selection requests last marked in the preview.
+    mirrored_requests: Option<Vec<(editor::TrackedId, Range<usize>)>>,
     /// At least one of the markdown editor and the preview is shown.
     show_editor: bool,
     show_preview: bool,
@@ -207,6 +209,10 @@ impl Render for Chrome {
             .leaving
             .retain(sidebar::LeavingRow::folding);
         self.mirror_flash(window, cx);
+        self.mirror_requests(window, cx);
+        self.selection
+            .read(cx)
+            .set_panes_shown(self.show_editor, self.show_preview);
         let shown = [self.show_sidebar, self.show_editor, self.show_preview];
         let panes = self.panes.get_or_insert_with(|| shown.map(Slide::new));
         let now = Instant::now();
@@ -618,6 +624,7 @@ impl Chrome {
             preview_map: None,
             mirrored: None,
             mirrored_flash: None,
+            mirrored_requests: None,
             show_editor: true,
             show_preview: true,
             narrow: false,
@@ -1162,6 +1169,7 @@ impl Chrome {
             cx.notify();
         });
         self.preview_map = None;
+        self.mirrored_requests = None;
         self.preview_selection
             .update(cx, |selection, cx| selection.reset(cx));
     }
@@ -1270,6 +1278,51 @@ impl Chrome {
                 map.rendered(range.start.saturating_sub(body_offset)..range.end - body_offset)
             })
             .collect()
+    }
+
+    /// Marks in the preview the passages selection requests wait on, once
+    /// the preview shows the text they're tracked in and has published its
+    /// paragraphs.
+    fn mirror_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        if !self.show_preview || editor.text() != self.preview_source {
+            return;
+        }
+        let requests = editor.tracked_ranges();
+        if self.mirrored_requests.as_ref() == Some(&requests) {
+            return;
+        }
+        if !requests.is_empty()
+            && self
+                .preview_selection
+                .read(cx)
+                .paragraphs()
+                .next()
+                .is_none()
+        {
+            window.request_animation_frame();
+            return;
+        }
+        let marks: Vec<_> = requests
+            .iter()
+            .filter_map(|(id, range)| {
+                let (start, end) = self.preview_marks(vec![range.clone()], cx).pop()?;
+                Some((u64::from(*id), start, end))
+            })
+            .collect();
+        self.mirrored_requests = Some(requests);
+        let palette = theme::palette(cx);
+        let (tint, line) = (
+            palette.change_mark.opacity(0.5),
+            palette.accent.opacity(0.55),
+        );
+        // A notification while drawing doesn't redraw the cached preview.
+        let selection = self.preview_selection.clone();
+        window.on_next_frame(move |_, cx| {
+            selection.update(cx, |selection, cx| {
+                selection.set_tracked(marks, tint, line, cx)
+            });
+        });
     }
 
     /// Tints in the preview what the editor's flash points out, once the

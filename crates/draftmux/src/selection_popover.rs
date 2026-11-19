@@ -49,7 +49,9 @@
 //! passage and a badge in the editor's left margin, a spinner while its call
 //! runs; the badge, or `⌥↓` and `⌥↑`, reopen its options in the popover, and
 //! `⌘⌫` discards the one shown. A new request on text a request covers
-//! replaces it.
+//! replaces it. The preview marks the passages too. A request's badge and
+//! options stay in the pane it was made in, the editor's or the preview's,
+//! and move to the other while that one is hidden.
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -150,6 +152,11 @@ pub fn init(cx: &mut App) {
     let mut bindings = Vec::new();
     // The editor, or the preview when the selection was made there.
     for focused in ["Editor", crate::selectable::KEY_CONTEXT] {
+        let requests = Some(format!("{REQUESTS_CONTEXT} > {focused}"));
+        bindings.extend([
+            KeyBinding::new("alt-down", NextRequest, requests.as_deref()),
+            KeyBinding::new("alt-up", PreviousRequest, requests.as_deref()),
+        ]);
         let popover = Some(format!("{POPOVER_CONTEXT} > {focused}"));
         let results = Some(format!("{RESULTS_CONTEXT} > {focused}"));
         bindings.extend([
@@ -192,11 +199,6 @@ pub fn init(cx: &mut App) {
             ContinueOptions,
             draft_editor.as_deref(),
         ),
-    ]);
-    let requests = Some(format!("{REQUESTS_CONTEXT} > Editor"));
-    bindings.extend([
-        KeyBinding::new("alt-down", NextRequest, requests.as_deref()),
-        KeyBinding::new("alt-up", PreviousRequest, requests.as_deref()),
     ]);
     // Bound after the editor's keys, so these win at the same depth.
     cx.bind_keys(bindings);
@@ -244,6 +246,9 @@ pub struct SelectionPopover {
     /// The preview pane in window coordinates, measured by
     /// [`Self::wrap_preview`].
     preview_pane: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Whether the editor's and the preview's panes are shown, for where a
+    /// request's badge and options go.
+    panes_shown: Cell<(bool, bool)>,
     /// Remembers whether the user has added a selection, after which the
     /// hint on how to is hidden.
     store: Store,
@@ -307,6 +312,8 @@ struct Open {
     reopened: bool,
     /// The name of the action, for the edit history.
     action: SharedString,
+    /// Made from a selection in the preview, where it then shows.
+    from_preview: bool,
 }
 
 impl Open {
@@ -319,6 +326,7 @@ impl Open {
             tracked: None,
             reopened: false,
             action: SharedString::default(),
+            from_preview: false,
         }
     }
 }
@@ -516,6 +524,7 @@ impl SelectionPopover {
             pane: Rc::new(Cell::new(None)),
             preview,
             preview_pane: Rc::new(Cell::new(None)),
+            panes_shown: Cell::new((true, true)),
             show_add_hint: !store.selection_added(),
             store,
             pending_show: None,
@@ -596,6 +605,23 @@ impl SelectionPopover {
         Self::wrap_pane(this, preview, pane, true, cx)
     }
 
+    /// Tells whether the editor's and the preview's panes are shown, so a
+    /// request shows in the other while its own pane is hidden.
+    pub fn set_panes_shown(&self, editor: bool, preview: bool) {
+        self.panes_shown.set((editor, preview));
+    }
+
+    /// Whether `open`'s badge and reopened options go in the preview: the
+    /// pane it was made in, unless that's hidden and the other isn't.
+    fn shows_in_preview(&self, open: &Open) -> bool {
+        let (editor, preview) = self.panes_shown.get();
+        if open.from_preview {
+            preview || !editor
+        } else {
+            !editor && preview
+        }
+    }
+
     fn wrap_pane(
         this: &Entity<Self>,
         child: impl IntoElement,
@@ -618,15 +644,16 @@ impl SelectionPopover {
         {
             context = context.map(|context| format!("{context} {REQUEST_CONTEXT}"));
         }
-        if !preview {
-            let requests = if popover.has_requests() {
-                format!(" {REQUESTS_CONTEXT}")
-            } else {
-                String::new()
-            };
+        if popover.has_requests() {
             context = Some(match context {
-                Some(context) => format!("{DRAFT_EDITOR_CONTEXT}{requests} {context}"),
-                None => format!("{DRAFT_EDITOR_CONTEXT}{requests}"),
+                Some(context) => format!("{REQUESTS_CONTEXT} {context}"),
+                None => REQUESTS_CONTEXT.to_string(),
+            });
+        }
+        if !preview {
+            context = Some(match context {
+                Some(context) => format!("{DRAFT_EDITOR_CONTEXT} {context}"),
+                None => DRAFT_EDITOR_CONTEXT.to_string(),
             });
         }
         let entity = this.clone();
@@ -682,8 +709,10 @@ impl SelectionPopover {
                 move |_: &Discard, _, cx| this.update(cx, |this, cx| this.discard(cx))
             })
             .child(child)
-            // After the editor, so they're placed with its current layout.
-            .when(!preview, |pane| pane.child(badges(this, cx)))
+            // After the text, so they're placed with its current layout.
+            .when(popover.has_requests(), |pane| {
+                pane.child(badges(this, preview, cx))
+            })
             // Before the panel opens, a hidden copy of its content in the
             // pane measures it, so the panel opens at its final size.
             .when(
@@ -724,13 +753,15 @@ impl SelectionPopover {
             .into_any_element()
     }
 
-    /// Whether the selection was made in the preview, so the popover goes
-    /// there. Continuing at the cursor is always in the editor.
+    /// Whether the popover goes over the preview: for a selection made
+    /// there, and for a request reopened while the editor is hidden.
+    /// Continuing at the cursor is otherwise in the editor.
     fn in_preview(&self, cx: &App) -> bool {
-        self.open
-            .as_ref()
-            .is_none_or(|open| !open.range.is_empty() && !open.reopened)
-            && self.preview.read(cx).range().is_some()
+        match &self.open {
+            Some(open) if open.reopened => self.shows_in_preview(open),
+            Some(open) if open.range.is_empty() => false,
+            _ => self.preview.read(cx).range().is_some(),
+        }
     }
 
     /// Whether a draft is focused that selection calls can fork: any
@@ -909,6 +940,7 @@ impl SelectionPopover {
             gone.push(self.parked.remove(0));
         }
         let action = self.action_name.clone();
+        let from_preview = self.in_preview(cx);
         let id = self.editor.update(cx, |editor, cx| {
             for id in gone.iter().filter_map(|open| open.tracked) {
                 editor.untrack(id, cx);
@@ -920,6 +952,7 @@ impl SelectionPopover {
                 self.editor.update(cx, |editor, cx| editor.untrack(old, cx));
             }
             open.action = action;
+            open.from_preview = from_preview;
         }
         cx.notify();
     }
@@ -1714,8 +1747,17 @@ impl SelectionPopover {
             return None;
         }
         self.open.as_ref()?;
+        let reopened = self
+            .open
+            .as_ref()?
+            .tracked
+            .filter(|_| self.open.as_ref().is_some_and(|open| open.reopened));
         let (pane, rows) = if self.in_preview(cx) {
-            let rows = self.preview.read(cx).selection_rects().to_vec();
+            let preview = self.preview.read(cx);
+            let rows = match reopened {
+                Some(id) => preview.tracked_rects(id.into()),
+                None => preview.selection_rects().to_vec(),
+            };
             (self.preview_pane.get()?, rows)
         } else if let Some(id) = self
             .open
@@ -2543,7 +2585,7 @@ fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
 /// The badges of the editor's requests in its left margin, beside each
 /// passage's first row that another badge hasn't taken. A click reopens a
 /// request's options, or parks them again.
-fn badges(this: &Entity<SelectionPopover>, cx: &App) -> Badges {
+fn badges(this: &Entity<SelectionPopover>, preview: bool, cx: &App) -> Badges {
     let popover = this.read(cx);
     let palette = *theme::palette(cx);
     let shown = popover.open.iter().filter(|open| open.tracked.is_some());
@@ -2551,6 +2593,7 @@ fn badges(this: &Entity<SelectionPopover>, cx: &App) -> Badges {
         .map(|open| (open, true))
         .chain(popover.parked.iter().map(|open| (open, false)))
         .enumerate()
+        .filter(|(_, (open, _))| popover.shows_in_preview(open) == preview)
         .filter_map(|(index, (open, engaged))| {
             let id = open.tracked?;
             let status = Status::of(&open.mode);
@@ -2596,19 +2639,40 @@ fn badges(this: &Entity<SelectionPopover>, cx: &App) -> Badges {
             Some((id, badge.into_any_element()))
         })
         .collect();
+    let text = if preview {
+        Passages::Preview(popover.preview.clone())
+    } else {
+        Passages::Editor(popover.editor.clone())
+    };
     Badges {
-        editor: popover.editor.clone(),
+        text,
         items,
         shown: Vec::new(),
     }
 }
 
-/// Elements placed beside tracked passages in the editor's left margin. It
-/// takes no space; each badge is laid out and placed in prepaint, after the
-/// editor before it has laid out the text, and hidden while its row isn't
-/// all in view.
+/// What lays out the passages that badges go beside.
+enum Passages {
+    Editor(Entity<Editor>),
+    Preview(Entity<TextSelection>),
+}
+
+impl Passages {
+    /// Window-space rows of the passage `id`, as laid out this frame.
+    fn rows(&self, id: TrackedId, cx: &App) -> Vec<Bounds<Pixels>> {
+        match self {
+            Self::Editor(editor) => editor.read(cx).tracked_bounds(id),
+            Self::Preview(preview) => preview.read(cx).tracked_rects(id.into()),
+        }
+    }
+}
+
+/// Elements placed beside tracked passages in the left margin of the pane
+/// it fills, the editor's or the preview's. Each badge is laid out and
+/// placed in prepaint, after the text before it was laid out, and hidden
+/// while its row isn't all in view.
 struct Badges {
-    editor: Entity<Editor>,
+    text: Passages,
     items: Vec<(TrackedId, AnyElement)>,
     /// Which of `items` were placed.
     shown: Vec<bool>,
@@ -2641,6 +2705,15 @@ impl Element for Badges {
     ) -> (gpui::LayoutId, ()) {
         let style = gpui::Style {
             position: gpui::Position::Absolute,
+            inset: gpui::Edges {
+                top: px(0.).into(),
+                left: px(0.).into(),
+                ..Default::default()
+            },
+            size: gpui::Size {
+                width: gpui::relative(1.).into(),
+                height: gpui::relative(1.).into(),
+            },
             ..Default::default()
         };
         (window.request_layout(style, [], cx), ())
@@ -2650,17 +2723,16 @@ impl Element for Badges {
         &mut self,
         _: Option<&gpui::GlobalElementId>,
         _: Option<&gpui::InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
     ) {
-        let editor = self.editor.read(cx);
-        let bounds = editor.bounds();
+        let bounds = Some(bounds);
         let rows: Vec<_> = self
             .items
             .iter()
-            .map(|(id, _)| editor.tracked_bounds(*id))
+            .map(|(id, _)| self.text.rows(*id, cx))
             .collect();
         let mut taken: Vec<Pixels> = Vec::new();
         self.shown = Vec::new();
@@ -2881,6 +2953,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -3007,6 +3080,18 @@ mod tests {
                 assert!(open.reopened);
                 assert_eq!(open.highlighted, Some(0));
                 assert!(popover.parked.is_empty());
+                // It reopens in the pane it was made in, the editor, or in
+                // the preview while the editor is hidden.
+                assert!(!popover.in_preview(cx));
+                popover.set_panes_shown(false, true);
+                assert!(popover.in_preview(cx));
+                // One made in the preview stays there beside the editor.
+                popover.set_panes_shown(true, true);
+                popover.open.as_mut().unwrap().from_preview = true;
+                assert!(popover.in_preview(cx));
+                popover.set_panes_shown(true, false);
+                assert!(!popover.in_preview(cx));
+                popover.set_panes_shown(true, true);
                 popover.confirm(cx);
                 assert_eq!(popover.editor.read(cx).text(), "Oh. Hi you. BYe now.\n");
                 // The caret stays where the user was writing, after the Y.
@@ -3079,6 +3164,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: None,
                     mode: Mode::Comment(field.clone()),
                 });
@@ -3153,6 +3239,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -3203,6 +3290,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: None,
                     mode: Mode::Running {
                         label: "Generating alternatives…".into(),
@@ -3261,6 +3349,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: Some(1),
                     mode: Mode::Results(vec!["a".into(), "b".into()]),
                 });
@@ -3627,6 +3716,7 @@ mod tests {
                     tracked: None,
                     reopened: false,
                     action: SharedString::default(),
+                    from_preview: false,
                     highlighted: Some(0),
                     mode: Mode::Results(vec![" three".into()]),
                 });

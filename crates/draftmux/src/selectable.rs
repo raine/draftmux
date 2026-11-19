@@ -15,7 +15,8 @@
 //! Besides the selection, a surface can mark other ranges in the selection's
 //! color ([`TextSelection::set_marks`]), such as selections kept from before
 //! a press with the secondary modifier (⌘ on macOS), which
-//! [`SelectionStarted`] reports.
+//! [`SelectionStarted`] reports. It can also tint and underline tagged ranges
+//! ([`TextSelection::set_tracked`]) and report where it placed each.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -127,6 +128,13 @@ pub struct TextSelection {
     /// Ranges painted like the selection besides it, start and end in
     /// reading order.
     marks: Vec<(Pos, Pos)>,
+    /// Ranges tinted and underlined, each with a tag, start and end in
+    /// reading order.
+    tracked: Vec<(u64, Pos, Pos)>,
+    /// The tint and the underline of `tracked`.
+    tracked_colors: (Hsla, Hsla),
+    /// Where the current frame placed the parts of `tracked`, by tag.
+    tracked_rects: Vec<(u64, Bounds<Pixels>)>,
     /// Ranges tinted in a colour that fades, from a start time, as the
     /// editor's [`flash`](editor::Editor::flash) does.
     flash: Option<Flash>,
@@ -174,6 +182,9 @@ impl TextSelection {
             anchor: None,
             head: None,
             marks: Vec::new(),
+            tracked: Vec::new(),
+            tracked_colors: (Hsla::default(), Hsla::default()),
+            tracked_rects: Vec::new(),
             flash: None,
             dragging: None,
             scroller: None,
@@ -200,6 +211,7 @@ impl TextSelection {
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.texts.clear();
         self.flash = None;
+        self.tracked.clear();
         self.set_marks(Vec::new(), cx);
         self.clear(cx);
     }
@@ -217,6 +229,52 @@ impl TextSelection {
         self.marks
             .iter()
             .filter_map(|&(start, end)| part_in(start, end, key, len))
+            .collect()
+    }
+
+    /// Tints `ranges`, start and end in reading order, in `tint` and
+    /// underlines them in `line`; [`Self::tracked_rects`] tells where each
+    /// tag's range was placed.
+    pub fn set_tracked(
+        &mut self,
+        ranges: Vec<(u64, Pos, Pos)>,
+        tint: Hsla,
+        line: Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tracked != ranges || self.tracked_colors != (tint, line) {
+            self.tracked = ranges;
+            self.tracked_colors = (tint, line);
+            cx.notify();
+        }
+    }
+
+    /// The tracked parts of paragraph `key`, whose text is `len` bytes
+    /// long, with their tags.
+    pub fn tracked_in(&self, key: Key, len: usize) -> Vec<(u64, Range<usize>)> {
+        self.tracked
+            .iter()
+            .filter_map(|&(tag, start, end)| Some((tag, part_in(start, end, key, len)?)))
+            .collect()
+    }
+
+    /// The tint and the underline of the tracked ranges.
+    pub fn tracked_colors(&self) -> (Hsla, Hsla) {
+        self.tracked_colors
+    }
+
+    pub(crate) fn placed_tracked(&mut self, tag: u64, rect: Bounds<Pixels>) {
+        self.tracked_rects.push((tag, rect));
+    }
+
+    /// Window-space rectangles of the range tagged `tag`, one per line
+    /// fragment in reading order, as placed in the last frame's prepaint;
+    /// a later sibling of the surface sees this frame's in its own.
+    pub fn tracked_rects(&self, tag: u64) -> Vec<Bounds<Pixels>> {
+        self.tracked_rects
+            .iter()
+            .filter(|(placed, _)| *placed == tag)
+            .map(|(_, rect)| *rect)
             .collect()
     }
 
@@ -550,6 +608,7 @@ pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
                         state.update(cx, |this, _| {
                             this.painted.clear();
                             this.rects.clear();
+                            this.tracked_rects.clear();
                         })
                     }
                 },
