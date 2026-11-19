@@ -279,6 +279,9 @@ pub struct EditorStyle {
     /// The tint of the range [`Editor::set_marked`] points out; a mark
     /// that is only a position is a bar in this color, opaque.
     pub marked: Hsla,
+    /// The dots after the caret while the ghost waits for text, faded and
+    /// raised in a wave.
+    pub ghost_waiting: Hsla,
     /// Size the editor to its text, up to the available width, instead of
     /// filling its parent and scrolling. Scroll events then pass through to
     /// what contains it.
@@ -307,6 +310,7 @@ impl Default for EditorStyle {
             inactive_selection: rgb(0xdcdce0).into(),
             flash: rgba(0xffd60a59).into(),
             marked: rgba(0x0a6cf524).into(),
+            ghost_waiting: rgba(0x3c3c4373).into(),
             fit_content: false,
         }
     }

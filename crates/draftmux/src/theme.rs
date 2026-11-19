@@ -236,6 +236,8 @@ pub struct Palette {
     pub change_flash: Hsla,
     /// The editor's tint on the change selected in review.
     pub change_mark: Hsla,
+    /// The dots in the editor while a continuation is on its way.
+    pub ghost_waiting: Hsla,
 }
 
 impl Palette {
@@ -312,6 +314,7 @@ impl Palette {
             inactive_selection: hex(0xdcdce0ff),
             change_flash: hex(0xffcc0066),
             change_mark: hex(0x0a6cf524),
+            ghost_waiting: hex(0x3c3c4373),
         }
     }
 
@@ -378,6 +381,7 @@ impl Palette {
             inactive_selection: hex(0x3a3a3eff),
             change_flash: hex(0xffd60a40),
             change_mark: hex(0x0a84ff3d),
+            ghost_waiting: hex(0xebebf599),
         }
     }
 
@@ -396,6 +400,7 @@ impl Palette {
             inactive_selection: self.inactive_selection,
             flash: self.change_flash,
             marked: self.change_mark,
+            ghost_waiting: self.ghost_waiting,
             ..EditorStyle::default()
         }
     }

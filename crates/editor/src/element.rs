@@ -478,7 +478,7 @@ impl Element for EditorElement {
                     window.paint_quad(
                         fill(
                             Bounds::new(origin, size(diameter, diameter)),
-                            style.faint.opacity(0.3 + 0.7 * lift),
+                            style.ghost_waiting.opacity(0.3 + 0.7 * lift),
                         )
                         .corner_radii(diameter / 2.),
                     );
