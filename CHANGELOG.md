@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix: Claude Code drafts keep following the `CLAUDE.md` files and
+  `.claude/rules` of the session they continue. Claude Code told the agent
+  these no longer applied, so it dropped them, at the latest after the agent
+  restarted on going idle or switching drafts.
 - UX: Alternatives now range from a close rewording to options that make the
   point another way or say something different at that spot, instead of
   several rewordings of the same sentence.

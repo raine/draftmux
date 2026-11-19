@@ -4,7 +4,8 @@
 //! The request continues a copy of the conversation so far as a new session
 //! (`--resume <copy> --fork-session`) that Claude Code doesn't save
 //! (`--no-session-persistence`), with no tools, settings or MCP servers
-//! beyond the user settings that log it in.
+//! beyond the user settings that log it in, but with the conversation's
+//! instruction files (see [`instructions`]).
 //! The prompt goes on stdin as a stream-json user message: Claude Code waits
 //! for that as long as it takes, so the process can start before the prompt
 //! is known, where a plain-text prompt must arrive within a few seconds.
@@ -20,6 +21,8 @@
 //! Claude Code 2.1.293 was observed to keep the copy byte-identical, write
 //! no transcript for either session and still answer from the conversation,
 //! including one with tool calls, when run this way.
+//!
+//! [`instructions`]: crate::instructions
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -27,6 +30,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use crate::instructions;
 use crate::launch::{apply_login, clean_command, home};
 use crate::protocol::{result_aborted, result_error};
 use crate::session::{DraftSession, Snapshot};
@@ -111,6 +115,7 @@ impl Oneshot {
             command.arg("--effort").arg(effort);
         }
         if let Some(copy) = copy {
+            instructions::add_dirs(&mut command, &copy);
             command.arg("--resume").arg(copy).arg("--fork-session");
         }
         // The conversation's credentials and settings; an inherited one is

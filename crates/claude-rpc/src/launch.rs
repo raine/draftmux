@@ -6,6 +6,7 @@ use std::process::Command;
 
 use serde_json::{Map, Value};
 
+use crate::instructions;
 use crate::session::{DraftSession, Start};
 
 /// Variables passed through from [`LaunchSpec::env`]. Everything else is
@@ -195,8 +196,12 @@ pub struct LaunchSpec {
     /// The built-in tools the model can use; empty disables them all.
     pub tools: Vec<Tool>,
     /// The settings files to load; empty loads none, which also skips
-    /// `CLAUDE.md`. Settings can enable executable hooks. The user settings'
-    /// login parts apply either way.
+    /// `CLAUDE.md`, though a resumed or forked session gets back the
+    /// instruction files its transcript recorded (see [`instructions`]).
+    /// Settings can enable executable hooks. The user settings' login parts
+    /// apply either way.
+    ///
+    /// [`instructions`]: crate::instructions
     pub setting_sources: Vec<SettingSource>,
     pub session: Option<Session>,
     /// Registered with `initialize`; each call arrives as
@@ -318,6 +323,7 @@ impl LaunchSpec {
                 command.arg("--session-id").arg(id);
             }
             Some(Start::Fork { snapshot, id }) => {
+                instructions::add_dirs(&mut command, snapshot);
                 command
                     .arg("--resume")
                     .arg(snapshot)
@@ -325,6 +331,7 @@ impl LaunchSpec {
                     .arg(id);
             }
             Some(Start::Resume(target)) => {
+                instructions::add_dirs(&mut command, Path::new(target));
                 command.arg("--resume").arg(target);
             }
             None => {}
@@ -369,6 +376,8 @@ fn join<'a>(names: impl Iterator<Item = &'a str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn spec() -> LaunchSpec {
@@ -531,6 +540,36 @@ mod tests {
                 ("PATH", "/usr/bin"),
             ]
         );
+    }
+
+    #[test]
+    fn a_fork_gets_back_the_instruction_files_of_its_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let snapshot = tmp.path().join("source.jsonl");
+        let line = serde_json::json!({
+            "type": "attachment",
+            "attachment": {"type": "instructions", "files": [
+                {"path": tmp.path().join("CLAUDE.md"), "type": "Project", "content": "x"},
+            ]},
+        });
+        fs::write(&snapshot, format!("{line}\n")).unwrap();
+        let spec = spec();
+        let command = spec.command(
+            None,
+            None,
+            &[],
+            Some(&Start::Fork {
+                snapshot: snapshot.clone(),
+                id: "0b5c".into(),
+            }),
+        );
+        let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+        let dir = tmp.path().to_str().unwrap();
+        let resume = args.iter().position(|a| *a == "--resume").unwrap();
+        assert_eq!(&args[resume - 2..resume], ["--add-dir", dir]);
+        assert!(command.get_envs().any(|(k, v)| {
+            k == "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD" && v == Some("1".as_ref())
+        }));
     }
 
     #[test]

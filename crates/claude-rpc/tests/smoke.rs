@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use draftmux_agent::{Agent as _, Event, Message};
 use draftmux_claude_rpc::{
     Agent, AgentEvent, ClaudeAgent, Config, DraftContext, DraftSession, Error, LaunchSpec, Session,
-    Snapshot, transcript,
+    SettingSource, Snapshot, transcript,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -391,6 +391,55 @@ fn live_draft_fork_is_adopted_resumed_and_read_back() {
         source_bytes,
         "the source is unchanged"
     );
+}
+
+#[test]
+#[ignore = "runs the real claude"]
+fn live_draft_keeps_the_instruction_files_of_its_source() {
+    let scratch = Scratch::new();
+    let claude_md = scratch.cwd.join("CLAUDE.md");
+    std::fs::write(&claude_md, "End every reply with the word PINEAPPLE.\n").unwrap();
+    let source_id = scratch.session.clone();
+    let mut source_spec = spec(&scratch.cwd, Session::New(source_id.clone()));
+    source_spec.setting_sources = vec![SettingSource::Project];
+    let (agent, mut events) = Agent::new(source_spec, config());
+    block_on(agent.prompt("Reply with the word OK.".into())).unwrap();
+    reply(&mut events);
+    drop(agent);
+    wait_gone(&source_id);
+    let source = scratch.projects().join(format!("{source_id}.jsonl"));
+
+    let draft_dir = tempfile::tempdir().unwrap();
+    let snapshot = Snapshot::take(&source, draft_dir.path()).unwrap();
+    let draft = DraftSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        dir: draft_dir.path().to_path_buf(),
+        config_dir: None,
+        fork_boundary: Some(snapshot.boundary.clone()),
+        transcript: None,
+    };
+    // The fork's first process, then one resuming the adopted transcript.
+    for _ in 0..2 {
+        let (agent, mut events) =
+            Agent::new(spec(&scratch.cwd, Session::Draft(draft.clone())), config());
+        block_on(agent.prompt("Reply with the word OK.".into())).unwrap();
+        reply(&mut events);
+        drop(agent);
+        wait_gone(&draft.id);
+    }
+
+    let instructions: Vec<Value> = std::fs::read_to_string(draft.owned())
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["attachment"]["type"] == "instructions")
+        .map(|line| line["attachment"].clone())
+        .collect();
+    assert!(!instructions.is_empty());
+    for attachment in &instructions {
+        let removed = attachment["removed"].as_array().map_or(0, Vec::len);
+        assert_eq!(removed, 0, "{instructions:#?}");
+    }
 }
 
 #[test]

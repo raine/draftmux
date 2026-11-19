@@ -28,6 +28,7 @@ mod agent;
 mod connection;
 mod contract;
 mod history;
+mod instructions;
 mod launch;
 mod oneshot;
 mod policy;
