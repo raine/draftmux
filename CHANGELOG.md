@@ -12,6 +12,9 @@
   `.claude/rules` of the session they continue. Claude Code told the agent
   these no longer applied, so it dropped them, at the latest after the agent
   restarted on going idle or switching drafts.
+- Fix: A continuation typed right after an opening `**`, `_`, backtick, quote
+  or bracket starts right after it instead of after a space, so bold or code
+  you've just opened doesn't break.
 - UX: The selection popover shows alternatives and action results formatted,
   with bold, italics, code and links instead of their Markdown markers. Text
   from a hard-wrapped passage flows as one paragraph instead of breaking

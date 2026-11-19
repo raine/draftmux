@@ -200,9 +200,8 @@ impl Request {
     /// replacement, and spaces a continuation from its neighbours.
     fn fit(&self, option: &str) -> String {
         if let Action::Continue { .. } = self.action {
-            let before = self.text[..self.range.start].chars().next_back();
             let after = self.text[self.range.end..].chars().next();
-            return join(before, option, after);
+            return join(&self.text[..self.range.start], option, after);
         }
         let (leading, trailing) = surrounding_whitespace(self.selected());
         format!("{leading}{option}{trailing}")
@@ -665,26 +664,43 @@ fn continuation(reply: &str, done: bool) -> Option<String> {
     (!line.trim().is_empty()).then(|| line.to_owned())
 }
 
-/// `continuation` to insert between `before` and `after`, the characters
-/// around the cursor: one space between it and the text before it, unless
-/// that ends in whitespace, the continuation starts with punctuation that
-/// attaches to it, or the cursor is inside a word; and one space after it
-/// when a word follows.
-fn join(before: Option<char>, continuation: &str, after: Option<char>) -> String {
+/// `continuation` to insert between the text before the cursor and `after`,
+/// the character after it: one space between it and the text before it,
+/// unless that ends in whitespace or opens a word, the continuation starts
+/// with punctuation that attaches to it, or the cursor is inside a word; and
+/// one space after it when a word follows.
+fn join(before: &str, continuation: &str, after: Option<char>) -> String {
     let text = continuation.trim();
     if text.is_empty() {
         return String::new();
     }
     let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
-    let inside_word = word(before) && word(after);
+    let inside_word = word(before.chars().next_back()) && word(after);
     let attaches = text.starts_with([',', '.', ';', ':', '!', '?', ')', ']', '}', '…', '\'', '’']);
-    let space_before = before.is_some_and(|c| !c.is_whitespace()) && !attaches && !inside_word;
+    let space_before = before
+        .chars()
+        .next_back()
+        .is_some_and(|c| !c.is_whitespace())
+        && !attaches
+        && !inside_word
+        && !opens_word(before);
     let space_after = !inside_word && (word(after) || matches!(after, Some('(' | '[' | '"' | '“')));
     format!(
         "{}{text}{}",
         if space_before { " " } else { "" },
         if space_after { " " } else { "" }
     )
+}
+
+/// Whether `before` ends in marks that open the next word: a bracket or an
+/// opening curly quote, or emphasis, code or quote marks at the start of a
+/// word, as in `**` before bold text.
+fn opens_word(before: &str) -> bool {
+    if before.ends_with(['(', '[', '{', '“', '‘']) {
+        return true;
+    }
+    let marks = before.trim_end_matches(['*', '_', '~', '`', '"', '\'']);
+    marks.len() < before.len() && marks.chars().next_back().is_none_or(char::is_whitespace)
 }
 
 #[derive(Deserialize)]
@@ -1256,20 +1272,29 @@ echo '{"type":"agent_settled","aborted":false}'"#,
     #[test]
     fn join_spaces_a_continuation_from_its_neighbours() {
         let cases = [
-            (Some('x'), "jumps", None, " jumps"),
-            (Some('.'), "Next one.", None, " Next one."),
-            (Some('"'), "Next.", Some('\n'), " Next."),
-            (Some(' '), " jumps ", None, "jumps"),
-            (None, "Start.", None, "Start."),
-            (Some('\n'), "Start.", Some('\n'), "Start."),
-            (Some('x'), ", and more", None, ", and more"),
-            (Some('x'), "'s done.", None, "'s done."),
+            ("x", "jumps", None, " jumps"),
+            ("one.", "Next one.", None, " Next one."),
+            ("said \"hi.\"", "Next.", Some('\n'), " Next."),
+            ("x ", " jumps ", None, "jumps"),
+            ("", "Start.", None, "Start."),
+            ("x\n", "Start.", Some('\n'), "Start."),
+            ("x", ", and more", None, ", and more"),
+            ("x", "'s done.", None, "'s done."),
             // Inside a word, the rest of it.
-            (Some('u'), "mps", Some('s'), "mps"),
-            (Some(','), "and then", Some('t'), " and then "),
-            (Some('x'), "jumps over", Some(' '), " jumps over"),
-            (Some('x'), "jumps over", Some('.'), " jumps over"),
-            (Some('x'), "  ", Some('t'), ""),
+            ("ju", "mps", Some('s'), "mps"),
+            ("x,", "and then", Some('t'), " and then "),
+            ("x", "jumps over", Some(' '), " jumps over"),
+            ("x", "jumps over", Some('.'), " jumps over"),
+            ("x", "  ", Some('t'), ""),
+            // Marks that open a word take it without a space; closing ones
+            // are spaced from the next.
+            ("- UX: **", "Task lists", None, "Task lists"),
+            ("**", "Task lists", None, "Task lists"),
+            ("see `", "join", None, "join"),
+            ("a (", "rarely", None, "rarely"),
+            ("said “", "Hi", None, "Hi"),
+            ("**bold**", "and more", None, " and more"),
+            ("x*", "and more", None, " and more"),
         ];
         for (before, text, after, joined) in cases {
             assert_eq!(
