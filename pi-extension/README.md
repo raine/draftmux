@@ -127,8 +127,9 @@ request's last block. In a selection call that is the prompt, or a message
 another extension added after it, which no later call repeats. The extension
 moves that breakpoint to the last block before the prompt: the end of the
 conversation. Selection calls on the same conversation then read one cache
-entry, and each read keeps it for another five minutes. The chat's next turn
-reads it too. Requests to other APIs, or where the prompt can't be found, are
+entry, and each read keeps it alive. The app runs selection calls with
+`PI_CACHE_RETENTION=long` unless it is set already, so the entry lasts an
+hour rather than five minutes. The chat's next turn reads it too. Requests to other APIs, or where the prompt can't be found, are
 sent unchanged.
 
 ### Project trust

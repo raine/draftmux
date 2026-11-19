@@ -12,8 +12,8 @@
   than when you pick an action. Each call logs its timings to
   `draftmux.log`.
 - UX: In pi drafts on Claude models, alternatives and continuations reuse the
-  conversation cached by the previous one, so each request within five
-  minutes of the last skips reprocessing the conversation.
+  conversation cached by the previous one, so each request within an hour of
+  the last skips reprocessing the conversation.
 - Fix: In Claude Code drafts, alternatives, selection actions and
   continuations now use the effort chosen in the chat, unless a separate
   selection model is set.

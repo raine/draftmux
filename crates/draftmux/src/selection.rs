@@ -4,7 +4,9 @@
 //! pi: each call forks the draft's session into a temporary session
 //! directory: `pi --mode json -p --fork <draft session> --session-dir <temp>
 //! -e <ext>`, with the draft's profile and cwd, the prompt on stdin and
-//! `DRAFTMUX_MODE=selection`, so the extension blocks every tool call.
+//! `DRAFTMUX_MODE=selection`, so the extension blocks every tool call and
+//! caches the conversation for the next call, and `PI_CACHE_RETENTION=long`
+//! so that cache lasts an hour.
 //!
 //! Claude Code: each call continues a copy of the draft's conversation in the
 //! temporary directory as a new session that isn't saved, with no tools
@@ -496,6 +498,12 @@ fn command(
         // app was launched from; selection mode reads none of them.
         .env_remove("DRAFTMUX_DRAFT_PATH")
         .env_remove("DRAFTMUX_INSTRUCTIONS");
+    // An hour rather than five minutes, unless the user chose a retention:
+    // calls come in bursts with longer pauses between them, and each one
+    // reads the conversation the last one cached.
+    if !pi.get_envs().any(|(key, _)| key == "PI_CACHE_RETENTION") {
+        pi.env("PI_CACHE_RETENTION", "long");
+    }
     pi
 }
 
@@ -914,6 +922,24 @@ mod tests {
         assert!(envs.contains(&("PI_CODING_AGENT_DIR".as_ref(), Some("/profile".as_ref()))));
         assert!(envs.contains(&("DRAFTMUX_MODE".as_ref(), Some("selection".as_ref()))));
         assert!(envs.contains(&("DRAFTMUX_INSTRUCTIONS".as_ref(), None)));
+        assert!(envs.contains(&("PI_CACHE_RETENTION".as_ref(), Some("long".as_ref()))));
+        let mut chosen = Command::new("pi");
+        chosen.env("PI_CACHE_RETENTION", "none");
+        let chosen = super::command(
+            chosen,
+            &request.cwd,
+            Path::new("/s.jsonl"),
+            Path::new("/profile"),
+            Path::new("/ext.ts"),
+            Path::new("/tmp/s"),
+            &config,
+        );
+        assert!(
+            chosen
+                .get_envs()
+                .any(|env| env == ("PI_CACHE_RETENTION".as_ref(), Some("none".as_ref()))),
+            "the user's retention is kept"
+        );
 
         config.thinking = Some(ThinkingLevel::High);
         assert_eq!(build(&config).1.len(), 9, "thinking only with a model");
