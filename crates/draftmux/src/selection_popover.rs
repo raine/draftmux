@@ -42,9 +42,10 @@
 
 use std::cell::Cell;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use draftmux_storage::{Backend, Draft, Store};
@@ -68,6 +69,7 @@ use crate::resources;
 use crate::selectable::TextSelection;
 use crate::selection::{
     self, Action as SelectionAction, Agent, Backend as SelectionBackend, Request, SelectionConfig,
+    Warm,
 };
 use crate::theme::{self, Palette};
 
@@ -220,6 +222,8 @@ pub struct SelectionPopover {
     action_name: SharedString,
     /// The call streaming into the editor's ghost.
     ghost: Option<GhostCall>,
+    /// An agent started when the popover opened, for the next call to take.
+    warm: Arc<Mutex<Option<Warm>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -428,6 +432,7 @@ impl SelectionPopover {
             main_bounds: Some(window.bounds()),
             action_name: SharedString::default(),
             ghost: None,
+            warm: Arc::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -436,6 +441,41 @@ impl SelectionPopover {
         self.draft = draft;
         self.dismiss(cx);
         self.end_ghost(cx);
+        self.drop_warm(cx);
+    }
+
+    /// Starts the draft's agent in the background, if it isn't already, so
+    /// the call the user picks next doesn't wait for it to load the session.
+    fn prestart(&mut self, cx: &mut Context<Self>) {
+        let (backend, cwd, config) = match self.backend(cx) {
+            Ok(call) => call,
+            Err(_) => return,
+        };
+        let slot = self.warm.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(err) =
+                    selection::prestart(&slot, backend, &cwd, &config, &std::env::temp_dir())
+                {
+                    eprintln!("draftmux: starting the selection agent ahead: {err}");
+                }
+            })
+            .detach();
+    }
+
+    /// Ends the started agent, which would wait for a call that won't come.
+    fn drop_warm(&mut self, cx: &mut Context<Self>) {
+        let warm = self
+            .warm
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(warm) = warm {
+            // Waiting for it to exit blocks.
+            cx.background_executor()
+                .spawn(async move { drop(warm) })
+                .detach();
+        }
     }
 
     /// Takes the current draft's newer metadata, such as its agent's model,
@@ -655,6 +695,7 @@ impl SelectionPopover {
                     highlighted: None,
                 });
                 this.changed(cx);
+                this.prestart(cx);
             })
             .ok();
         }));
@@ -974,23 +1015,11 @@ impl SelectionPopover {
         }
     }
 
-    /// Starts the draft's agent on `action` about `range` of `text`. Its
-    /// previews go to `update` and its result to `done`, each with the
-    /// call's cancel flag, which identifies it. Dropping the returned guard
-    /// cancels it.
-    #[allow(clippy::type_complexity)]
-    fn call(
-        &mut self,
-        text: String,
-        range: Range<usize>,
-        action: SelectionAction,
-        update: fn(&mut Self, &Arc<AtomicBool>, Vec<String>, &mut Context<Self>),
-        done: fn(&mut Self, &Arc<AtomicBool>, Result<Vec<String>, String>, &mut Context<Self>),
-        cx: &mut Context<Self>,
-    ) -> Result<(CancelOnDrop, Task<()>), String> {
+    /// The agent a call on the current draft runs on, the draft's working
+    /// directory and the call's settings.
+    fn backend(&self, cx: &App) -> Result<(SelectionBackend, PathBuf, SelectionConfig), String> {
         let draft = self.draft.as_ref().ok_or("No draft is open.")?;
         let meta = &draft.meta;
-        let request = Request::new(meta, text, range, action);
         // The count is an app preference, read on every call; the rest is
         // what the draft kept at creation.
         let alternatives = AppSettings::global(cx).read(cx).settings.alternatives();
@@ -1012,6 +1041,31 @@ impl SelectionPopover {
                 session: crate::chat::draft_session(draft, claude),
             },
         };
+        Ok((backend, meta.cwd.clone(), config))
+    }
+
+    /// Starts the draft's agent on `action` about `range` of `text`. Its
+    /// previews go to `update` and its result to `done`, each with the
+    /// call's cancel flag, which identifies it. Dropping the returned guard
+    /// cancels it.
+    #[allow(clippy::type_complexity)]
+    fn call(
+        &mut self,
+        text: String,
+        range: Range<usize>,
+        action: SelectionAction,
+        update: fn(&mut Self, &Arc<AtomicBool>, Vec<String>, &mut Context<Self>),
+        done: fn(&mut Self, &Arc<AtomicBool>, Result<Vec<String>, String>, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> Result<(CancelOnDrop, Task<()>), String> {
+        let (backend, _, config) = self.backend(cx)?;
+        let meta = &self.draft.as_ref().ok_or("No draft is open.")?.meta;
+        let request = Request::new(meta, text, range, action);
+        let warm = self
+            .warm
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (send, updates) = async_channel::unbounded();
@@ -1023,6 +1077,7 @@ impl SelectionPopover {
                     &request,
                     &config,
                     &std::env::temp_dir(),
+                    warm,
                     &cancel,
                     |options| {
                         let _ = send.try_send(options);

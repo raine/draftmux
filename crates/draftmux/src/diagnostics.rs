@@ -140,7 +140,7 @@ fn panic_entry(info: &PanicHookInfo<'_>, backtrace: &Backtrace) -> String {
     )
 }
 
-fn timestamp() -> String {
+pub fn timestamp() -> String {
     chrono::Local::now()
         .format("%Y-%m-%d %H:%M:%S%.3f%:z")
         .to_string()

@@ -2,10 +2,12 @@
 //! and returns its stdout or a one-line message for the user.
 
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
+
+use draftmux_process::Group;
 
 /// How often a run checks its cancel flag.
 const CANCEL_POLL: Duration = Duration::from_millis(50);
@@ -34,123 +36,174 @@ pub fn run(
 /// stops the process group just like cancellation; success still waits for exit.
 pub fn run_streaming(
     name: &str,
-    mut command: Command,
+    command: Command,
     input: Option<&str>,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
-    mut on_stdout: impl FnMut(&[u8]) -> Result<(), String>,
+    on_stdout: impl FnMut(&[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    command
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
+    Spawned::spawn(name, command, input.is_some())?.finish(input, timeout, cancel, on_stdout)
+}
+
+/// A started process whose input is yet to come: it can start up while
+/// waiting for it. Dropped unfinished, it is killed along with anything it
+/// started.
+pub struct Spawned {
+    name: String,
+    child: Child,
+    group: Group,
+    stdin: Option<ChildStdin>,
+    /// Chunks of stdout (`true`) and stderr as they arrive. Disconnects once
+    /// both pipes reach end of file.
+    output: Receiver<(bool, Vec<u8>)>,
+    finished: bool,
+}
+
+impl Spawned {
+    /// Starts `command` (the program `name`) with stdin piped when `stdin`,
+    /// closed otherwise. Its output is kept until [`Spawned::finish`].
+    pub fn spawn(name: &str, mut command: Command, stdin: bool) -> Result<Self, String> {
+        command
+            .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Its own group, so a timeout kills its children too.
+        let (mut child, group) = draftmux_process::spawn(&mut command)
+            .map_err(|err| format!("Couldn't run {name}: {err}"))?;
+        // Each pipe on its own thread, so a full pipe never blocks the
+        // others. Readers send chunks as they arrive, so what was written
+        // before a timeout is kept even if the pipe stays open.
+        let (sender, output) = mpsc::channel();
+        let read = |mut pipe: Box<dyn Read + Send>, is_stdout: bool| {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0; 8192];
+                while let Ok(n @ 1..) = pipe.read(&mut buf) {
+                    if sender.send((is_stdout, buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+            });
+        };
+        read(
+            Box::new(child.stdout.take().expect("stdout is piped")),
+            true,
+        );
+        read(
+            Box::new(child.stderr.take().expect("stderr is piped")),
+            false,
+        );
+        Ok(Self {
+            name: name.to_owned(),
+            stdin: child.stdin.take(),
+            child,
+            group,
+            output,
+            finished: false,
         })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    // Its own group, so a timeout kills its children too.
-    let (mut child, group) = draftmux_process::spawn(&mut command)
-        .map_err(|err| format!("Couldn't run {name}: {err}"))?;
-
-    // Each pipe on its own thread, so a full pipe never blocks the others.
-    if let Some(input) = input {
-        let mut stdin = child.stdin.take().expect("stdin is piped");
-        let input = input.as_bytes().to_vec();
-        std::thread::spawn(move || {
-            // The process may exit without reading it all; its exit status
-            // says why.
-            let _ = stdin.write_all(&input);
-        });
-    }
-    // Readers send chunks as they arrive, so what was written before a
-    // timeout is kept even if the pipe stays open. The channel disconnects
-    // once both reach end of file.
-    let (sender, receiver) = mpsc::channel();
-    let read = |mut pipe: Box<dyn Read + Send>, is_stdout: bool| {
-        let sender = sender.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0; 8192];
-            while let Ok(n @ 1..) = pipe.read(&mut buf) {
-                if sender.send((is_stdout, buf[..n].to_vec())).is_err() {
-                    break;
-                }
-            }
-        });
-    };
-    read(
-        Box::new(child.stdout.take().expect("stdout is piped")),
-        true,
-    );
-    read(
-        Box::new(child.stderr.take().expect("stderr is piped")),
-        false,
-    );
-    drop(sender);
-
-    let cancelled = || cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed));
-    // Pipes close when every process holding them exits, so reading both to
-    // the end before waiting also bounds stragglers that inherited them.
-    let mut stderr = Vec::new();
-    let mut read_error = None;
-    let mut pipes_open = true;
-    let status = loop {
-        if cancelled() {
-            break None;
-        }
-        if !pipes_open {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                Ok(None) => break None,
-                Err(err) => return Err(format!("Couldn't run {name}: {err}")),
-            }
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break None;
-        }
-        match receiver.recv_timeout(remaining.min(CANCEL_POLL)) {
-            Ok((true, chunk)) => {
-                if let Err(error) = on_stdout(&chunk) {
-                    read_error = Some(error);
-                    break None;
-                }
-            }
-            Ok((false, chunk)) => stderr.extend(chunk),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => pipes_open = false,
-        }
-    };
-    if status.is_none() {
-        group.kill();
-        let _ = child.wait();
-        if cancelled() {
-            return Err(format!("{name} was cancelled"));
-        }
-        if let Some(error) = read_error {
-            return Err(error);
-        }
-        while let Ok((is_stdout, chunk)) = receiver.try_recv() {
-            if !is_stdout {
-                stderr.extend(chunk);
-            }
-        }
     }
 
-    let stderr_line = first_line(&stderr);
-    let Some(status) = status else {
-        return Err(stderr_line.unwrap_or_else(|| {
-            format!("{name} didn't finish within {} s", timeout.as_secs_f32())
-        }));
-    };
-    if !status.success() {
-        return Err(stderr_line.unwrap_or_else(|| format!("{name} failed ({status})")));
+    /// Whether the process has exited, such as one that failed to start.
+    pub fn exited(&mut self) -> bool {
+        !matches!(self.child.try_wait(), Ok(None))
     }
-    Ok(())
+
+    /// Writes `input` to stdin and closes it, then delivers stdout as for
+    /// [`run_streaming`]. `timeout` counts from now. The error is a message
+    /// for the user: the first line of stderr when there is one.
+    pub fn finish(
+        mut self,
+        input: Option<&str>,
+        timeout: Duration,
+        cancel: Option<&AtomicBool>,
+        mut on_stdout: impl FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.finished = true;
+        let name = self.name.clone();
+        let deadline = Instant::now() + timeout;
+        if let Some(mut stdin) = self.stdin.take() {
+            let input = input.unwrap_or_default().as_bytes().to_vec();
+            std::thread::spawn(move || {
+                // The process may exit without reading it all; its exit
+                // status says why.
+                let _ = stdin.write_all(&input);
+            });
+        }
+
+        let cancelled = || cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed));
+        // Pipes close when every process holding them exits, so reading both
+        // to the end before waiting also bounds stragglers that inherited
+        // them.
+        let mut stderr = Vec::new();
+        let mut read_error = None;
+        let mut pipes_open = true;
+        let status = loop {
+            if cancelled() {
+                break None;
+            }
+            if !pipes_open {
+                match self.child.try_wait() {
+                    Ok(Some(status)) => break Some(status),
+                    Ok(None) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Ok(None) => break None,
+                    Err(err) => return Err(format!("Couldn't run {name}: {err}")),
+                }
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break None;
+            }
+            match self.output.recv_timeout(remaining.min(CANCEL_POLL)) {
+                Ok((true, chunk)) => {
+                    if let Err(error) = on_stdout(&chunk) {
+                        read_error = Some(error);
+                        break None;
+                    }
+                }
+                Ok((false, chunk)) => stderr.extend(chunk),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => pipes_open = false,
+            }
+        };
+        if status.is_none() {
+            self.group.kill();
+            let _ = self.child.wait();
+            if cancelled() {
+                return Err(format!("{name} was cancelled"));
+            }
+            if let Some(error) = read_error {
+                return Err(error);
+            }
+            while let Ok((is_stdout, chunk)) = self.output.try_recv() {
+                if !is_stdout {
+                    stderr.extend(chunk);
+                }
+            }
+        }
+
+        let stderr_line = first_line(&stderr);
+        let Some(status) = status else {
+            return Err(stderr_line.unwrap_or_else(|| {
+                format!("{name} didn't finish within {} s", timeout.as_secs_f32())
+            }));
+        };
+        if !status.success() {
+            return Err(stderr_line.unwrap_or_else(|| format!("{name} failed ({status})")));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Spawned {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.group.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 /// The first non-blank line, trimmed.
@@ -190,6 +243,30 @@ mod tests {
     ) -> Result<String, String> {
         let (_dir, command) = script(script_text);
         run("tool", command, input, timeout, None)
+    }
+
+    #[test]
+    fn a_spawned_process_gets_its_input_later_and_dropping_it_kills_it() {
+        let (dir, command) = script("touch \"$0.started\"; tr a-z A-Z");
+        let spawned = Spawned::spawn("tool", command, true).unwrap();
+        while !dir.path().join("tool.started").exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut output = Vec::new();
+        spawned
+            .finish(Some("late\n"), TIMEOUT, None, |chunk| {
+                output.extend_from_slice(chunk);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(output, b"LATE\n");
+
+        let (_dir, command) = script("sleep 30 & wait");
+        let mut spawned = Spawned::spawn("tool", command, true).unwrap();
+        assert!(!spawned.exited());
+        let start = Instant::now();
+        drop(spawned);
+        assert!(start.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

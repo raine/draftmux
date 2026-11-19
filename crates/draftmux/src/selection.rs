@@ -2,26 +2,33 @@
 //! conversation alone, on the agent the draft runs on.
 //!
 //! pi: each call forks the draft's session into a temporary session
-//! directory: `pi --mode json -p <prompt> --fork <draft session> --session-dir
-//! <temp> -e <ext>`, with the draft's profile and cwd, stdin closed and
+//! directory: `pi --mode json -p --fork <draft session> --session-dir <temp>
+//! -e <ext>`, with the draft's profile and cwd, the prompt on stdin and
 //! `DRAFTMUX_MODE=selection`, so the extension blocks every tool call.
 //!
 //! Claude Code: each call continues a copy of the draft's conversation in the
 //! temporary directory as a new session that isn't saved, with no tools
 //! ([`draftmux_claude_rpc::Oneshot`]), and gets the prompt on stdin.
 //!
+//! Both agents load the session before reading stdin, so the agent can start
+//! ahead of the call ([`Warm`]) and wait for its prompt. A call takes it only
+//! if it would start the same way, from an unchanged conversation file.
+//!
 //! The temporary directory is deleted once the agent has exited, so nothing
 //! reaches the draft's own session or chat. The prompt carries the editor
 //! text and the selection, and the agent answers with replacement options as
 //! JSON. Continuing the sentence at the cursor is the same call about an
-//! empty selection, answered with options or with plain text.
+//! empty selection, answered with options or with plain text. Each call logs
+//! how long the agent took to start replying, to start its text and to
+//! finish.
 
 use std::ffi::OsString;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use draftmux_claude_rpc::{DraftSession, Oneshot};
 use draftmux_pi_rpc::ThinkingLevel;
@@ -194,60 +201,179 @@ impl Request {
     }
 }
 
-/// Runs the call on `backend` and returns up to `config.alternatives`
-/// replacements for the selection, with the selection's own leading and
-/// trailing whitespace kept; or, continuing as text, the one continuation,
-/// spaced to fit at the cursor. The temporary directory is created in
-/// `temp_parent` and is gone when this returns. `preview` receives
-/// provisional complete options (or an empty list to retract them); only
-/// the returned options may be applied to the editor.
-pub fn run(
+/// A call's agent started before its request: it loads the session while
+/// the user picks an action, then waits for the prompt on stdin. Dropping it
+/// kills the agent and removes its temporary directory.
+pub struct Warm {
+    /// Which calls it fits: the agent, settings and conversation it started
+    /// with.
+    key: String,
+    agent: Agent,
+    // Dropped before `temp`, so the agent has exited when it goes.
+    process: process::Spawned,
+    temp: tempfile::TempDir,
+    started: Instant,
+}
+
+impl Warm {
+    /// Starts the agent for calls with `config` on `backend` in `cwd`.
+    pub fn start(
+        backend: Backend,
+        cwd: &Path,
+        config: &SelectionConfig,
+        temp_parent: &Path,
+    ) -> Result<Self, String> {
+        let key = key(&backend, cwd, config)?;
+        let temp = tempfile::Builder::new()
+            .prefix("draftmux-selection-")
+            .tempdir_in(temp_parent)
+            .map_err(|err| format!("Couldn't create a temporary session directory: {err}"))?;
+        let (agent, command) = match backend {
+            Backend::Pi {
+                pi,
+                extension,
+                session_file,
+                agent_dir,
+            } => {
+                let command = command(
+                    pi,
+                    cwd,
+                    &session_file,
+                    &agent_dir,
+                    &extension,
+                    temp.path(),
+                    config,
+                );
+                (Agent::Pi, command)
+            }
+            Backend::Claude {
+                program,
+                env,
+                session,
+            } => {
+                crate::chat::check_claude(&program, &env)?;
+                let command = oneshot(program, cwd, env, session, config).command(temp.path())?;
+                (Agent::Claude, command)
+            }
+        };
+        Ok(Self {
+            key,
+            agent,
+            process: process::Spawned::spawn(agent.name(), command, true)?,
+            temp,
+            started: Instant::now(),
+        })
+    }
+
+    /// Whether it can take a call that would start with `key`: an agent
+    /// that has exited, or that loaded an older conversation, can't.
+    fn fits(&mut self, key: &str) -> bool {
+        self.key == key && !self.process.exited()
+    }
+}
+
+/// Leaves `slot` holding an agent started for calls with `config` on
+/// `backend` in `cwd`: the one it holds if that still fits, else a new one.
+pub fn prestart(
+    slot: &Mutex<Option<Warm>>,
     backend: Backend,
-    request: &Request,
+    cwd: &Path,
     config: &SelectionConfig,
     temp_parent: &Path,
-    cancel: &AtomicBool,
-    mut preview: impl FnMut(Vec<String>),
-) -> Result<Vec<String>, String> {
-    let prompt = prompt(request, config.alternatives)?;
-    let temp = tempfile::Builder::new()
-        .prefix("draftmux-selection-")
-        .tempdir_in(temp_parent)
-        .map_err(|err| format!("Couldn't create a temporary session directory: {err}"))?;
-    let (agent, command) = match backend {
-        Backend::Pi {
-            pi,
-            extension,
-            session_file,
-            agent_dir,
-        } => {
-            let command = command(
-                pi,
-                request,
-                &session_file,
-                &agent_dir,
-                &extension,
-                temp.path(),
-                config,
-            );
-            (Agent::Pi, command)
+) -> Result<(), String> {
+    let key = key(&backend, cwd, config)?;
+    let unfit = {
+        let mut held = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.as_mut().is_some_and(|warm| warm.fits(&key)) {
+            return Ok(());
         }
+        held.take()
+    };
+    // Killed outside the lock, which calls wait on.
+    drop(unfit);
+    let warm = Warm::start(backend, cwd, config, temp_parent)?;
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(warm);
+    Ok(())
+}
+
+fn oneshot(
+    program: PathBuf,
+    cwd: &Path,
+    env: Vec<(OsString, OsString)>,
+    session: DraftSession,
+    config: &SelectionConfig,
+) -> Oneshot {
+    Oneshot {
+        program,
+        cwd: cwd.to_path_buf(),
+        env,
+        session,
+        model: config.model.clone(),
+        effort: config.effort.clone(),
+    }
+}
+
+/// What a call on `backend` would start with, down to the conversation
+/// file's size and modification time.
+fn key(backend: &Backend, cwd: &Path, config: &SelectionConfig) -> Result<String, String> {
+    let (agent, conversation) = match backend {
+        Backend::Pi { session_file, .. } => (Agent::Pi, Some(session_file.clone())),
         Backend::Claude {
             program,
             env,
             session,
         } => {
-            crate::chat::check_claude(&program, &env)?;
-            let oneshot = Oneshot {
-                program,
-                cwd: request.cwd.clone(),
-                env,
-                session,
-                model: config.model.clone(),
-                effort: config.effort.clone(),
-            };
-            (Agent::Claude, oneshot.command(temp.path())?)
+            let oneshot = oneshot(program.clone(), cwd, env.clone(), session.clone(), config);
+            (Agent::Claude, oneshot.conversation()?)
         }
+    };
+    let state = conversation.as_ref().map(|path| {
+        let meta = std::fs::metadata(path).ok();
+        (
+            meta.as_ref().map(|meta| meta.len()),
+            meta.and_then(|meta| meta.modified().ok()),
+        )
+    });
+    Ok(format!(
+        "{agent:?} {cwd:?} {:?} {:?} {:?} {} {conversation:?} {state:?}",
+        config.model, config.thinking, config.effort, config.context_files
+    ))
+}
+
+/// Runs the call on `backend` and returns up to `config.alternatives`
+/// replacements for the selection, with the selection's own leading and
+/// trailing whitespace kept; or, continuing as text, the one continuation,
+/// spaced to fit at the cursor. Runs on `warm` when it fits the call, else
+/// starts the agent, with its temporary directory in `temp_parent`; the
+/// directory is gone when this returns. `preview` receives provisional
+/// complete options (or an empty list to retract them); only the returned
+/// options may be applied to the editor. Logs how long each part took.
+pub fn run(
+    backend: Backend,
+    request: &Request,
+    config: &SelectionConfig,
+    temp_parent: &Path,
+    warm: Option<Warm>,
+    cancel: &AtomicBool,
+    mut preview: impl FnMut(Vec<String>),
+) -> Result<Vec<String>, String> {
+    let prompt = prompt(request, config.alternatives)?;
+    let key = key(&backend, &request.cwd, config)?;
+    let warm = warm.and_then(|mut warm| warm.fits(&key).then_some(warm));
+    let reused = warm.as_ref().map(|warm| warm.started.elapsed());
+    let warm = match warm {
+        Some(warm) => warm,
+        None => Warm::start(backend, &request.cwd, config, temp_parent)?,
+    };
+    let Warm {
+        agent,
+        process,
+        temp,
+        ..
+    } = warm;
+    let input = match agent {
+        Agent::Pi => prompt,
+        Agent::Claude => Oneshot::input(&prompt),
     };
     let with_whitespace = |options: Vec<String>| {
         options
@@ -256,16 +382,18 @@ pub fn run(
             .collect()
     };
     let mut stream = Stream::new(agent, request.format(config.alternatives));
+    let sent = Instant::now();
     // The directory lives until the child has exited, including cancellation.
-    let output = process::run_streaming(
-        agent.name(),
-        command,
-        Some(prompt.as_str()),
-        TIMEOUT,
-        Some(cancel),
-        |chunk| stream.feed(chunk, &mut |options| preview(with_whitespace(options))),
-    );
+    let output = process.finish(Some(input.as_str()), TIMEOUT, Some(cancel), |chunk| {
+        stream.feed(chunk, &mut |options| preview(with_whitespace(options)))
+    });
     drop(temp);
+    eprintln!(
+        "{} draftmux: selection call on {} {}",
+        crate::diagnostics::timestamp(),
+        agent.name(),
+        timings(sent, reused, stream.timings(), &output),
+    );
     let result = match output {
         Ok(()) => stream.finish(),
         Err(err) if cancel.load(Ordering::Relaxed) => Err(err),
@@ -278,10 +406,39 @@ pub fn run(
     result
 }
 
+/// How a call went, from sending the prompt at `sent`: when the reply
+/// started, when its text started and when the agent exited.
+fn timings(
+    sent: Instant,
+    reused: Option<Duration>,
+    (reply, text): (Option<Instant>, Option<Instant>),
+    output: &Result<(), String>,
+) -> String {
+    let since = |at: Option<Instant>| {
+        at.map_or("-".to_owned(), |at| {
+            format!("{:.2}s", at.duration_since(sent).as_secs_f32())
+        })
+    };
+    let started = match reused {
+        Some(waited) => format!("pre-started {:.1}s before", waited.as_secs_f32()),
+        None => "started cold".to_owned(),
+    };
+    let outcome = match output {
+        Ok(()) => "done",
+        Err(_) => "failed",
+    };
+    format!(
+        "({started}): reply {}, text {}, {outcome} {}",
+        since(reply),
+        since(text),
+        since(Some(Instant::now())),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn command(
     mut pi: Command,
-    request: &Request,
+    cwd: &Path,
     session_file: &Path,
     agent_dir: &Path,
     extension: &Path,
@@ -308,7 +465,7 @@ fn command(
             pi.arg("--thinking").arg(thinking.as_str());
         }
     }
-    pi.current_dir(&request.cwd)
+    pi.current_dir(cwd)
         .env("PI_CODING_AGENT_DIR", agent_dir)
         .env("DRAFTMUX_MODE", "selection")
         // The captured environment can carry values from a pi session the
@@ -699,7 +856,7 @@ mod tests {
         let build = |config: &SelectionConfig| {
             let command = command(
                 Command::new("pi"),
-                &request,
+                &request.cwd,
                 Path::new("/drafts/x/session/s.jsonl"),
                 Path::new("/profile"),
                 Path::new("/ext/draftmux.ts"),
@@ -845,6 +1002,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |options| previews.push(options),
         )
@@ -857,6 +1015,72 @@ echo '{"type":"agent_settled","aborted":false}'"#,
         );
         assert_eq!(previews[0], ["over here\n"]);
         assert_eq!(previews.last().unwrap(), &options);
+        assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 0);
+    }
+
+    /// A call takes the agent started ahead while the session is as it
+    /// loaded it, and starts another once the session has changed.
+    #[cfg(unix)]
+    #[test]
+    fn a_call_runs_on_the_agent_started_ahead_unless_the_session_changed() {
+        let bin = tempfile::tempdir().unwrap();
+        let script = bin.path().join("pi");
+        fs::write(
+            &script,
+            r#"echo start >> "$0.starts"
+cat > /dev/null
+echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"{\"alternatives\":[\"here\"]}"}]}}'
+echo '{"type":"agent_settled","aborted":false}'"#,
+        )
+        .unwrap();
+        let starts = || {
+            fs::read_to_string(bin.path().join("pi.starts"))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        let session_file = bin.path().join("s.jsonl");
+        fs::write(&session_file, "{}\n").unwrap();
+        let backend = || {
+            let mut pi = Command::new("/bin/sh");
+            pi.arg(&script);
+            Backend::Pi {
+                pi,
+                extension: "/ext".into(),
+                session_file: session_file.clone(),
+                agent_dir: "/profile".into(),
+            }
+        };
+        let parent = tempfile::tempdir().unwrap();
+        let mut request = request("Hi there", "there", Action::Alternatives);
+        request.cwd = parent.path().to_path_buf();
+        let config = SelectionConfig::default();
+        let call = |warm| {
+            run(
+                backend(),
+                &request,
+                &config,
+                parent.path(),
+                warm,
+                &AtomicBool::new(false),
+                |_| {},
+            )
+        };
+
+        let slot = Mutex::new(None);
+        prestart(&slot, backend(), &request.cwd, &config, parent.path()).unwrap();
+        // Still fits: kept rather than started again.
+        prestart(&slot, backend(), &request.cwd, &config, parent.path()).unwrap();
+        assert_eq!(call(slot.lock().unwrap().take()).unwrap(), ["here"]);
+        assert_eq!(starts(), 1);
+
+        prestart(&slot, backend(), &request.cwd, &config, parent.path()).unwrap();
+        while starts() < 2 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fs::write(&session_file, "{}\n{}\n").unwrap();
+        assert_eq!(call(slot.lock().unwrap().take()).unwrap(), ["here"]);
+        assert_eq!(starts(), 3, "the stale agent was replaced");
         assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 0);
     }
 
@@ -875,6 +1099,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
                 &request,
                 &SelectionConfig::default(),
                 parent.path(),
+                None,
                 &AtomicBool::new(false),
                 |options| previews.push(options)
             )
@@ -901,6 +1126,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -1039,6 +1265,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |options| previews.push(options),
         )
@@ -1069,6 +1296,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -1101,6 +1329,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             &parent,
+            None,
             &AtomicBool::new(false),
             |options| previews.push(options),
         )
@@ -1110,7 +1339,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             previews,
             [vec![" jumps".to_string()], vec![" jumps over.".to_string()]]
         );
-        let stdin = fs::read_to_string(tmp.path().join("stdin")).unwrap();
+        let stdin = claude_prompt(tmp.path());
         assert!(
             stdin.starts_with("[Draftmux continue request]\n"),
             "{stdin}"
@@ -1133,6 +1362,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             tmp.path(),
+            None,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -1197,6 +1427,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &request,
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |options| {
                 if !options.is_empty() {
@@ -1237,6 +1468,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
             &continue_request(cwd.path()),
             &SelectionConfig::default(),
             parent.path(),
+            None,
             &AtomicBool::new(false),
             |options| eprintln!("continuation preview: {options:?}"),
         )
@@ -1298,6 +1530,17 @@ exit {status}
         script
     }
 
+    /// The prompt the fake claude in `dir` got: the text of the one user
+    /// message on its stdin.
+    fn claude_prompt(dir: &Path) -> String {
+        let stdin = fs::read_to_string(dir.join("stdin")).unwrap();
+        let mut lines = stdin.lines();
+        let message: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(lines.next(), None);
+        assert_eq!(message["type"], "user");
+        message["message"]["content"].as_str().unwrap().to_owned()
+    }
+
     /// A Claude draft whose conversation is the claude-rpc fixture, adopted
     /// into `dir`.
     fn claude_session(dir: &Path) -> DraftSession {
@@ -1347,6 +1590,7 @@ exit {status}
             &request,
             &config,
             &parent,
+            None,
             &AtomicBool::new(false),
             |options| previews.push(options),
         );
@@ -1378,7 +1622,13 @@ exit {status}
 
         let args = fs::read_to_string(tmp.path().join("args")).unwrap();
         let args: Vec<&str> = args.lines().collect();
-        assert!(args.starts_with(&["-p", "--output-format", "stream-json"]));
+        assert!(args.starts_with(&[
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json"
+        ]));
         for flag in [
             "--no-session-persistence",
             "--fork-session",
@@ -1391,7 +1641,7 @@ exit {status}
         let model = args.iter().position(|a| *a == "--model").unwrap();
         assert_eq!(args[model + 1], "haiku");
         assert!(tmp.path().join("copy-existed").exists());
-        let stdin = fs::read_to_string(tmp.path().join("stdin")).unwrap();
+        let stdin = claude_prompt(tmp.path());
         assert!(
             stdin.starts_with("[Draftmux selection request]\n"),
             "{stdin}"
@@ -1446,6 +1696,7 @@ exit {status}
             &request,
             &SelectionConfig::default(),
             tmp.path(),
+            None,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -1498,6 +1749,7 @@ exit {status}
                 ..SelectionConfig::default()
             },
             &parent,
+            None,
             &AtomicBool::new(false),
             |options| first_preview |= !options.is_empty(),
         )
@@ -1527,6 +1779,7 @@ exit {status}
                 ..SelectionConfig::default()
             },
             &parent,
+            None,
             &AtomicBool::new(false),
             |options| eprintln!("continuation preview: {options:?}"),
         )

@@ -4,6 +4,11 @@
 //! The request continues a copy of the conversation so far as a new session
 //! (`--resume <copy> --fork-session`) that Claude Code doesn't save
 //! (`--no-session-persistence`), with no tools, settings or MCP servers.
+//! The prompt goes on stdin as a stream-json user message: Claude Code waits
+//! for that as long as it takes, so the process can start before the prompt
+//! is known, where a plain-text prompt must arrive within a few seconds.
+//! Closing stdin after it ends the session once the reply is done.
+//!
 //! Claude Code 2.1.293 was observed to keep the copy byte-identical, write
 //! no transcript for either session and still answer from the conversation,
 //! including one with tool calls, when run this way.
@@ -18,8 +23,8 @@ use crate::launch::{clean_command, home};
 use crate::protocol::{result_aborted, result_error};
 use crate::session::{DraftSession, Snapshot};
 
-/// A request on a draft's session. The prompt goes on stdin and the reply
-/// comes as stream-json on stdout.
+/// A request on a draft's session. The prompt goes on stdin as
+/// [`Oneshot::input`] and the reply comes as stream-json on stdout.
 pub struct Oneshot {
     /// The `claude` executable, as for [`LaunchSpec::program`](crate::LaunchSpec::program).
     pub program: PathBuf,
@@ -34,6 +39,22 @@ pub struct Oneshot {
 }
 
 impl Oneshot {
+    /// What to write to stdin for `prompt`, before closing it.
+    pub fn input(prompt: &str) -> String {
+        let message = serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": prompt},
+        });
+        format!("{message}\n")
+    }
+
+    /// The file holding the conversation the request continues; `None`
+    /// before the session has started.
+    pub fn conversation(&self) -> Result<Option<PathBuf>, String> {
+        let storage = self.session.storage(&home(self.env.iter()));
+        self.session.conversation(&storage)
+    }
+
     /// The command, once the conversation so far is copied into `temp`,
     /// which must outlive the process. A session that hasn't started yet
     /// has no conversation to continue, so the request starts a new one.
@@ -60,6 +81,8 @@ impl Oneshot {
         command
             .args([
                 "-p",
+                "--input-format",
+                "stream-json",
                 "--output-format",
                 "stream-json",
                 "--verbose",
@@ -188,8 +211,10 @@ mod tests {
             .collect()
     }
 
-    const BASE: [&str; 13] = [
+    const BASE: [&str; 15] = [
         "-p",
+        "--input-format",
+        "stream-json",
         "--output-format",
         "stream-json",
         "--verbose",
@@ -252,7 +277,7 @@ mod tests {
         let command = request.command(&temp).unwrap();
         let copy = temp.join("source.jsonl");
         assert_eq!(
-            args(&command)[11..],
+            args(&command)[13..],
             ["--resume", copy.to_str().unwrap(), "--fork-session"]
         );
         assert_eq!(fs::read(&copy).unwrap(), fs::read(SOURCE).unwrap());
@@ -269,7 +294,7 @@ mod tests {
         fs::create_dir(&again).unwrap();
         let command = request.command(&again).unwrap();
         assert_eq!(
-            args(&command)[12],
+            args(&command)[14],
             again.join("source.jsonl").to_str().unwrap()
         );
         assert_eq!(
@@ -291,7 +316,7 @@ mod tests {
 
         Snapshot::take(Path::new(SOURCE), &draft).unwrap();
         let command = request.command(&temp).unwrap();
-        assert_eq!(args(&command)[11], "--resume");
+        assert_eq!(args(&command)[13], "--resume");
         assert_eq!(
             fs::read(temp.join("source.jsonl")).unwrap(),
             fs::read(SOURCE).unwrap()

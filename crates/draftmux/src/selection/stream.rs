@@ -1,6 +1,8 @@
 //! Complete-option previews from the agent's one-shot JSON event stream:
 //! pi's events, or Claude Code's stream-json frames.
 
+use std::time::Instant;
+
 use draftmux_claude_rpc::Reply;
 use serde_json::Value;
 
@@ -55,6 +57,9 @@ pub(super) struct Stream {
     shown: Vec<String>,
     result: Option<Result<Vec<String>, String>>,
     settled: bool,
+    /// When the first reply started, and when its first text arrived.
+    replied: Option<Instant>,
+    wrote: Option<Instant>,
 }
 
 impl Stream {
@@ -90,6 +95,12 @@ impl Stream {
         Ok(())
     }
 
+    /// When the agent's first reply started and when its text started,
+    /// which tells waiting for the model from its thinking.
+    pub fn timings(&self) -> (Option<Instant>, Option<Instant>) {
+        (self.replied, self.wrote)
+    }
+
     /// The error the agent reported, if any, which says more than its exit
     /// status. Claude Code exits non-zero after reporting a failed login.
     pub fn reported_error(&self) -> Option<String> {
@@ -109,6 +120,7 @@ impl Stream {
             ));
         }
         self.text.push_str(text);
+        self.wrote.get_or_insert_with(Instant::now);
         let shown = match self.format {
             Format::Options(count) => completed_options(&self.text, count),
             Format::Text => super::continuation(&self.text, false).into_iter().collect(),
@@ -158,7 +170,9 @@ impl Stream {
         }
     }
 
+    /// A reply starts, replacing any before it.
     fn reset(&mut self, preview: &mut impl FnMut(Vec<String>)) {
+        self.replied.get_or_insert_with(Instant::now);
         self.text.clear();
         self.result = None;
         self.settled = false;
