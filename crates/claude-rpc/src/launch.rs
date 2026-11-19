@@ -4,6 +4,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde_json::{Map, Value};
+
 use crate::session::{DraftSession, Start};
 
 /// Variables passed through from [`LaunchSpec::env`]. Everything else is
@@ -126,6 +128,46 @@ fn is_var(key: &OsString, name: &str) -> bool {
     }
 }
 
+/// The user settings that say how Claude Code reaches and authenticates with
+/// its API, besides `env`: commands that print a key or refresh cloud
+/// credentials.
+const LOGIN_SETTINGS: &[&str] = &["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport"];
+
+/// Gives `command` the login parts of the user settings in `config_dir`
+/// (`settings.json`): their `env` as variables and [`LOGIN_SETTINGS`] as
+/// `--settings`. A `claude` that loads no setting sources skips that file,
+/// and with it a gateway's `ANTHROPIC_BASE_URL` and key helper, and then
+/// isn't logged in. Hooks, permissions and the rest stay unloaded.
+/// Variables set on `command` later override these. A missing or unreadable
+/// file adds nothing.
+pub(crate) fn apply_login(command: &mut Command, config_dir: &Path) {
+    let Ok(text) = std::fs::read_to_string(config_dir.join("settings.json")) else {
+        return;
+    };
+    let Ok(Value::Object(settings)) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    if let Some(Value::Object(env)) = settings.get("env") {
+        for (key, value) in env {
+            let value = match value {
+                Value::String(value) => value.clone(),
+                Value::Number(_) | Value::Bool(_) => value.to_string(),
+                _ => continue,
+            };
+            command.env(key, value);
+        }
+    }
+    let login: Map<String, Value> = settings
+        .into_iter()
+        .filter(|(key, _)| LOGIN_SETTINGS.contains(&key.as_str()))
+        .collect();
+    if !login.is_empty() {
+        command
+            .arg("--settings")
+            .arg(Value::Object(login).to_string());
+    }
+}
+
 /// Everything needed to start a draft's `claude` process.
 pub struct LaunchSpec {
     /// The `claude` executable itself. A shell alias can add flags such as
@@ -153,7 +195,8 @@ pub struct LaunchSpec {
     /// The built-in tools the model can use; empty disables them all.
     pub tools: Vec<Tool>,
     /// The settings files to load; empty loads none, which also skips
-    /// `CLAUDE.md`. Settings can enable executable hooks.
+    /// `CLAUDE.md`. Settings can enable executable hooks. The user settings'
+    /// login parts apply either way.
     pub setting_sources: Vec<SettingSource>,
     pub session: Option<Session>,
     /// Registered with `initialize`; each call arrives as
@@ -287,6 +330,7 @@ impl LaunchSpec {
             None => {}
         }
         command.current_dir(&self.cwd);
+        apply_login(&mut command, &self.config_dir());
         command.envs(self.extra_env.iter().map(|(k, v)| (k, v)));
         // Claude must write where the agent looks for the transcript.
         if let Some(Session::Draft(draft)) = &self.session {
@@ -300,6 +344,22 @@ impl LaunchSpec {
             // over.
             .env("CLAUDE_CODE_SDK_READS_SESSION_STATE", "1");
         command
+    }
+}
+
+impl LaunchSpec {
+    /// The directory the process keeps its settings and transcripts in, as
+    /// [`LaunchSpec::command`] sets `CLAUDE_CONFIG_DIR`.
+    fn config_dir(&self) -> PathBuf {
+        let home = || home(self.env.iter()).join(".claude");
+        if let Some(Session::Draft(draft)) = &self.session {
+            return draft.config_dir.clone().unwrap_or_else(home);
+        }
+        self.extra_env
+            .iter()
+            .rev()
+            .find(|(key, _)| is_var(key, "CLAUDE_CONFIG_DIR"))
+            .map_or_else(home, |(_, dir)| PathBuf::from(dir))
     }
 }
 
@@ -336,6 +396,35 @@ mod tests {
             permission_prompt: true,
             system_prompt: None,
         }
+    }
+
+    #[test]
+    fn a_draft_is_logged_in_from_its_config_dir_s_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("settings.json"),
+            r#"{"env": {"ANTHROPIC_BASE_URL": "https://gateway"}, "apiKeyHelper": "/bin/key", "hooks": {}}"#,
+        )
+        .unwrap();
+        let mut spec = spec();
+        spec.extra_env = vec![("CLAUDE_CONFIG_DIR".into(), tmp.path().into())];
+        let command = spec.command(None, None, &[], None);
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        let at = args.iter().position(|arg| arg == "--settings").unwrap();
+        assert_eq!(args[at + 1], r#"{"apiKeyHelper":"/bin/key"}"#);
+        assert!(command.get_envs().any(|env| env
+            == (
+                "ANTHROPIC_BASE_URL".as_ref(),
+                Some("https://gateway".as_ref())
+            )));
+
+        // No settings file, as for the default spec's /cfg.
+        let args: Vec<_> = super::tests::spec()
+            .command(None, None, &[], None)
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(!args.contains(&"--settings".to_string()));
     }
 
     #[test]

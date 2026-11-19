@@ -147,7 +147,9 @@ created with.
 - The draft continues your conversation in its own Claude Code session. Your
   original session is untouched.
 - Claude Code may read files but edit only the draft. It runs without your
-  Claude Code settings files, `CLAUDE.md`, hooks or MCP servers.
+  Claude Code `CLAUDE.md`, hooks, MCP servers or other settings, except the
+  `env` and `apiKeyHelper` in your user `settings.json`, so a gateway or API
+  key you log in with keeps working.
 - New drafts use the session's model unless Settings sets a Claude Code
   drafting model such as `sonnet`. The model chip changes a draft's model, and
   the draft keeps the choice.

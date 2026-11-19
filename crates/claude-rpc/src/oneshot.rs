@@ -3,7 +3,8 @@
 //!
 //! The request continues a copy of the conversation so far as a new session
 //! (`--resume <copy> --fork-session`) that Claude Code doesn't save
-//! (`--no-session-persistence`), with no tools, settings or MCP servers.
+//! (`--no-session-persistence`), with no tools, settings or MCP servers
+//! beyond the user settings that log it in.
 //! The prompt goes on stdin as a stream-json user message: Claude Code waits
 //! for that as long as it takes, so the process can start before the prompt
 //! is known, where a plain-text prompt must arrive within a few seconds.
@@ -26,7 +27,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::launch::{clean_command, home};
+use crate::launch::{apply_login, clean_command, home};
 use crate::protocol::{result_aborted, result_error};
 use crate::session::{DraftSession, Snapshot};
 
@@ -102,6 +103,7 @@ impl Oneshot {
                 "--no-session-persistence",
             ])
             .current_dir(&self.cwd);
+        apply_login(&mut command, &storage);
         if let Some(model) = &self.model {
             command.arg("--model").arg(model);
         }
@@ -254,6 +256,44 @@ mod tests {
         }
         assert!(envs.contains(&("CLAUDE_CODE_TETHER_LIVE".as_ref(), Some("0".as_ref()))));
         assert_eq!(fs::read_dir(&temp).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn the_user_settings_log_it_in_and_draftmux_variables_win() {
+        let tmp = tempfile::tempdir().unwrap();
+        let temp = tmp.path().join("temp");
+        fs::create_dir(&temp).unwrap();
+        fs::create_dir(tmp.path().join(".claude")).unwrap();
+        fs::write(
+            tmp.path().join(".claude/settings.json"),
+            r#"{
+                "env": {"ANTHROPIC_BASE_URL": "https://gateway", "CLAUDE_CODE_MAX_RETRIES": 5,
+                        "CLAUDE_CODE_TETHER_LIVE": "1", "NESTED": {"a": 1}},
+                "apiKeyHelper": "/bin/key",
+                "hooks": {"PreToolUse": []},
+                "permissions": {"allow": ["Bash"]}
+            }"#,
+        )
+        .unwrap();
+        let request = oneshot(&tmp.path().join("draft"), tmp.path());
+        let command = request.command(&temp).unwrap();
+        let args = args(&command);
+        let at = args.iter().position(|arg| arg == "--settings").unwrap();
+        assert_eq!(args[at + 1], r#"{"apiKeyHelper":"/bin/key"}"#);
+        let env = |key: &str| {
+            command
+                .get_envs()
+                .filter(|(name, _)| *name == key)
+                .last()
+                .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+        };
+        assert_eq!(
+            env("ANTHROPIC_BASE_URL").as_deref(),
+            Some("https://gateway")
+        );
+        assert_eq!(env("CLAUDE_CODE_MAX_RETRIES").as_deref(), Some("5"));
+        assert_eq!(env("CLAUDE_CODE_TETHER_LIVE").as_deref(), Some("0"));
+        assert_eq!(env("NESTED"), None);
     }
 
     #[test]

@@ -17,6 +17,9 @@
 - UX: In Claude Code drafts, alternatives and continuations reuse the
   conversation cached by the previous one instead of reprocessing it every
   time.
+- Fix: Claude Code drafts work when Claude Code logs in through
+  `settings.json`, such as a gateway's `ANTHROPIC_BASE_URL` with an
+  `apiKeyHelper`. They failed with "Not logged in".
 - Fix: In Claude Code drafts, alternatives, selection actions and
   continuations now use the effort chosen in the chat, unless a separate
   selection model is set.

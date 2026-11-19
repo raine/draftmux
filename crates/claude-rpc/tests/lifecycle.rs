@@ -105,6 +105,8 @@ impl Harness {
             program: PathBuf::from(env!("CARGO_BIN_EXE_fake-claude")),
             cwd: dir.path().to_path_buf(),
             env: vec![
+                // Not the user's, whose Claude Code settings would apply.
+                ("HOME".into(), dir.path().into()),
                 ("PATH".into(), std::env::var_os("PATH").unwrap()),
                 ("CLAUDECODE".into(), "1".into()),
                 ("CLAUDE_CODE_SESSION_ID".into(), "parent".into()),
@@ -280,6 +282,7 @@ fn launch_contract() {
         [
             "CLAUDE_CODE_SDK_READS_SESSION_STATE",
             "FAKE_CLAUDE_DIR",
+            "HOME",
             "PATH",
         ],
         "only allowlisted and explicit variables"
