@@ -4,6 +4,9 @@
 
 - Fix: Pressing `⌘/` in the Help window, `⌘,` in Settings or choosing About
   again while it's in front no longer opens a second copy of the window.
+- Fix: In Claude Code drafts, alternatives, selection actions and
+  continuations now use the effort chosen in the chat, unless a separate
+  selection model is set.
 
 ## v0.4.0 (2026-11-19)
 

@@ -51,6 +51,9 @@ pub struct SelectionConfig {
     pub model: Option<String>,
     /// pi's, sent with `model` only; pi restores the session's otherwise.
     pub thinking: Option<ThinkingLevel>,
+    /// Claude Code's `--effort`. Claude Code doesn't restore the session's
+    /// effort, so a call on the draft's model passes the draft's.
+    pub effort: Option<String>,
     /// How many options each action asks for.
     pub alternatives: usize,
     /// Off runs pi with `--no-context-files`, as the draft's own pi.
@@ -62,6 +65,7 @@ impl Default for SelectionConfig {
         Self {
             model: None,
             thinking: None,
+            effort: None,
             alternatives: draftmux_settings::DEFAULT_ALTERNATIVES,
             context_files: true,
         }
@@ -71,20 +75,30 @@ impl Default for SelectionConfig {
 impl SelectionConfig {
     /// For a draft, from the settings it kept at creation, asking for
     /// `alternatives` options. A Claude draft without a selection model of
-    /// its own uses the model chosen for the draft.
+    /// its own uses the model and effort chosen for the draft; a selection
+    /// model runs at its default effort, which the draft's may not fit.
     pub fn for_draft(meta: &Meta, alternatives: usize) -> Self {
         let settings = &meta.settings;
         if let DraftBackend::Claude(claude) = &meta.backend {
-            return Self {
-                model: claude.selection_model.clone().or(claude.model.clone()),
-                alternatives,
-                ..Self::default()
+            return match &claude.selection_model {
+                Some(model) => Self {
+                    model: Some(model.clone()),
+                    alternatives,
+                    ..Self::default()
+                },
+                None => Self {
+                    model: claude.model.clone(),
+                    effort: claude.effort.clone(),
+                    alternatives,
+                    ..Self::default()
+                },
             };
         }
         let model = settings.selection_model.as_ref();
         Self {
             model: model.map(|m| format!("{}/{}", m.provider, m.model_id)),
             thinking: model.and_then(|m| ThinkingLevel::parse(&m.thinking)),
+            effort: None,
             alternatives,
             context_files: settings.context_files,
         }
@@ -230,6 +244,7 @@ pub fn run(
                 env,
                 session,
                 model: config.model.clone(),
+                effort: config.effort.clone(),
             };
             (Agent::Claude, oneshot.command(temp.path())?)
         }
@@ -760,6 +775,7 @@ mod tests {
             SelectionConfig {
                 model: Some("anthropic/claude-haiku-5-5".into()),
                 thinking: Some(ThinkingLevel::Xhigh),
+                effort: None,
                 alternatives: 2,
                 context_files: false,
             }
@@ -782,7 +798,15 @@ mod tests {
         };
         assert_eq!(config(&claude), SelectionConfig::default());
         claude.model = Some("opus".into());
-        assert_eq!(config(&claude).model.as_deref(), Some("opus"));
+        claude.effort = Some("low".into());
+        assert_eq!(
+            config(&claude),
+            SelectionConfig {
+                model: Some("opus".into()),
+                effort: Some("low".into()),
+                ..SelectionConfig::default()
+            }
+        );
         claude.selection_model = Some("haiku".into());
         assert_eq!(
             config(&claude),

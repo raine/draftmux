@@ -29,6 +29,8 @@ pub struct Oneshot {
     pub session: DraftSession,
     /// None continues on the session's own model.
     pub model: Option<String>,
+    /// As `--effort` takes it; none leaves the model's default.
+    pub effort: Option<String>,
 }
 
 impl Oneshot {
@@ -72,6 +74,9 @@ impl Oneshot {
             .current_dir(&self.cwd);
         if let Some(model) = &self.model {
             command.arg("--model").arg(model);
+        }
+        if let Some(effort) = &self.effort {
+            command.arg("--effort").arg(effort);
         }
         if let Some(copy) = copy {
             command.arg("--resume").arg(copy).arg("--fork-session");
@@ -172,6 +177,7 @@ mod tests {
                 transcript: None,
             },
             model: None,
+            effort: None,
         }
     }
 
@@ -214,6 +220,20 @@ mod tests {
             assert!(!envs.iter().any(|(key, _)| *key == dropped), "{dropped}");
         }
         assert_eq!(fs::read_dir(&temp).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn the_effort_is_passed_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let temp = tmp.path().join("temp");
+        fs::create_dir(&temp).unwrap();
+        let mut request = oneshot(&tmp.path().join("draft"), tmp.path());
+        request.effort = Some("low".into());
+        let args = args(&request.command(&temp).unwrap());
+        assert!(
+            args.ends_with(&["--effort".into(), "low".into()]),
+            "{args:?}"
+        );
     }
 
     #[test]
