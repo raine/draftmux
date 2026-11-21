@@ -272,3 +272,16 @@ pub struct ToolResult {
     /// The unified patch an edit made.
     pub patch: Option<String>,
 }
+
+/// What a draft started from a summary tells its agent about where it came
+/// from: the `summary` the handing-off agent wrote, and the `transcript` of
+/// the session it summarizes, to read for details the summary leaves out.
+pub fn summary_message(summary: &str, transcript: &std::path::Path) -> String {
+    format!(
+        "This session starts from a summary of the conversation the draft was handed off \
+         from, not from that conversation's history. Its full transcript is {}; read it only \
+         when the summary leaves out a detail you need.\n\n<summary>\n{}\n</summary>",
+        transcript.display(),
+        summary.trim()
+    )
+}

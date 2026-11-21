@@ -75,6 +75,7 @@ pub fn fork(mut command: Command, spec: &ForkSpec) -> Result<Forked, String> {
             agent_dir: &spec.agent_dir,
             draft_path: &spec.draft_path,
             instructions: None,
+            summary: None,
         },
     );
     let (tx, rx) = mpsc::channel();

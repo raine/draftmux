@@ -90,6 +90,7 @@ mod tests {
                 cwd: "/tmp/repo".into(),
                 backend: Backend::pi("/tmp/.pi/agent"),
                 note: None,
+                summary: None,
                 settings: Default::default(),
                 text: "old\n".into(),
                 file,

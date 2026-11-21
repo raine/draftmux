@@ -479,6 +479,7 @@ mod tests {
                 Item::Assistant { doc } => writeln!(s, "{i} assistant {doc:?}"),
                 Item::Failure { error, retry } => writeln!(s, "{i} failure {error:?} {retry:?}"),
                 Item::Notice(text) => writeln!(s, "{i} notice {text:?}"),
+                Item::Summary { text, .. } => writeln!(s, "{i} summary {text:?}"),
                 Item::Tool(tool) => {
                     let status = match tool.status {
                         ToolStatus::Running { .. } => "running".to_owned(),

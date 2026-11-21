@@ -64,7 +64,8 @@ impl Harness {
                 .env_clear()
                 .env("FAKE_PI_SCRIPT", &paths[n])
                 .env("FAKE_PI_RECORD", record.with_extension(n.to_string()))
-                .env("DRAFTMUX_INSTRUCTIONS", "stale");
+                .env("DRAFTMUX_INSTRUCTIONS", "stale")
+                .env("DRAFTMUX_SUMMARY", "stale");
             command
         });
         let spec = LaunchSpec {
@@ -75,6 +76,7 @@ impl Harness {
             agent_dir: PathBuf::from("/profiles/work/agent"),
             draft_path: dir.path().join("draft.md"),
             instructions: None,
+            summary: None,
             context_files: true,
         };
         let mut spec = spec;
@@ -280,12 +282,14 @@ fn spawn_contract() {
         h.dir.path().join("draft.md").to_str().unwrap()
     );
     assert!(env.get("DRAFTMUX_INSTRUCTIONS").is_none());
+    assert!(env.get("DRAFTMUX_SUMMARY").is_none());
 }
 
 #[test]
 fn settings_reach_the_process() {
     let h = Harness::with_spec(&[&script("### eof")], IDLE, REQUEST, |spec| {
         spec.instructions = Some("Short paragraphs.".into());
+        spec.summary = Some("The reviewer is Odile.".into());
         spec.context_files = false;
     });
     h.agent.focus().unwrap();
@@ -296,6 +300,7 @@ fn settings_reach_the_process() {
         "{args:?}"
     );
     assert_eq!(record["env"]["DRAFTMUX_INSTRUCTIONS"], "Short paragraphs.");
+    assert_eq!(record["env"]["DRAFTMUX_SUMMARY"], "The reviewer is Odile.");
 }
 
 #[test]

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use draftmux_pi_profiles::{AddedProfiles, Profile, detect};
-use draftmux_settings::tilde_path;
+use draftmux_settings::{Handoff, tilde_path};
 
 /// The instructions the agent follows, printed by `draftmux skill`.
 const BODY: &str = include_str!("skill.md");
@@ -20,6 +20,8 @@ const STUB: &str = include_str!("../../../skills/draftmux/SKILL.md");
 const NAME: &str = "draftmux";
 /// The line of every stub that loads the instructions.
 const LOADER: &str = "!`draftmux skill`";
+/// The line of [`BODY`] that says which hand-off is the default.
+const HANDOFF: &str = "{{handoff}}";
 
 /// Print the instructions of the `draftmux` agent skill.
 #[derive(clap::Args, Debug)]
@@ -38,9 +40,38 @@ enum Command {
 /// Returns the process exit code.
 pub fn main(args: Args) -> Result<u8> {
     match args.command {
-        None => crate::write_output(&mut io::stdout().lock(), BODY.as_bytes()).map(|()| 0),
+        None => {
+            let handoff = handoff_here();
+            crate::write_output(&mut io::stdout().lock(), body(handoff).as_bytes()).map(|()| 0)
+        }
         Some(Command::Install) => install_main(),
     }
+}
+
+/// The hand-off Draftmux's settings give the current directory, which is
+/// the handing-off session's: the agent runs `draftmux skill` from it.
+fn handoff_here() -> Handoff {
+    let settings = crate::open::load_settings();
+    match (std::env::current_dir(), std::env::home_dir()) {
+        (Ok(cwd), Some(home)) => settings.resolve(&cwd, &home).handoff.value,
+        _ => Handoff::FullHistory,
+    }
+}
+
+/// The instructions, saying which hand-off `handoff` makes the default.
+fn body(handoff: Handoff) -> String {
+    let default = match handoff {
+        Handoff::FullHistory => {
+            "Draftmux's agent continues this conversation with its full history. When the \
+             user asks to hand off a summary instead, follow \"Summary hand-off\" below."
+        }
+        Handoff::Summary => {
+            "Draftmux's settings hand off drafts from this directory with a summary: follow \
+             \"Summary hand-off\" below. Leave out `--summary` only when the user asks to \
+             hand off the full conversation."
+        }
+    };
+    BODY.replace(HANDOFF, default)
 }
 
 fn install_main() -> Result<u8> {
@@ -278,6 +309,21 @@ mod tests {
         assert!(super::BODY.contains("fields.subject"));
         assert!(super::BODY.contains("--json"));
         assert!(!super::BODY.contains("--body-file \"$p\""));
+    }
+
+    #[test]
+    fn the_setting_picks_the_default_hand_off() {
+        use draftmux_settings::Handoff;
+        let full = super::body(Handoff::FullHistory);
+        let summary = super::body(Handoff::Summary);
+        for body in [&full, &summary] {
+            assert!(!body.contains(super::HANDOFF));
+            assert!(body.contains("--summary <<'DRAFTMUX_SUMMARY'"));
+            assert!(body.contains("wordings the user rejected"));
+        }
+        assert!(full.contains("continues this conversation with its full history"));
+        assert!(summary.contains("hand off drafts from this directory with a summary"));
+        assert!(!full.contains("from this directory with a summary"));
     }
 
     use super::*;

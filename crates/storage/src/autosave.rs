@@ -181,6 +181,7 @@ mod tests {
                 cwd: "/tmp".into(),
                 backend: crate::Backend::pi("/tmp/.pi/agent"),
                 note: None,
+                summary: None,
                 settings: Default::default(),
                 text: String::new(),
                 file: None,

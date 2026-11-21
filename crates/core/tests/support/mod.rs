@@ -221,6 +221,7 @@ impl Script {
                 cwd: "/home/u/code/app".into(),
                 backend: draftmux_storage::Backend::pi("/tmp/.pi/agent"),
                 note: None,
+                summary: None,
                 settings: Default::default(),
                 text: text.to_owned(),
                 file: None,

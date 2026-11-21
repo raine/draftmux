@@ -89,6 +89,9 @@ pub struct DraftContext {
     /// The target platform's syntax, such as "plain text, such as an email
     /// body", read before every prompt; `None` when it can't be told.
     pub target: Box<dyn Fn() -> Option<String> + Send + Sync>,
+    /// For a draft started from a summary, the message that carries it
+    /// ([`draftmux_agent::summary_message`]), sent with the instructions.
+    pub summary: Option<String>,
 }
 
 /// What changed that the draft's descriptor keeps, so a later start
@@ -406,9 +409,10 @@ fn model(id: &str) -> contract::Model {
     }
 }
 
-/// The block of drafting rules for the draft at `draft_path`, ending with
-/// the user's `instructions` when there are any.
-pub fn instructions_block(draft_path: &Path, instructions: &str) -> String {
+/// The block of drafting rules for the draft at `draft_path`, followed by
+/// the user's `instructions` when there are any and the message carrying
+/// the draft's `summary` when it started from one.
+pub fn instructions_block(draft_path: &Path, instructions: &str, summary: Option<&str>) -> String {
     let draft = draft_path.display();
     let mut prompt = format!(
         "{INSTRUCTIONS_TAG}
@@ -428,6 +432,10 @@ Draft file: {draft}
         prompt.push_str("\n\nDrafting instructions from the user:\n");
         prompt.push_str(instructions);
     }
+    if let Some(summary) = summary {
+        prompt.push_str("\n\n");
+        prompt.push_str(summary);
+    }
     prompt.push_str("\n</draftmux-instructions>");
     prompt
 }
@@ -443,6 +451,7 @@ fn blocks(context: &DraftContext, ledger: &mut Ledger, first: bool) -> Vec<Strin
         blocks.push(instructions_block(
             &context.draft_path,
             &context.instructions,
+            context.summary.as_deref(),
         ));
         ledger.instructed = true;
     }

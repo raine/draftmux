@@ -9,8 +9,8 @@ use draftmux_pi_rpc::ModelOverride;
 use draftmux_storage::{DraftSettings, ModelChoice, Target};
 
 use crate::{
-    ClaudeDraftingModel, ClaudeSelectionModel, DraftBackend, DraftingModel, Scope, SelectionModel,
-    Settings, expand_home,
+    ClaudeDraftingModel, ClaudeSelectionModel, DraftBackend, DraftingModel, Handoff, Scope,
+    SelectionModel, Settings, expand_home,
 };
 
 /// Where a resolved value comes from.
@@ -39,6 +39,7 @@ pub struct Resolved {
     pub claude_drafting_model: Sourced<ClaudeDraftingModel>,
     pub claude_selection_model: Sourced<ClaudeSelectionModel>,
     pub backend: Sourced<DraftBackend>,
+    pub handoff: Sourced<Handoff>,
     pub target: Sourced<Target>,
     /// The innermost scope that contributed is the source.
     pub instructions: Sourced<Option<String>>,
@@ -117,6 +118,7 @@ impl Settings {
                 ClaudeSelectionModel::Drafting,
             ),
             backend: pick(&scopes, |s| s.backend.as_ref(), DraftBackend::SameAsSource),
+            handoff: pick(&scopes, |s| s.handoff.as_ref(), Handoff::FullHistory),
             target: pick(&scopes, |s| s.target.as_ref(), Target::Github),
             instructions: self.instructions(rules),
             context_files: pick(&scopes, |s| s.context_files.as_ref(), true),
@@ -378,6 +380,36 @@ mod tests {
             json,
             serde_json::json!({"claude_selection_model": {"model": "haiku"}})
         );
+    }
+
+    #[test]
+    fn handoff_defaults_to_full_history_and_cascades() {
+        let (_t, home) = home();
+        let mut settings = Settings::default();
+        assert_eq!(
+            settings.resolve(&home, &home).handoff.value,
+            Handoff::FullHistory
+        );
+        settings.defaults.handoff = Some(Handoff::Summary);
+        let mut work = Rule::new("~/work".into());
+        work.scope.handoff = Some(Handoff::FullHistory);
+        settings.directories = vec![work];
+
+        let r = settings.resolve(&home, &home);
+        assert_eq!(r.handoff.value, Handoff::Summary);
+        assert_eq!(r.handoff.source, Source::AllDirectories);
+        let r = settings.resolve(&home.join("work/src"), &home);
+        assert_eq!(
+            r.handoff,
+            Sourced {
+                value: Handoff::FullHistory,
+                source: Source::Rule(0)
+            }
+        );
+        assert_eq!(settings.directories[0].override_count(), 1);
+
+        let json = serde_json::to_value(&settings.defaults).unwrap();
+        assert_eq!(json, serde_json::json!({"handoff": "summary"}));
     }
 
     #[test]

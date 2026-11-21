@@ -45,6 +45,8 @@ pub struct NewDraft {
     /// The backend the draft is pinned to, before its session exists.
     pub backend: Backend,
     pub note: Option<String>,
+    /// See [`Meta::summary`].
+    pub summary: Option<String>,
     pub settings: DraftSettings,
     /// The draft's text to start with. A handed-off draft that starts empty
     /// waits for its agent to write the first draft.
@@ -146,6 +148,7 @@ impl Store {
                 cwd: new.cwd,
                 backend: new.backend,
                 note: new.note,
+                summary: new.summary,
                 first_draft_pending,
                 settings: new.settings,
                 file: new.file,
@@ -528,6 +531,7 @@ mod tests {
             cwd: "/tmp/repo".into(),
             backend: Backend::pi("/tmp/.pi/agent"),
             note: None,
+            summary: None,
             settings: Default::default(),
             text: String::new(),
             file: None,

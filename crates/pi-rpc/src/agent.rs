@@ -38,6 +38,9 @@ pub struct LaunchSpec {
     pub agent_dir: PathBuf,
     pub draft_path: PathBuf,
     pub instructions: Option<String>,
+    /// For a draft started from a summary, the message that carries it
+    /// (`draftmux_agent::summary_message`).
+    pub summary: Option<String>,
     /// Off runs pi with `--no-context-files`.
     pub context_files: bool,
 }
@@ -63,6 +66,7 @@ impl LaunchSpec {
                 agent_dir: &self.agent_dir,
                 draft_path: &self.draft_path,
                 instructions: self.instructions.as_deref(),
+                summary: self.summary.as_deref(),
             },
         );
         command
@@ -76,6 +80,7 @@ pub(crate) struct DraftProcess<'a> {
     pub agent_dir: &'a Path,
     pub draft_path: &'a Path,
     pub instructions: Option<&'a str>,
+    pub summary: Option<&'a str>,
 }
 
 /// Adds `-e <ext>`, the cwd, the profile and the extension's environment.
@@ -92,6 +97,10 @@ pub(crate) fn draft_process(command: &mut Command, draft: &DraftProcess) {
     match draft.instructions {
         Some(instructions) => command.env("DRAFTMUX_INSTRUCTIONS", instructions),
         None => command.env_remove("DRAFTMUX_INSTRUCTIONS"),
+    };
+    match draft.summary {
+        Some(summary) => command.env("DRAFTMUX_SUMMARY", summary),
+        None => command.env_remove("DRAFTMUX_SUMMARY"),
     };
 }
 

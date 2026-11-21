@@ -124,6 +124,9 @@ pub struct Scope {
     pub claude_selection_model: Option<ClaudeSelectionModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<DraftBackend>,
+    /// What a handed-off draft starts from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<Handoff>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<Target>,
     /// Never empty; clearing the text unsets it.
@@ -165,6 +168,7 @@ impl Rule {
             s.claude_drafting_model.is_some(),
             s.claude_selection_model.is_some(),
             s.backend.is_some(),
+            s.handoff.is_some(),
             s.target.is_some(),
             s.instructions.is_some() || self.replace_instructions,
             s.context_files.is_some(),
@@ -220,6 +224,17 @@ pub enum DraftBackend {
     /// The source's own agent: a Claude Code transcript continues on Claude
     /// Code, a pi session on pi.
     SameAsSource,
+}
+
+/// What a handed-off draft starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Handoff {
+    /// The source session's whole history, forked or converted.
+    FullHistory,
+    /// A fresh session given a summary the handing-off agent writes, and
+    /// the path of the source's transcript for details it leaves out.
+    Summary,
 }
 
 /// The model a new draft on Claude Code starts on.

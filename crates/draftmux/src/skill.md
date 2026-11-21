@@ -63,6 +63,8 @@ draftmux open "$@" --target github --note 'PR description for the retry change'
   conversation and the note, so include anything the conversation leaves
   open. Single-quote it; write `'` as `'\''`.
 
+{{handoff}}
+
 When the message is already written in a file, such as a draft the user asked
 you to write earlier, pass `--draft-file <path>` instead of `--note`. The
 draft starts with the file's text unchanged and Draftmux's agent doesn't write
@@ -84,6 +86,28 @@ If `open` exits 1 after printing an ID, the draft exists but the app couldn't
 focus it: report the error and the ID, and don't run `open` again (that
 creates a second draft). `draftmux focus <id>` retries showing it in the app.
 If `open` exits 1 without an ID, nothing was created; report the error.
+
+### Summary hand-off
+
+A summary hand-off starts Draftmux's agent fresh, without this conversation's
+history, so the user's replies and rewrites come back faster. Write a summary
+for that agent and pass it with `--summary` on stdin, with a heredoc. It
+combines with `--target`, `--note` and `--draft-file`:
+
+```sh
+set -- "$f"
+[ -n "${PI_CODING_AGENT_DIR:-}" ] && set -- "$@" --pi-agent-dir "$PI_CODING_AGENT_DIR"
+draftmux open "$@" --target github --note 'PR description for the retry change' --summary <<'DRAFTMUX_SUMMARY'
+Summary in Markdown.
+DRAFTMUX_SUMMARY
+```
+
+Keep what the message needs: where it goes and who reads it, what it is for,
+the facts and decisions its content relies on (with exact names, numbers,
+paths and links), the user's stated preferences on tone and wording, and
+wordings the user rejected. Leave out tool output, file contents and draft
+text. Draftmux's agent can read files and this conversation's file for details
+the summary leaves out.
 
 ## Draft fields
 

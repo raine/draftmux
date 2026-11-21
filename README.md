@@ -36,6 +36,10 @@ Status: early release; expect rough edges.
   at the cursor and shows it as faint text: `⇥` takes it, `⌥→` takes a word,
   typing it keeps it going, and `Esc` drops it. `⌘⇧↩` offers several
   continuations to pick from.
+- **Keep long sessions fast.** The size chip in the chat header shows how
+  large the draft's conversation is; compact it there or with `⌥⌘K`. To start
+  a draft from a summary instead of the whole session, ask the skill for a
+  summary hand-off, or set Hand-off context to Summary in Settings.
 - **Copy or hand back.** Copy formatted for the target with `⌘⇧C`, or tell your
   agent "done, file the issue".
 - **Edit files.** `draftmux README.md` opens a file as a draft, with its own
@@ -138,6 +142,25 @@ or for one directory. For a single draft, ask the skill
 (`/draftmux PR description, on pi`) or pass `--backend pi` or
 `--backend claude` to `draftmux open`. A draft stays on the agent it was
 created with.
+
+## Long sessions
+
+A draft carries its session's whole conversation, and replies, alternatives and
+selection actions all slow down as it grows, even when cached. Two ways to keep
+it small:
+
+- **Compact.** The size chip at the top of the chat opens a Compact button, and
+  Draft › Compact Session (`⌥⌘K`) does the same. The agent replaces the earlier
+  conversation with a summary that keeps the target, the facts and your stated
+  preferences. pi keeps the latest ~20k tokens as they are, so it can't compact
+  a short conversation.
+- **Hand off a summary.** The handing-off agent writes a summary and the draft
+  starts a fresh session from it, which can still read the original session for
+  details the summary leaves out. Ask for it in the hand-off
+  (`/draftmux PR description, hand off a summary`), or set Hand-off context to
+  Summary in Settings, globally or for one directory; `draftmux skill` then
+  tells the agent to hand off summaries there. The agent passes the summary to
+  `draftmux open --summary` on stdin.
 
 ## How it works with pi
 

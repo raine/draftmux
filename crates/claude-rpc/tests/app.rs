@@ -93,6 +93,7 @@ impl App {
                 selection_model: None,
             }),
             note: None,
+            summary: None,
             settings: DraftSettings::default(),
             text: text.into(),
             file: None,
@@ -134,6 +135,7 @@ impl App {
             draft_path: draft.draft_path(),
             instructions: String::new(),
             target: Box::new(|| Some(GITHUB.into())),
+            summary: None,
         };
         let config = Config {
             idle_timeout: Duration::from_secs(60),

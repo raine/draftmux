@@ -40,6 +40,7 @@ fn prompt_round_trip() {
         agent_dir: agent_dir.clone(),
         draft_path,
         instructions: None,
+        summary: None,
         context_files: true,
     };
     let (agent, mut events) = Agent::new(spec, Duration::from_secs(60), Duration::from_secs(120));
@@ -127,6 +128,7 @@ fn compaction_keeps_the_target_and_the_facts() {
         agent_dir,
         draft_path,
         instructions: None,
+        summary: None,
         context_files: false,
     };
     let (agent, mut events) = PiAgent::new(spec, Duration::from_secs(60), Duration::from_secs(300));

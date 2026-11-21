@@ -85,6 +85,7 @@ fn list_models_within(
         "DRAFTMUX_MODE",
         "DRAFTMUX_DRAFT_PATH",
         "DRAFTMUX_INSTRUCTIONS",
+        "DRAFTMUX_SUMMARY",
     ] {
         command.env_remove(var);
     }

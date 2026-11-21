@@ -9,6 +9,7 @@ import draftmux, {
 	DRAFT_MESSAGE_TYPE,
 	moveCacheBreakpoint,
 	readConfig,
+	SUMMARY_MESSAGE_TYPE,
 	TRUST_STATUS_KEY,
 } from "./draftmux.ts";
 
@@ -183,6 +184,28 @@ describe("selection cache breakpoint", () => {
 		for (const handler of selection.get("before_provider_request") ?? []) handler({ payload }, ctx());
 		assert.deepEqual(payload.messages[0].content[0], text("answer", true));
 		assert.equal(load({ DRAFTMUX_DRAFT_PATH: "/tmp/draft.md" }).get("before_provider_request"), undefined);
+	});
+});
+
+describe("summary message", () => {
+	const summaries = (messages: object[] = []) =>
+		startRun(messages).filter((result) => result.message?.customType === SUMMARY_MESSAGE_TYPE);
+
+	test("is sent only for a draft started from a summary", () => {
+		assert.deepEqual(summaries(), []);
+		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_SUMMARY: " The reviewer is Odile.\n" });
+		const [result] = summaries();
+		assert.equal(result.message.content, "The reviewer is Odile.");
+		assert.equal(result.message.display, false);
+	});
+
+	test("is sent again only once the conversation lacks it", () => {
+		handlers = load({ DRAFTMUX_DRAFT_PATH: draftPath, DRAFTMUX_SUMMARY: "The reviewer is Odile." });
+		const sent = { role: "custom", customType: SUMMARY_MESSAGE_TYPE, content: "The reviewer is Odile." };
+		assert.deepEqual(summaries([sent, { role: "user", content: "x" }]), []);
+		setTarget("slack");
+		assert.deepEqual(summaries([sent]), []);
+		assert.equal(summaries([{ role: "user", content: "x" }]).length, 1);
 	});
 });
 

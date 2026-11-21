@@ -102,6 +102,7 @@ fn create(store: &Store, settings: &Settings, path: PathBuf, env: &Env) -> Resul
         // Replaced by the session's.
         backend: Backend::pi(env.home),
         note: None,
+        summary: None,
         settings: session_settings(kind, &resolved),
         file: Some(LinkedFile::new(&path, text.as_bytes())),
         text,

@@ -501,7 +501,8 @@ fn command(
         // The captured environment can carry values from a pi session the
         // app was launched from; selection mode reads none of them.
         .env_remove("DRAFTMUX_DRAFT_PATH")
-        .env_remove("DRAFTMUX_INSTRUCTIONS");
+        .env_remove("DRAFTMUX_INSTRUCTIONS")
+        .env_remove("DRAFTMUX_SUMMARY");
     // An hour rather than five minutes, unless the user chose a retention:
     // calls come in bursts with longer pauses between them, and each one
     // reads the conversation the last one cached.
@@ -773,6 +774,7 @@ mod tests {
             cwd: "/repo".into(),
             backend,
             note: None,
+            summary: None,
             first_draft_pending: false,
             settings: DraftSettings::default(),
             file: None,
@@ -943,6 +945,7 @@ mod tests {
         assert!(envs.contains(&("PI_CODING_AGENT_DIR".as_ref(), Some("/profile".as_ref()))));
         assert!(envs.contains(&("DRAFTMUX_MODE".as_ref(), Some("selection".as_ref()))));
         assert!(envs.contains(&("DRAFTMUX_INSTRUCTIONS".as_ref(), None)));
+        assert!(envs.contains(&("DRAFTMUX_SUMMARY".as_ref(), None)));
         assert!(envs.contains(&("PI_CACHE_RETENTION".as_ref(), Some("long".as_ref()))));
         let mut chosen = Command::new("pi");
         chosen.env("PI_CACHE_RETENTION", "none");

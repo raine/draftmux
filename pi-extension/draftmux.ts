@@ -14,13 +14,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const CONTEXT_MESSAGE_TYPE = "draftmux-context";
 export const DRAFT_MESSAGE_TYPE = "draftmux-draft";
+export const SUMMARY_MESSAGE_TYPE = "draftmux-summary";
 export const TRUST_STATUS_KEY = "draftmux.trust";
 
 type Target = "github" | "github-file" | "slack" | "rich" | "plain";
 
 type Config =
 	| { mode: "selection" }
-	| { mode: "draft"; draftPath: string; instructions: string };
+	| { mode: "draft"; draftPath: string; instructions: string; summary: string };
 
 /** The same text as `syntax` in crates/draftmux/src/selection.rs. */
 const TARGET_SYNTAX: Record<Target, string> = {
@@ -44,7 +45,12 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
 	if (!draftPath || !isAbsolute(draftPath)) {
 		throw new Error("DRAFTMUX_DRAFT_PATH must be set to the absolute path of draft.md");
 	}
-	return { mode, draftPath, instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "" };
+	return {
+		mode,
+		draftPath,
+		instructions: env.DRAFTMUX_INSTRUCTIONS?.trim() ?? "",
+		summary: env.DRAFTMUX_SUMMARY?.trim() ?? "",
+	};
 }
 
 /** The target in the `meta.json` beside the draft file; undefined if it can't be read. */
@@ -210,6 +216,18 @@ export default function draftmux(pi: ExtensionAPI) {
 			.messages.findLast((m) => m.role === "custom" && m.customType === CONTEXT_MESSAGE_TYPE);
 		if (previous && messageText(previous.content) === content) return undefined;
 		return { message: { customType: CONTEXT_MESSAGE_TYPE, content, display: false } };
+	});
+
+	// A draft started from a summary carries it in a message of its own, so
+	// a changed target doesn't send it again. It is sent whenever the
+	// conversation the model sees lacks it, such as after compaction.
+	pi.on("before_agent_start", (_event, ctx) => {
+		if (!config.summary) return undefined;
+		const sent = ctx.sessionManager
+			.buildSessionProjection()
+			.messages.some((m) => m.role === "custom" && m.customType === SUMMARY_MESSAGE_TYPE);
+		if (sent) return undefined;
+		return { message: { customType: SUMMARY_MESSAGE_TYPE, content: config.summary, display: false } };
 	});
 
 	// The draft text the agent last saw in full: through its own read, edit

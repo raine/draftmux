@@ -457,6 +457,7 @@ fn live_draft_editing_is_limited_to_the_draft() {
         draft_path: draft.clone(),
         instructions: String::new(),
         target: Box::new(|| Some("Markdown for a forum post titled ZEBRA-7".into())),
+        summary: None,
     };
     let (agent, mut stream, _records) = ClaudeAgent::new(spec, config(), context).unwrap();
     let (tx, events) = std::sync::mpsc::channel();
@@ -527,6 +528,7 @@ fn live_draft_compaction_keeps_the_target_and_the_draft() {
         draft_path: draft.clone(),
         instructions: String::new(),
         target: Box::new(|| Some("Markdown for a forum post titled ZEBRA-7".into())),
+        summary: None,
     };
     let (agent, mut stream, _records) = ClaudeAgent::new(spec, config(), context).unwrap();
     let (tx, events) = std::sync::mpsc::channel();

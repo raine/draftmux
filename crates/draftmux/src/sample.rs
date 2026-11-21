@@ -57,6 +57,7 @@ pub fn create(store: &Store, settings: &Settings, home: &Path) -> Result<Draft> 
         cwd: home.to_owned(),
         backend: Backend::pi(pi_agent_dir.clone()),
         note: None,
+        summary: None,
         settings: resolved.draft_settings(),
         text: TEXT.to_owned(),
         file: None,

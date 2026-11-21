@@ -62,6 +62,15 @@ pub struct Args {
     /// back to the file.
     #[arg(long, value_name = "PATH")]
     draft_file: Option<PathBuf>,
+    /// Read a summary of the session from stdin and start the draft's
+    /// session fresh from it instead of from the session's history. The
+    /// draft's agent can still read the session file for details the
+    /// summary leaves out.
+    #[arg(long)]
+    summary: bool,
+    /// The summary read from stdin for `--summary`.
+    #[arg(skip)]
+    summary_text: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +104,13 @@ pub fn main(args: Args) -> Result<u8> {
     let pi = || Command::new(&program);
     let claude = claude_available;
     let settings = load_settings();
+    let mut args = args;
+    if args.summary {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+            .context("reading the summary from stdin")?;
+        args.summary_text = Some(text);
+    }
     let draft = create(&args, &Store::open_default()?, &pi, &claude, &settings)?;
     // Printed before focusing: the draft exists and `show` can read it even
     // if the app can't be reached.
@@ -197,6 +213,13 @@ fn create(
             path.display()
         );
     }
+    let summary = match &args.summary_text {
+        Some(text) if text.trim().is_empty() => {
+            bail!("--summary read no summary from stdin; pass it with a heredoc")
+        }
+        Some(text) => Some(text.trim().to_owned()),
+        None => None,
+    };
     // Read before the draft exists, so a missing file creates nothing.
     let (text, file) = match &args.draft_file {
         Some(file) => {
@@ -251,10 +274,14 @@ fn create(
             cwd: info.cwd,
             backend: Backend::Claude(session.clone()),
             note: args.note.clone(),
+            summary: summary.clone(),
             settings,
             text,
             file,
         };
+        if summary.is_some() {
+            return create_fresh(store, new, &path, claude);
+        }
         return create_claude(store, new, session, &path, claude);
     }
     let pi_agent_dir = source::resolve_profile(
@@ -276,10 +303,31 @@ fn create(
         cwd,
         backend: Backend::pi(pi_agent_dir),
         note: args.note.clone(),
+        summary: summary.clone(),
         settings: resolved.draft_settings(),
         text: text.clone(),
         file: file.clone(),
     };
+    if summary.is_some() {
+        if !info.cwd.is_dir() {
+            bail!(
+                "{} was started in {}, which no longer exists",
+                path.display(),
+                info.cwd.display()
+            );
+        }
+        // Without the history the session names no model unless the
+        // settings set one, and pi uses the profile's default.
+        let selection = model.map_or_else(ModelSelection::default, model_selection);
+        let session = claude_convert::empty(&info.cwd, &selection);
+        return store.create_with_session(new(path, info.cwd, &pi_agent_dir), |draft| {
+            let file = session.write_into(&draft.session_dir())?;
+            Ok(Backend::Pi(PiSession {
+                agent_dir: pi_agent_dir,
+                session_file: Some(file),
+            }))
+        });
+    }
     match info.kind {
         SourceKind::Pi => {
             if !info.cwd.is_dir() {
@@ -374,6 +422,31 @@ fn create_claude(
             ..session
         }))
     })
+}
+
+/// Creates the Claude draft `new`, whose session starts fresh from its
+/// summary of `source`, once `claude` finds Claude Code usable.
+fn create_fresh(
+    store: &Store,
+    new: NewDraft,
+    source: &Path,
+    claude: &dyn Fn() -> Result<(), String>,
+) -> Result<Draft> {
+    if !new.cwd.is_dir() {
+        bail!(
+            "{} was started in {}, which no longer exists",
+            source.display(),
+            new.cwd.display()
+        );
+    }
+    claude().map_err(|err| {
+        anyhow!(
+            "can't start a Claude Code session for {}: {err}\n\
+             draftmux: add --backend pi to start it on pi instead",
+            source.display()
+        )
+    })?;
+    store.create_with_session(new, |draft| Ok(draft.meta.backend.clone()))
 }
 
 /// `CLAUDE_CONFIG_DIR` for a session forked from `source`: the directory
@@ -1070,6 +1143,88 @@ cat > /dev/null
         assert_eq!(session.model, None);
     }
 
+    fn with_summary(mut args: Args, summary: &str) -> Args {
+        args.summary_text = Some(summary.to_owned());
+        args
+    }
+
+    #[test]
+    fn a_summary_starts_a_fresh_pi_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("agent");
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let session = pi_session(&profile, &cwd);
+        let store = Store::new(tmp.path().join("drafts"));
+
+        let args = parse(&[
+            "--summary",
+            session.to_str().unwrap(),
+            "--note",
+            "release notes",
+        ]);
+        let args = with_summary(args, "\nThe reviewer is Odile.\n");
+        let draft = create(&args, &store, &no_pi, &no_claude, &Settings::default()).unwrap();
+
+        let meta = store.load(&draft.id).unwrap().meta;
+        assert_eq!(meta.summary.as_deref(), Some("The reviewer is Odile."));
+        assert_eq!(meta.note.as_deref(), Some("release notes"));
+        assert_eq!(meta.source.as_ref().unwrap().path, session);
+        assert!(meta.first_draft_pending);
+        assert_eq!(meta.pi().unwrap().agent_dir, profile);
+        // A new session of its own, with none of the source's entries.
+        let file = meta.pi().unwrap().session_file.clone().unwrap();
+        assert!(file.starts_with(draft.session_dir()));
+        let entries = session_entries(&file);
+        assert!(
+            entries.iter().all(|entry| entry["type"] != "message"),
+            "{entries:?}"
+        );
+    }
+
+    #[test]
+    fn a_summary_starts_a_fresh_claude_session_without_a_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        fs::create_dir_all(&cwd).unwrap();
+        let config = tmp.path().join("claude-work");
+        let transcript = native_transcript(&config, &cwd);
+        let store = Store::new(tmp.path().join("drafts"));
+
+        let args = parse(&[
+            transcript.to_str().unwrap(),
+            "--backend",
+            "claude",
+            "--summary",
+        ]);
+        let args = with_summary(args, "The reviewer is Odile.");
+        let draft = create(&args, &store, &no_pi, &claude_ok, &Settings::default()).unwrap();
+
+        let meta = store.load(&draft.id).unwrap().meta;
+        assert_eq!(meta.summary.as_deref(), Some("The reviewer is Odile."));
+        assert_eq!(meta.source.as_ref().unwrap().path, transcript);
+        let Backend::Claude(session) = &meta.backend else {
+            panic!("not Claude: {:?}", meta.backend);
+        };
+        assert_eq!(session.fork, None);
+        assert_eq!(session.config_dir.as_deref(), Some(config.as_path()));
+        assert_eq!(fs::read_dir(draft.session_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_empty_summary_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let session = pi_session(&tmp.path().join("agent"), &cwd);
+        let store = Store::new(tmp.path().join("drafts"));
+
+        let args = with_summary(parse(&[session.to_str().unwrap(), "--summary"]), " \n");
+        let err = create(&args, &store, &no_pi, &no_claude, &Settings::default()).unwrap_err();
+        assert!(err.to_string().contains("no summary"), "{err}");
+        assert!(store.scan().unwrap().drafts.is_empty());
+    }
+
     #[test]
     fn unusable_claude_code_creates_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1426,6 +1581,7 @@ cat > /dev/null
             agent_dir: profile.to_owned(),
             draft_path: cwd.join("draft.md"),
             instructions: None,
+            summary: None,
             context_files: true,
         };
         let (agent, _events) = Agent::new(spec, Duration::from_secs(60), Duration::from_secs(60));

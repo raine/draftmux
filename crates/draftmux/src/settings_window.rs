@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use draftmux_pi_profiles::{Availability, ModelRef, availability};
 use draftmux_pi_rpc::{ModelOverride, ThinkingLevel};
 use draftmux_settings::{
-    ALTERNATIVES, ClaudeDraftingModel, ClaudeSelectionModel, DraftBackend, DraftingModel, PiReads,
-    Resolved, Rule, Scope, SelectionModel, Settings, Source, Trust, default_profile, pi_reads,
-    tilde_path,
+    ALTERNATIVES, ClaudeDraftingModel, ClaudeSelectionModel, DraftBackend, DraftingModel, Handoff,
+    PiReads, Resolved, Rule, Scope, SelectionModel, Settings, Source, Trust, default_profile,
+    pi_reads, tilde_path,
 };
 use draftmux_storage::Target;
 use editor::{Editor, EditorEvent, EditorStyle};
@@ -105,6 +105,7 @@ enum Field {
     ContextFiles,
     Alternatives,
     Backend,
+    Handoff,
     ClaudeDrafting,
     ClaudeSelection,
 }
@@ -134,6 +135,13 @@ fn claude_drafting_label(model: &ClaudeDraftingModel) -> SharedString {
 /// What the Claude selection model field shows.
 fn claude_selection_label(model: &ClaudeSelectionModel) -> SharedString {
     claude_model_label(model.model(), "Same as drafting")
+}
+
+fn handoff_label(handoff: Handoff) -> SharedString {
+    match handoff {
+        Handoff::FullHistory => "Full history".into(),
+        Handoff::Summary => "Summary".into(),
+    }
 }
 
 fn backend_label(backend: DraftBackend) -> SharedString {
@@ -204,6 +212,7 @@ enum Choice {
     Target(Target),
     Alternatives(usize),
     Backend(DraftBackend),
+    Handoff(Handoff),
     ClaudeDrafting(ClaudeDraftingModel),
     ClaudeSelection(ClaudeSelectionModel),
 }
@@ -468,6 +477,10 @@ impl SettingsWindow {
                     backend_label(inherited.backend.value),
                     own.backend.is_none(),
                 ),
+                Field::Handoff => (
+                    handoff_label(inherited.handoff.value),
+                    own.handoff.is_none(),
+                ),
                 Field::ClaudeDrafting => (
                     claude_drafting_label(&inherited.claude_drafting_model.value),
                     own.claude_drafting_model.is_none(),
@@ -578,6 +591,19 @@ impl SettingsWindow {
                     ));
                 }
             }
+            Field::Handoff => {
+                let current = match is_rule {
+                    true => own.handoff,
+                    false => Some(resolved.handoff.value),
+                };
+                for handoff in [Handoff::FullHistory, Handoff::Summary] {
+                    items.push(item(
+                        handoff_label(handoff),
+                        current == Some(handoff),
+                        Choice::Handoff(handoff),
+                    ));
+                }
+            }
             Field::ClaudeDrafting => {
                 let current = match is_rule {
                     true => own.claude_drafting_model.as_ref(),
@@ -665,6 +691,9 @@ impl SettingsWindow {
             Choice::Backend(backend) => {
                 self.update_scope(|scope| scope.backend = Some(backend), cx)
             }
+            Choice::Handoff(handoff) => {
+                self.update_scope(|scope| scope.handoff = Some(handoff), cx)
+            }
             Choice::ClaudeDrafting(model) => {
                 self.update_scope(|scope| scope.claude_drafting_model = Some(model), cx)
             }
@@ -704,6 +733,7 @@ impl SettingsWindow {
                 }
                 Field::Target => scope.target = None,
                 Field::Backend => scope.backend = None,
+                Field::Handoff => scope.handoff = None,
                 Field::ClaudeDrafting => scope.claude_drafting_model = None,
                 Field::ClaudeSelection => scope.claude_selection_model = None,
                 Field::ContextFiles => scope.context_files = None,
@@ -1247,6 +1277,25 @@ impl SettingsWindow {
             ),
             cx,
         );
+        let handoff_row = self.scoped_row(
+            Field::Handoff,
+            "Hand-off context",
+            vec![description(
+                c,
+                "Summary starts the draft's agent fresh from a summary the handing-off agent \
+                 writes, so replies come faster. It can still read the session for details",
+            )],
+            own.handoff.is_some(),
+            inherited.map(|i| i.handoff.source),
+            self.popup(
+                Field::Handoff,
+                handoff_label(resolved.handoff.value),
+                own.handoff.is_none(),
+                Some(150.),
+                cx,
+            ),
+            cx,
+        );
         let profile_row = self.scoped_row(
             Field::Profile,
             "Profile",
@@ -1308,7 +1357,7 @@ impl SettingsWindow {
 
         let mut form = vec![
             group_title(c, "General").into_any_element(),
-            group(c, vec![target_row, instructions, backend_row]).into_any_element(),
+            group(c, vec![target_row, instructions, backend_row, handoff_row]).into_any_element(),
             group_title(c, "pi").into_any_element(),
             group(c, vec![profile_row, drafting, selection, context_row]).into_any_element(),
         ];

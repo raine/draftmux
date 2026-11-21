@@ -30,6 +30,12 @@ pub enum Item {
         retry: Option<Retry>,
     },
     Notice(String),
+    /// The summary a draft's session started from instead of its source's
+    /// history, collapsed until the user expands it.
+    Summary {
+        text: String,
+        expanded: bool,
+    },
 }
 
 /// What a failure's Retry does.
@@ -231,10 +237,12 @@ impl Transcript {
     }
 
     pub fn toggle(&mut self, index: usize) {
-        if let Some(Item::Tool(tool)) = self.items.get_mut(index) {
-            tool.expanded = !tool.expanded;
-            self.touch(index);
+        match self.items.get_mut(index) {
+            Some(Item::Tool(tool)) => tool.expanded = !tool.expanded,
+            Some(Item::Summary { expanded, .. }) => *expanded = !*expanded,
+            _ => return,
         }
+        self.touch(index);
     }
 
     /// Applies one agent event. `written` is the draft's new text when the
@@ -663,6 +671,28 @@ mod tests {
             text: text.into(),
             stop,
         }
+    }
+
+    #[test]
+    fn the_summary_row_expands_and_collapses() {
+        let mut transcript = Transcript::default();
+        transcript.prepend(vec![Item::Summary {
+            text: "The reviewer is Odile.".into(),
+            expanded: false,
+        }]);
+        transcript.toggle(0);
+        assert!(matches!(
+            &transcript.items[0],
+            Item::Summary { expanded: true, .. }
+        ));
+        transcript.toggle(0);
+        assert!(matches!(
+            &transcript.items[0],
+            Item::Summary {
+                expanded: false,
+                ..
+            }
+        ));
     }
 
     #[test]

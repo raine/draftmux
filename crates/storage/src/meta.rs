@@ -30,6 +30,11 @@ pub struct Meta {
     /// Free-form note from the agent that handed the draft off
     /// (`draftmux open --note`).
     pub note: Option<String>,
+    /// The summary of the source session the draft started from instead of
+    /// its history (`draftmux open --summary`). The draft's session starts
+    /// fresh, and the source's transcript stays available for details the
+    /// summary leaves out.
+    pub summary: Option<String>,
     /// Whether the app still has to ask the agent for the first draft. Set
     /// for a handed-off draft and cleared once the app sends that request,
     /// so it is sent once even if the app is restarted.
@@ -230,6 +235,8 @@ struct MetaFile {
     pi_agent_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     first_draft_pending: bool,
     #[serde(default)]
@@ -273,6 +280,7 @@ impl TryFrom<MetaFile> for Meta {
             cwd: file.cwd,
             backend,
             note: file.note,
+            summary: file.summary,
             first_draft_pending: file.first_draft_pending,
             settings: file.settings,
             file: file.file,
@@ -301,6 +309,7 @@ impl From<Meta> for MetaFile {
             pi_session_file,
             pi_agent_dir,
             note: meta.note,
+            summary: meta.summary,
             first_draft_pending: meta.first_draft_pending,
             settings: meta.settings,
             file: meta.file,

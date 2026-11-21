@@ -7,6 +7,7 @@ it starts. Nothing is installed in the user's pi. It:
   tools available,
 - tells the agent the draft path, target platform and drafting instructions
   through a message, never through the system prompt,
+- gives a draft started from a summary that summary through a message,
 - sends the agent the draft's text before a run when it changed since the agent
   last saw it, so the agent edits without reading the file first,
 - blocks every tool call in selection calls, and caches their conversation for
@@ -22,11 +23,12 @@ The app sets these environment variables on the pi process. They are read once
 when pi loads the extension, so changing the instructions means respawning the
 process. bash commands the agent runs inherit them.
 
-| Variable                | Value                                                    |
-| ----------------------- | -------------------------------------------------------- |
-| `DRAFTMUX_MODE`         | `draft` (default when unset) or `selection`              |
-| `DRAFTMUX_DRAFT_PATH`   | Absolute path of the draft's `draft.md`; draft mode only |
-| `DRAFTMUX_INSTRUCTIONS` | The user's drafting instructions, any text; optional     |
+| Variable                | Value                                                         |
+| ----------------------- | ------------------------------------------------------------- |
+| `DRAFTMUX_MODE`         | `draft` (default when unset) or `selection`                   |
+| `DRAFTMUX_DRAFT_PATH`   | Absolute path of the draft's `draft.md`; draft mode only      |
+| `DRAFTMUX_INSTRUCTIONS` | The user's drafting instructions, any text; optional          |
+| `DRAFTMUX_SUMMARY`      | The summary message of a draft started from one; optional     |
 
 A missing or invalid value makes pi exit with status 1 and an error on stderr
 naming the variable, so pi never runs unguarded.
@@ -98,6 +100,14 @@ the session, and the chat pane should hide it. It is added again only when its
 text changes, for example after the target changes, so a long
 chat holds one copy. Selection calls add none; their prompt carries the draft
 text and selection.
+
+### Summary message
+
+With `DRAFTMUX_SUMMARY` set, the extension adds a custom message with
+`customType: "draftmux-summary"` and `display: false` holding its text before a
+run whose conversation has none, such as the first run and the first after
+compaction. It is separate from the context message, so a target change doesn't
+send the summary again.
 
 ### Draft message
 

@@ -728,6 +728,15 @@ impl Chat {
                 )),
             );
         }
+        if let Some(summary) = &session.draft.meta.summary {
+            items.insert(
+                0,
+                Item::Summary {
+                    text: summary.clone(),
+                    expanded: false,
+                },
+            );
+        }
         session.transcript.prepend(items);
         // A model request reported since is newer.
         if session.transcript.context.is_none() {
@@ -1191,6 +1200,9 @@ impl Chat {
                 .text_center()
                 .child(text.clone())
                 .into_any_element(),
+            Item::Summary { text, expanded } => {
+                summary_row(text, *expanded, index, &palette, window, cx)
+            }
         };
         let entrance = session
             .entering
@@ -2405,6 +2417,68 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
+/// The summary a draft started from: a notice that expands to show it.
+fn summary_row(
+    text: &str,
+    expanded: bool,
+    index: usize,
+    palette: &Palette,
+    window: &mut Window,
+    cx: &mut Context<Chat>,
+) -> AnyElement {
+    let chevron = svg()
+        .path(CHEVRON_ICON)
+        .size(px(10.))
+        .text_color(palette.faint);
+    let label = div()
+        .id(("summary", index))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .text_size(px(12.))
+        .text_color(palette.faint)
+        .cursor_pointer()
+        .hover(|style| style.text_color(palette.muted))
+        .on_click(cx.listener(move |this, _, _, cx| this.toggle(index, cx)))
+        .child("Started from a summary")
+        .child(if expanded {
+            chevron.with_transformation(Transformation::rotate(percentage(0.25)))
+        } else {
+            chevron
+        });
+    let text = text.to_owned();
+    let line = palette.hairline;
+    let muted = palette.muted;
+    div()
+        .flex()
+        .flex_col()
+        .child(label)
+        .child(crate::fold::fold(
+            ("summary-fold", index),
+            expanded,
+            false,
+            move || {
+                div()
+                    .mt_2()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(line)
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(muted)
+                    .whitespace_normal()
+                    .child(text)
+                    .into_any_element()
+            },
+            window,
+            cx,
+        ))
+        .into_any_element()
+}
+
 /// The expanded row: output keeps its whitespace and scrolls sideways.
 fn tool_body(tool: &Tool, index: usize, palette: &Palette) -> impl IntoElement {
     let lines: Vec<AnyElement> = tool
@@ -2618,6 +2692,7 @@ fn pi_agent(
         agent_dir: pi_session.agent_dir.clone(),
         draft_path: draft.draft_path(),
         instructions: draft.meta.settings.instructions.clone(),
+        summary: summary_message(draft),
         context_files: draft.meta.settings.context_files,
     };
     let (agent, events) = PiAgent::new(spec, IDLE_TIMEOUT, REQUEST_TIMEOUT);
@@ -2698,9 +2773,17 @@ fn claude_agent(
         draft_path: draft.draft_path(),
         instructions: draft.meta.settings.instructions.clone().unwrap_or_default(),
         target: Box::new(target_syntax(draft)),
+        summary: summary_message(draft),
     };
     let (agent, events, records) = ClaudeAgent::new(spec, CLAUDE_CONFIG, context)?;
     Ok((Arc::new(agent), events, records))
+}
+
+/// For a draft started from a summary, the message that tells its agent so.
+fn summary_message(draft: &Draft) -> Option<String> {
+    let summary = draft.meta.summary.as_deref()?;
+    let source = draft.meta.source.as_ref()?;
+    Some(draftmux_agent::summary_message(summary, &source.path))
 }
 
 /// Reads `draft`'s target from its `meta.json`, which the app keeps

@@ -65,6 +65,7 @@ impl Harness {
                 let target = target.clone();
                 move || target.lock().unwrap().clone()
             }),
+            summary: None,
         };
         let config = Config {
             idle_timeout: Duration::from_secs(60),
@@ -231,7 +232,7 @@ fn allowed_writes_are_reported_and_writes_elsewhere_refused() {
 #[test]
 fn context_is_sent_when_it_changed_and_after_compaction_or_a_restart() {
     let h = Harness::new("One\n", |draft, _| {
-        let rules = || instructions_block(draft, "Be brief.");
+        let rules = || instructions_block(draft, "Be brief.", None);
         let run = || [state("running"), settle("completed")].join("\n");
         let first = [
             INIT.into(),
@@ -720,7 +721,7 @@ fn a_switched_model_is_recorded_reported_and_passed_to_the_next_process() {
 #[test]
 fn compaction_reports_its_start_end_and_the_size_after() {
     let h = Harness::new("One\n", |draft, _| {
-        let rules = instructions_block(draft, "Be brief.");
+        let rules = instructions_block(draft, "Be brief.", None);
         let first = [
             INIT.into(),
             prompt_in(&[rules, target_block(SLACK), draft_block("One\n")], "a"),
@@ -781,4 +782,27 @@ fn compaction_reports_its_start_end_and_the_size_after() {
     }));
     h.agent().blur();
     h.finished(0);
+}
+
+#[test]
+fn a_summary_goes_after_the_users_instructions() {
+    let summary = draftmux_agent::summary_message(
+        "The reviewer is Odile.",
+        Path::new("/home/u/.claude/projects/p/s.jsonl"),
+    );
+    let block = instructions_block(Path::new("/d/draft.md"), "Be brief.", Some(&summary));
+    let instructions = block.find("Be brief.").unwrap();
+    let at = block
+        .find("<summary>\nThe reviewer is Odile.\n</summary>")
+        .unwrap();
+    assert!(instructions < at, "{block}");
+    assert!(
+        block.contains("/home/u/.claude/projects/p/s.jsonl"),
+        "{block}"
+    );
+    assert!(
+        block.ends_with("</summary>\n</draftmux-instructions>"),
+        "{block}"
+    );
+    assert!(!instructions_block(Path::new("/d/draft.md"), "", None).contains("summary"));
 }
