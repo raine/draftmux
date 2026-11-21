@@ -28,6 +28,7 @@ mod agent;
 mod connection;
 mod contract;
 mod history;
+mod images;
 mod instructions;
 mod launch;
 mod oneshot;

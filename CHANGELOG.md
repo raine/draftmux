@@ -11,8 +11,8 @@
   original session for details. Ask the skill for it, or set Hand-off context to
   Summary in Settings, globally or per directory. `draftmux open --summary`
   reads the summary from stdin.
-- New: Pi drafts leave out images the source agent read, such as screenshots,
-  so replies and selection actions don't upload them with every request. The
+- New: Drafts leave out images the source agent read, such as screenshots, so
+  replies and selection actions don't upload them with every request. The
   agent can read one again if the message needs it; images you attached stay.
 - Fix: A second selection action, or a sentence continuation, no longer waits
   for the agent to start when it follows another call.

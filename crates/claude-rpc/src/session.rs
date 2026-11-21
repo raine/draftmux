@@ -250,7 +250,8 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Reads `source` once, up to its last complete line, and writes that
-    /// to `source.jsonl` in `dir`. Only reads `source`, which Claude Code may
+    /// to `source.jsonl` in `dir`, with images in tool results replaced by a
+    /// note. Only reads `source`, which Claude Code may
     /// be appending to. Fails if the copy wouldn't fork: no messages, or a
     /// compaction in progress.
     pub fn take(source: &Path, dir: &Path) -> Result<Snapshot, String> {
@@ -270,6 +271,12 @@ impl Snapshot {
             .rev()
             .find_map(|line| line.cwd.as_deref())
             .ok_or_else(|| format!("{} records no working directory", source.display()))?;
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            let (stripped, count) = crate::images::strip_tool_result_images(text);
+            if count > 0 {
+                bytes = stripped.into_bytes();
+            }
+        }
         let path = dir.join(SNAPSHOT);
         let write = || -> io::Result<()> {
             let mut file = fs::File::create_new(&path)?;
