@@ -1,9 +1,10 @@
 //! Selection actions as one-off agent calls that leave the draft's own
 //! conversation alone, on the agent the draft runs on.
 //!
-//! pi: each call forks the draft's session into a temporary session
-//! directory: `pi --mode json -p --fork <draft session> --session-dir <temp>
-//! -e <ext>`, with the draft's profile and cwd, the prompt on stdin and
+//! pi: each call continues a copy of the draft's session in a temporary
+//! directory: `pi --mode json -p --session <temp>/<copy> -e <ext>`. The copy
+//! keeps the session ID, which OpenAI providers key their prompt cache on.
+//! It runs with the draft's profile and cwd, the prompt on stdin and
 //! `DRAFTMUX_MODE=selection`, so the extension blocks every tool call and
 //! caches the conversation for the next call, and `PI_CACHE_RETENTION=long`
 //! so that cache lasts an hour.
@@ -242,15 +243,18 @@ impl Warm {
                 session_file,
                 agent_dir,
             } => {
-                let command = command(
-                    pi,
-                    cwd,
-                    &session_file,
-                    &agent_dir,
-                    &extension,
-                    temp.path(),
-                    config,
+                let copy = temp.path().join(
+                    session_file
+                        .file_name()
+                        .ok_or("The draft's session has no file name")?,
                 );
+                std::fs::copy(&session_file, &copy).map_err(|err| {
+                    format!(
+                        "Couldn't copy the draft's session {}: {err}",
+                        session_file.display()
+                    )
+                })?;
+                let command = command(pi, cwd, &copy, &agent_dir, &extension, config);
                 (Agent::Pi, command)
             }
             Backend::Claude {
@@ -465,14 +469,16 @@ fn timings(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+/// pi continuing `session_copy`, a copy of the draft's session that keeps its
+/// session ID: OpenAI providers key their prompt cache on it, so the call
+/// reads the cache the draft's chat and earlier calls wrote, where a fork's
+/// new ID would miss it every time.
 fn command(
     mut pi: Command,
     cwd: &Path,
-    session_file: &Path,
+    session_copy: &Path,
     agent_dir: &Path,
     extension: &Path,
-    session_dir: &Path,
     config: &SelectionConfig,
 ) -> Command {
     // The prompt goes to stdin, which pi reads as the prompt: Windows
@@ -480,10 +486,8 @@ fn command(
     // can't span lines.
     pi.args(["--mode", "json"])
         .arg("-p")
-        .arg("--fork")
-        .arg(session_file)
-        .arg("--session-dir")
-        .arg(session_dir)
+        .arg("--session")
+        .arg(session_copy)
         .arg("-e")
         .arg(extension);
     if !config.context_files {
@@ -784,11 +788,14 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn pi(pi: Command) -> Backend {
+    /// `pi` on a draft session written to `drafts`, which a call copies.
+    fn pi(pi: Command, drafts: &Path) -> Backend {
+        let session_file = drafts.join("s.jsonl");
+        fs::write(&session_file, "{}\n").unwrap();
         Backend::Pi {
             pi,
             extension: "/ext".into(),
-            session_file: "/drafts/x/session/s.jsonl".into(),
+            session_file,
             agent_dir: "/profile".into(),
         }
     }
@@ -905,17 +912,16 @@ mod tests {
     }
 
     #[test]
-    fn command_forks_into_the_temp_dir_with_selection_mode() {
+    fn command_continues_the_session_copy_with_selection_mode() {
         let mut config = SelectionConfig::default();
         let request = request("Hi there", "there", Action::Alternatives);
         let build = |config: &SelectionConfig| {
             let command = command(
                 Command::new("pi"),
                 &request.cwd,
-                Path::new("/drafts/x/session/s.jsonl"),
+                Path::new("/tmp/s/s.jsonl"),
                 Path::new("/profile"),
                 Path::new("/ext/draftmux.ts"),
-                Path::new("/tmp/s"),
                 config,
             );
             let args: Vec<String> = command
@@ -932,10 +938,8 @@ mod tests {
                 "--mode",
                 "json",
                 "-p",
-                "--fork",
-                "/drafts/x/session/s.jsonl",
-                "--session-dir",
-                "/tmp/s",
+                "--session",
+                "/tmp/s/s.jsonl",
                 "-e",
                 "/ext/draftmux.ts"
             ]
@@ -955,7 +959,6 @@ mod tests {
             Path::new("/s.jsonl"),
             Path::new("/profile"),
             Path::new("/ext.ts"),
-            Path::new("/tmp/s"),
             &config,
         );
         assert!(
@@ -966,10 +969,10 @@ mod tests {
         );
 
         config.thinking = Some(ThinkingLevel::High);
-        assert_eq!(build(&config).1.len(), 9, "thinking only with a model");
+        assert_eq!(build(&config).1.len(), 7, "thinking only with a model");
         config.model = Some("anthropic/claude-haiku-5-5".into());
         assert_eq!(
-            build(&config).1[9..],
+            build(&config).1[7..],
             [
                 "--model",
                 "anthropic/claude-haiku-5-5",
@@ -979,7 +982,7 @@ mod tests {
         );
 
         config.context_files = false;
-        assert_eq!(build(&config).1[9], "--no-context-files");
+        assert_eq!(build(&config).1[7], "--no-context-files");
     }
 
     #[test]
@@ -1048,8 +1051,8 @@ mod tests {
         );
     }
 
-    /// A fake pi that records its arguments and checks the temp session dir
-    /// exists while it runs.
+    /// A fake pi that records the session copy it continues, which is gone
+    /// once the call returns.
     #[cfg(unix)]
     #[test]
     fn run_returns_options_and_removes_the_temp_dir() {
@@ -1058,7 +1061,7 @@ mod tests {
         fs::write(
             &script,
             r#"cat > "$0.stdin"
-while [ "$1" ]; do [ "$1" = --session-dir ] && test -d "$2" && touch "$2/s.jsonl"; shift; done
+while [ "$1" ]; do [ "$1" = --session ] && cp "$2" "$0.session"; shift; done
 echo '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"{\"alternatives\":[\"over here\","}}'
 echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"{\"alternatives\":[\"over here\",\"here\"]}"}]}}'
 echo '{"type":"agent_settled","aborted":false}'"#,
@@ -1066,13 +1069,14 @@ echo '{"type":"agent_settled","aborted":false}'"#,
         .unwrap();
         let mut pi = Command::new("/bin/sh");
         pi.arg(&script);
+        let drafts = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
         let mut request = request("Hi there\n", "there\n", Action::Alternatives);
         request.cwd = parent.path().to_path_buf();
 
         let mut previews = Vec::new();
         let options = run(
-            self::pi(pi),
+            self::pi(pi, drafts.path()),
             &request,
             &SelectionConfig::default(),
             parent.path(),
@@ -1089,6 +1093,10 @@ echo '{"type":"agent_settled","aborted":false}'"#,
         );
         assert_eq!(previews[0], ["over here\n"]);
         assert_eq!(previews.last().unwrap(), &options);
+        assert_eq!(
+            fs::read_to_string(bin.path().join("pi.session")).unwrap(),
+            "{}\n"
+        );
         assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 0);
     }
 
@@ -1163,13 +1171,14 @@ echo '{"type":"agent_settled","aborted":false}'"#,
     fn failed_process_retracts_complete_previews() {
         let mut pi = Command::new("/bin/sh");
         pi.args(["-c", r#"echo '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"{\"alternatives\":[\"preview\","}}'; exit 1"#]);
+        let drafts = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
         let mut request = request("word", "word", Action::Alternatives);
         request.cwd = parent.path().to_owned();
         let mut previews = Vec::new();
         assert!(
             run(
-                self::pi(pi),
+                self::pi(pi, drafts.path()),
                 &request,
                 &SelectionConfig::default(),
                 parent.path(),
@@ -1188,6 +1197,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
     fn run_reports_pi_errors() {
         let mut pi = Command::new("/bin/sh");
         pi.args(["-c", "echo 'No API key found for anthropic' >&2; exit 1"]);
+        let drafts = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
         let mut request = request(
             "Hi there",
@@ -1196,7 +1206,7 @@ echo '{"type":"agent_settled","aborted":false}'"#,
         );
         request.cwd = parent.path().to_path_buf();
         let err = run(
-            self::pi(pi),
+            self::pi(pi, drafts.path()),
             &request,
             &SelectionConfig::default(),
             parent.path(),
@@ -1339,12 +1349,13 @@ echo '{"type":"agent_settled","aborted":false}'"#,
     #[test]
     fn continuing_as_text_streams_the_continuation_spaced_to_fit() {
         let bin = tempfile::tempdir().unwrap();
+        let drafts = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
         let mut request = cursor("The quick fox\n", "\n", true);
         request.cwd = parent.path().to_path_buf();
         let mut previews = Vec::new();
         let result = run(
-            self::pi(streaming_pi(bin.path(), "jumps over.")),
+            self::pi(streaming_pi(bin.path(), "jumps over."), drafts.path()),
             &request,
             &SelectionConfig::default(),
             parent.path(),
@@ -1369,13 +1380,14 @@ echo '{"type":"agent_settled","aborted":false}'"#,
     #[test]
     fn continuing_with_options_spaces_each() {
         let bin = tempfile::tempdir().unwrap();
+        let drafts = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
         let mut request = cursor("Done.", "", false);
         request.range = 5..5;
         request.cwd = parent.path().to_path_buf();
         let reply = r#"{"alternatives":["Next one.","Then this."]}"#;
         let options = run(
-            self::pi(streaming_pi(bin.path(), reply)),
+            self::pi(streaming_pi(bin.path(), reply), drafts.path()),
             &request,
             &SelectionConfig::default(),
             parent.path(),

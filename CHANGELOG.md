@@ -14,6 +14,8 @@
 - New: Drafts leave out images the source agent read, such as screenshots, so
   replies and selection actions don't upload them with every request. The
   agent can read one again if the message needs it; images you attached stay.
+- Fix: Selection actions on pi drafts using OpenAI models read the prompt cache
+  instead of sending the whole conversation uncached on every call.
 - Fix: A second selection action, or a sentence continuation, no longer waits
   for the agent to start when it follows another call.
 
