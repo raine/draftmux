@@ -182,6 +182,7 @@ impl DraftSession {
             return Ok(History {
                 earlier: 0,
                 messages: Vec::new(),
+                context: None,
             });
         };
         let file =

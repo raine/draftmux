@@ -512,3 +512,84 @@ fn live_draft_editing_is_limited_to_the_draft() {
         Some(&Message::User(prompt))
     );
 }
+
+#[test]
+#[ignore = "runs the real claude"]
+fn live_draft_compaction_keeps_the_target_and_the_draft() {
+    let scratch = Scratch::new();
+    let id = scratch.session.clone();
+    let draft_dir = scratch.cwd.join("drafts/one");
+    std::fs::create_dir_all(&draft_dir).unwrap();
+    let draft = draft_dir.join("draft.md");
+    std::fs::write(&draft, "The launch moved to KESTREL week.\n").unwrap();
+    let spec = spec(&scratch.cwd, Session::New(id.clone()));
+    let context = DraftContext {
+        draft_path: draft.clone(),
+        instructions: String::new(),
+        target: Box::new(|| Some("Markdown for a forum post titled ZEBRA-7".into())),
+    };
+    let (agent, mut stream, _records) = ClaudeAgent::new(spec, config(), context).unwrap();
+    let (tx, events) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        while let Some(event) = block_on(stream.next()) {
+            if tx.send(event).is_err() {
+                return;
+            }
+        }
+    });
+    let settle = || {
+        let mut seen = Vec::new();
+        loop {
+            let event = events.recv_timeout(TIMEOUT).expect("an event");
+            if let Event::Crashed { error, .. } = &event {
+                panic!("crashed: {error}");
+            }
+            let settled = matches!(event, Event::RunSettled { .. });
+            seen.push(event);
+            if settled {
+                return seen;
+            }
+        }
+    };
+    block_on(agent.prompt("Remember that the reviewer is called Odile. Reply with OK.".into()))
+        .unwrap();
+    let first = settle();
+    assert!(first.iter().any(|event| matches!(event, Event::Context(_))));
+
+    block_on(agent.compact("Keep the target and the reviewer's name.".into())).unwrap();
+    let compaction = settle();
+    let ended = compaction
+        .iter()
+        .find_map(|event| match event {
+            Event::CompactionEnded {
+                compacted, tokens, ..
+            } => Some((*compacted, *tokens)),
+            _ => None,
+        })
+        .expect("compaction ended");
+    eprintln!("compaction {compaction:?}");
+    assert!(ended.0, "compacted");
+    assert!(ended.1.is_some(), "the size after was reported");
+
+    block_on(
+        agent.prompt(
+            "Reply with only these, comma-separated: the forum post's title, the reviewer's name, \
+         and the week the draft names."
+                .into(),
+        ),
+    )
+    .unwrap();
+    let reply: String = settle()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::AssistantEnded { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    eprintln!("reply {reply:?}");
+    for word in ["ZEBRA-7", "Odile", "KESTREL"] {
+        assert!(reply.contains(word), "{word} survived compaction: {reply}");
+    }
+    drop(agent);
+    wait_gone(&id);
+}

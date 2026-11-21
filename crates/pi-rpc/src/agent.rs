@@ -530,6 +530,21 @@ impl Agent {
     }
 }
 
+impl Agent {
+    /// Replaces the session's earlier messages with a summary that also
+    /// keeps what `instructions` asks for. Resolves once pi finished; its
+    /// progress arrives as compaction events.
+    pub fn compact(
+        &self,
+        instructions: String,
+    ) -> impl Future<Output = Result<(), Error>> + Send + use<> {
+        let rx = self.shared.request(protocol::Command::Compact {
+            custom_instructions: Some(instructions),
+        });
+        async move { reply(rx?).await.map(drop) }
+    }
+}
+
 impl Drop for Agent {
     fn drop(&mut self) {
         self.stop();

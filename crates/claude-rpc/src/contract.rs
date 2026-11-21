@@ -116,7 +116,12 @@ pub struct ClaudeAgent {
     /// Resolves once the last history requested was read. A prompt waits
     /// for it, so that history never includes the prompt.
     history_read: Mutex<Option<future::Shared<oneshot::Receiver<()>>>>,
+    /// Told when the compaction the user asked for ends.
+    compaction: Compaction,
 }
+
+/// The waiter of the compaction the user asked for, until it ends.
+type Compaction = Arc<Mutex<Option<oneshot::Sender<()>>>>;
 
 /// What the model was last sent or saw, so a prompt carries only what
 /// changed.
@@ -162,6 +167,7 @@ impl ClaudeAgent {
         let agent = Arc::new(agent);
         let ledger = Arc::new(Mutex::new(Ledger::default()));
         let models = Arc::new(Mutex::new(None));
+        let compaction = Compaction::default();
         let (tx, events) = mpsc::unbounded();
         let (records_tx, records) = mpsc::unbounded();
         let mut observer = Observer {
@@ -177,6 +183,9 @@ impl ClaudeAgent {
             message: None,
             error_reported: false,
             editing: true,
+            compaction: compaction.clone(),
+            compacting: false,
+            input_tokens: 0,
         };
         thread::Builder::new()
             .name("claude-draft".into())
@@ -193,6 +202,7 @@ impl ClaudeAgent {
             models,
             records: records_tx,
             history_read: Mutex::new(None),
+            compaction,
         };
         Ok((agent, events.boxed(), records))
     }
@@ -354,6 +364,29 @@ impl contract::Agent for ClaudeAgent {
         }
         .boxed()
     }
+
+    /// Runs Claude Code's `/compact`, which ends the run it starts once
+    /// compacted.
+    fn compact(
+        &self,
+        instructions: String,
+    ) -> future::BoxFuture<'static, Result<(), contract::Error>> {
+        let (tx, rx) = oneshot::channel();
+        *self.compaction.lock().unwrap() = Some(tx);
+        let prompt = self.prompt(format!("/compact {}", instructions.trim()));
+        let compaction = self.compaction.clone();
+        async move {
+            if let Err(err) = prompt.await {
+                compaction.lock().unwrap().take();
+                return Err(err);
+            }
+            rx.await.map_err(|_| contract::Error {
+                kind: contract::ErrorKind::Stopped,
+                message: "Claude Code stopped before it compacted the conversation".into(),
+            })
+        }
+        .boxed()
+    }
 }
 
 fn error(error: Error) -> contract::Error {
@@ -466,6 +499,11 @@ struct Observer {
     error_reported: bool,
     /// Edit and Write are still trusted.
     editing: bool,
+    compaction: Compaction,
+    /// Claude Code said it is compacting, and the boundary hasn't arrived.
+    compacting: bool,
+    /// The input tokens of the request streaming, cached ones included.
+    input_tokens: u64,
 }
 
 impl Observer {
@@ -507,6 +545,20 @@ impl Observer {
             AgentEvent::CallbackCancelled { .. } => {}
             AgentEvent::RunSettled { aborted, error } => {
                 self.end_run(aborted);
+                let requested = self.compaction.lock().unwrap().take();
+                if requested.is_some() || std::mem::take(&mut self.compacting) {
+                    // The run ended without a compact boundary.
+                    self.emit(E::CompactionEnded {
+                        compacted: false,
+                        tokens: None,
+                        error: error.filter(|_| !aborted),
+                    });
+                    if let Some(tx) = requested {
+                        let _ = tx.send(());
+                    }
+                    self.emit(E::RunSettled { aborted });
+                    return;
+                }
                 if let Some(error) = error.filter(|_| !self.error_reported) {
                     self.emit(E::AssistantEnded {
                         text: String::new(),
@@ -520,6 +572,9 @@ impl Observer {
                 failed_prompt,
             } => {
                 self.end_run(true);
+                // Dropping the waiter fails the compaction request.
+                self.compaction.lock().unwrap().take();
+                self.compacting = false;
                 self.emit(E::Crashed {
                     error,
                     failed_prompt,
@@ -535,6 +590,18 @@ impl Observer {
                 let event = &frame["event"];
                 match event["type"].as_str() {
                     Some("message_start") => {
+                        let usage = &event["message"]["usage"];
+                        self.input_tokens = [
+                            "input_tokens",
+                            "cache_creation_input_tokens",
+                            "cache_read_input_tokens",
+                        ]
+                        .iter()
+                        .filter_map(|key| usage[key].as_u64())
+                        .sum();
+                        if self.input_tokens > 0 {
+                            self.emit(E::Context(self.input_tokens));
+                        }
                         let id = event["message"]["id"].as_str().unwrap_or_default();
                         self.message = Some((id.to_owned(), Vec::new()));
                         self.emit(E::AssistantStarted);
@@ -549,15 +616,34 @@ impl Observer {
                         let text = event["delta"]["text"].as_str().unwrap_or_default();
                         self.emit(E::AssistantText(text.to_owned()));
                     }
+                    Some("message_delta") if self.input_tokens > 0 => {
+                        let output = event["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                        self.emit(E::Context(self.input_tokens + output));
+                    }
                     Some("message_stop") => self.end_message(contract::Stop::Completed),
                     _ => {}
                 }
             }
             Some("assistant") => self.on_assistant(frame),
             Some("user") if frame["isReplay"] != true => self.on_user(frame),
+            Some("system") if frame["subtype"] == "status" => {
+                if frame["status"] == "compacting" && !self.compacting {
+                    self.compacting = true;
+                    self.emit(E::CompactionStarted);
+                }
+            }
             Some("system") if frame["subtype"] == "compact_boundary" => {
                 // The summary may have lost what the model was sent.
                 *self.ledger.lock().unwrap() = Ledger::default();
+                self.compacting = false;
+                self.emit(E::CompactionEnded {
+                    compacted: true,
+                    tokens: frame["compact_metadata"]["post_tokens"].as_u64(),
+                    error: None,
+                });
+                if let Some(tx) = self.compaction.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
             }
             Some("system") if frame["subtype"] == "init" => {
                 let running = frame["model"].as_str().map(str::to_owned);

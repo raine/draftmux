@@ -39,6 +39,7 @@ pub fn history(lines: &[Line], boundary: Option<&str>) -> History {
     History {
         earlier,
         messages: messages(&shown[split..]),
+        context: shown.iter().rev().find_map(|line| line.context()).flatten(),
     }
 }
 

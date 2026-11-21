@@ -198,6 +198,12 @@ fn run_app() -> Result<()> {
                 MenuItem::action("Undo", editor::Undo),
                 MenuItem::action("Redo", editor::Redo),
             ]),
+            Menu::new("Draft").items([
+                MenuItem::action("Copy", copy::Copy),
+                MenuItem::action("Format", format::Format),
+                MenuItem::separator(),
+                MenuItem::action("Compact Session", chat::CompactSession),
+            ]),
             Menu::new("View").items([
                 MenuItem::action("Actual Size", chrome::ResetZoom),
                 MenuItem::action("Zoom In", chrome::ZoomIn),

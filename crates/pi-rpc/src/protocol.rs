@@ -19,14 +19,25 @@ use serde_json::Value;
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum Command {
-    Prompt { message: String },
+    Prompt {
+        message: String,
+    },
     Abort,
     GetState,
-    SetModel { provider: String, model_id: String },
-    SetThinkingLevel { level: ThinkingLevel },
+    SetModel {
+        provider: String,
+        model_id: String,
+    },
+    SetThinkingLevel {
+        level: ThinkingLevel,
+    },
     GetAvailableThinkingLevels,
     GetAvailableModels,
     GetMessages,
+    Compact {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        custom_instructions: Option<String>,
+    },
 }
 
 impl Command {
@@ -238,6 +249,9 @@ pub enum Event {
     },
     CompactionEnd {
         reason: String,
+        /// pi's `CompactionResult`; none when nothing was compacted.
+        #[serde(default)]
+        result: Option<Value>,
         aborted: bool,
         will_retry: bool,
         error_message: Option<String>,
@@ -452,6 +466,12 @@ mod tests {
                 r#"{"id":"7","type":"get_available_models"}"#,
             ),
             (Command::GetMessages, r#"{"id":"7","type":"get_messages"}"#),
+            (
+                Command::Compact {
+                    custom_instructions: Some("Keep the target.".into()),
+                },
+                r#"{"customInstructions":"Keep the target.","id":"7","type":"compact"}"#,
+            ),
         ];
         for (command, expected) in cases {
             let line = command.to_line("7");

@@ -79,6 +79,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("[  ]", "Previous or next change in review"),
             ("k  r", "Keep or revert the change"),
+            (
+                editor::by_platform!("⌥⌘K", "Ctrl+Alt+K"),
+                "Compact the conversation",
+            ),
         ],
     ),
     (
@@ -116,7 +120,7 @@ pub fn open(cx: &mut App) {
         return;
     }
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(440.), px(612.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(440.), px(636.)), cx)),
         titlebar: Some(TitlebarOptions {
             title: Some("Draftmux Help".into()),
             ..Default::default()

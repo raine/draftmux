@@ -360,6 +360,9 @@ impl Render for Chrome {
                 }
             }))
             .on_action(cx.listener(|this, _: &Copy, _, cx| this.copy(cx)))
+            .on_action(cx.listener(|this, _: &crate::chat::CompactSession, _, cx| {
+                this.chat.update(cx, |chat, cx| chat.compact(cx))
+            }))
             .on_action(
                 cx.listener(|this, _: &SaveToFile, window, cx| {
                     this.save_to_file(false, window, cx)

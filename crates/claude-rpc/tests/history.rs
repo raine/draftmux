@@ -190,3 +190,16 @@ assistant: Done. []
 "
     );
 }
+
+#[test]
+fn context_is_the_latest_usage_or_what_compaction_left() {
+    let user =
+        r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"hi"}}"#;
+    let assistant = r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"Hello"}],"usage":{"input_tokens":2,"cache_creation_input_tokens":15790,"cache_read_input_tokens":8376,"output_tokens":9}}}"#;
+    let boundary = r#"{"type":"system","subtype":"compact_boundary","uuid":"b1","parentUuid":null,"logicalParentUuid":"a1","compactMetadata":{"trigger":"manual","preTokens":24177,"postTokens":10563}}"#;
+    let summary = r#"{"type":"user","uuid":"s1","parentUuid":"b1","isCompactSummary":true,"message":{"role":"user","content":"Summary"}}"#;
+    let before = [user, assistant].join("\n");
+    assert_eq!(read(before.as_bytes(), None).context, Some(24177));
+    let after = [user, assistant, boundary, summary].join("\n");
+    assert_eq!(read(after.as_bytes(), None).context, Some(10563));
+}

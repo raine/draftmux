@@ -30,7 +30,7 @@ impl PiAgent {
     ) -> (Self, contract::Events) {
         let (agent, events) = Agent::new(spec, idle_timeout, request_timeout);
         let events = events
-            .filter_map(|event| future::ready(event_from(event)))
+            .flat_map(|event| futures::stream::iter(events_from(event)))
             .boxed();
         (Self(agent), events)
     }
@@ -128,6 +128,16 @@ impl contract::Agent for PiAgent {
             .map(|state| state.map(state_from).map_err(error))
             .boxed()
     }
+
+    fn compact(
+        &self,
+        instructions: String,
+    ) -> future::BoxFuture<'static, Result<(), contract::Error>> {
+        self.0
+            .compact(instructions)
+            .map(|reply| reply.map_err(error))
+            .boxed()
+    }
 }
 
 fn error(error: Error) -> contract::Error {
@@ -155,9 +165,22 @@ fn model_from(model: crate::Model) -> contract::Model {
     }
 }
 
-/// The contract's event for one of the agent's, if the chat shows it.
-fn event_from(event: AgentEvent) -> Option<contract::Event> {
+/// The contract's events for one of the agent's: none when the chat
+/// doesn't show it.
+fn events_from(event: AgentEvent) -> Vec<contract::Event> {
     use contract::Event as E;
+    if let AgentEvent::Pi(Event::MessageEnd { message }) = &event
+        && role(message) == "assistant"
+    {
+        let ended = E::AssistantEnded {
+            text: content_text(&message["content"], "\n\n"),
+            stop: stop(message),
+        };
+        return match context_tokens(message) {
+            Some(tokens) => vec![E::Context(tokens), ended],
+            None => vec![ended],
+        };
+    }
     let event = match event {
         AgentEvent::Ready(state) => E::Ready(state_from(state)),
         AgentEvent::Crashed { error, failed_turn } => E::Crashed {
@@ -182,18 +205,36 @@ fn event_from(event: AgentEvent) -> Option<contract::Event> {
                 Event::MessageStart { message } => match role(&message) {
                     "user" => E::UserMessage(content_text(&message["content"], "\n")),
                     "assistant" => E::AssistantStarted,
-                    _ => return None,
+                    _ => return Vec::new(),
                 },
                 Event::MessageUpdate(AssistantDelta::TextStart { .. }) => E::AssistantBlock,
                 Event::MessageUpdate(AssistantDelta::TextDelta { delta, .. }) => {
                     E::AssistantText(delta)
                 }
-                Event::MessageEnd { message } if role(&message) == "assistant" => {
-                    E::AssistantEnded {
-                        text: content_text(&message["content"], "\n\n"),
-                        stop: stop(&message),
-                    }
-                }
+                Event::CompactionStart { .. } => E::CompactionStarted,
+                // pi compacts again once a retried request settles.
+                Event::CompactionEnd {
+                    will_retry: true,
+                    result: None,
+                    ..
+                } => return Vec::new(),
+                Event::CompactionEnd {
+                    result,
+                    aborted,
+                    error_message,
+                    ..
+                } => E::CompactionEnded {
+                    compacted: result.is_some(),
+                    // pi's `estimatedTokensAfter` counts characters, not
+                    // what the model reports; like pi, the size is unknown
+                    // until the next reply.
+                    tokens: None,
+                    error: error_message.filter(|_| !aborted).map(|error| {
+                        error
+                            .strip_prefix("Compaction failed: ")
+                            .map_or(error.clone(), str::to_owned)
+                    }),
+                },
                 Event::ToolExecutionStart {
                     tool_call_id,
                     tool_name,
@@ -218,17 +259,32 @@ fn event_from(event: AgentEvent) -> Option<contract::Event> {
                     result: tool_result(&result, is_error, duration_ms),
                     draft_write,
                 },
-                _ => return None,
+                _ => return Vec::new(),
             }
         }
     };
-    Some(event)
+    vec![event]
+}
+
+/// The conversation's size an assistant message's request reported, as pi
+/// counts it; none for a failed or stopped request, which reports none.
+fn context_tokens(message: &Value) -> Option<u64> {
+    let usage = &message["usage"];
+    let total = usage["totalTokens"].as_u64().filter(|&total| total > 0);
+    let tokens = total.unwrap_or_else(|| {
+        ["input", "output", "cacheRead", "cacheWrite"]
+            .iter()
+            .filter_map(|key| usage[key].as_u64())
+            .sum()
+    });
+    (tokens > 0).then_some(tokens)
 }
 
 /// The Draftmux part of a session's messages (pi's `AgentMessage` JSON,
 /// as `get_messages` returns them): from the prompt before the first
 /// context message on. Without one, it is all source conversation.
 fn history(messages: &[Value]) -> contract::History {
+    let context = history_context(messages);
     let start = messages
         .iter()
         .position(|message| role(message) == "custom" && message["customType"] == CONTEXT_TYPE)
@@ -281,7 +337,24 @@ fn history(messages: &[Value]) -> contract::History {
             })
         })
         .collect();
-    contract::History { earlier, messages }
+    contract::History {
+        earlier,
+        messages,
+        context,
+    }
+}
+
+/// The size the latest assistant message's request reported, unless a
+/// compaction summary follows it: what the model sees changed since.
+fn history_context(messages: &[Value]) -> Option<u64> {
+    messages
+        .iter()
+        .rev()
+        .find_map(|message| match role(message) {
+            "compactionSummary" => Some(None),
+            "assistant" => context_tokens(message).map(Some),
+            _ => None,
+        })?
 }
 
 fn role(message: &Value) -> &str {
@@ -462,9 +535,9 @@ mod tests {
         let events = script
             .lines()
             .filter(|line| line.starts_with('{'))
-            .filter_map(|line| match parse_line(line).unwrap() {
-                Incoming::Event(event) => event_from(AgentEvent::Pi(event)),
-                _ => None,
+            .flat_map(|line| match parse_line(line).unwrap() {
+                Incoming::Event(event) => events_from(AgentEvent::Pi(event)),
+                _ => Vec::new(),
             });
         for event in events {
             let write = matches!(
@@ -506,8 +579,8 @@ mod tests {
                 failed_turn: Some("go".into()),
             },
         ];
-        for event in events {
-            t.apply(&event_from(event).unwrap(), None, now);
+        for event in events.into_iter().flat_map(events_from) {
+            t.apply(&event, None, now);
         }
         format!("# crash\n{}", snapshot(&t))
     }
@@ -621,5 +694,60 @@ mod tests {
                 expected.lines().count(),
                 actual.lines().count()
             )
+    }
+
+    #[test]
+    fn assistant_usage_reports_the_context() {
+        let message = serde_json::json!({
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Done."}],
+            "usage": {"input": 3, "output": 40, "cacheRead": 80000, "cacheWrite": 2000, "totalTokens": 82043},
+            "stopReason": "stop",
+        });
+        let events = events_from(AgentEvent::Pi(Event::MessageEnd {
+            message: message.clone(),
+        }));
+        assert_eq!(events[0], contract::Event::Context(82043));
+        assert!(matches!(events[1], contract::Event::AssistantEnded { .. }));
+
+        let summary =
+            serde_json::json!({"role": "compactionSummary", "summary": "s", "tokensBefore": 82043});
+        assert_eq!(history(std::slice::from_ref(&message)).context, Some(82043));
+        assert_eq!(history(&[message.clone(), summary.clone()]).context, None);
+        assert_eq!(history(&[summary, message]).context, Some(82043));
+    }
+
+    #[test]
+    fn compaction_end_reports_success_or_the_error() {
+        let ended = |result: Option<Value>, error: Option<&str>| {
+            events_from(AgentEvent::Pi(Event::CompactionEnd {
+                reason: "manual".into(),
+                result,
+                aborted: false,
+                will_retry: false,
+                error_message: error.map(Into::into),
+            }))
+        };
+        assert_eq!(
+            ended(
+                Some(
+                    serde_json::json!({"summary": "s", "tokensBefore": 90000, "estimatedTokensAfter": 21000})
+                ),
+                None
+            ),
+            vec![contract::Event::CompactionEnded {
+                compacted: true,
+                tokens: None,
+                error: None,
+            }]
+        );
+        assert_eq!(
+            ended(None, Some("Compaction failed: Nothing to compact")),
+            vec![contract::Event::CompactionEnded {
+                compacted: false,
+                tokens: None,
+                error: Some("Nothing to compact".into()),
+            }]
+        );
     }
 }

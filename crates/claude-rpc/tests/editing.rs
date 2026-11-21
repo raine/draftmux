@@ -716,3 +716,69 @@ fn a_switched_model_is_recorded_reported_and_passed_to_the_next_process() {
     records.retain(|record| matches!(record, Record::Model(_)));
     assert_eq!(records, [Record::Model("sonnet".into())]);
 }
+
+#[test]
+fn compaction_reports_its_start_end_and_the_size_after() {
+    let h = Harness::new("One\n", |draft, _| {
+        let rules = instructions_block(draft, "Be brief.");
+        let first = [
+            INIT.into(),
+            prompt_in(&[rules, target_block(SLACK), draft_block("One\n")], "a"),
+            state("running"),
+            line(
+                json!({"type": "stream_event", "event": {"type": "message_start", "message": {
+                "id": "m1",
+                "usage": {"input_tokens": 3, "cache_creation_input_tokens": 1000,
+                          "cache_read_input_tokens": 80000}}}}),
+            ),
+            line(
+                json!({"type": "stream_event", "event": {"type": "message_delta",
+                "usage": {"output_tokens": 40}}}),
+            ),
+            line(json!({"type": "stream_event", "event": {"type": "message_stop"}})),
+            settle("completed"),
+            prompt_in(&[], "/compact Keep the target."),
+            state("running"),
+            line(json!({"type": "system", "subtype": "status", "status": "compacting"})),
+            line(json!({"type": "system", "subtype": "status", "status": null})),
+            line(json!({"type": "system", "subtype": "compact_boundary",
+                "compact_metadata": {"trigger": "manual", "pre_tokens": 81043, "post_tokens": 9000}})),
+            settle("completed"),
+            // A compaction that ends without a boundary didn't compact.
+            prompt_in(&[], "/compact Keep the target."),
+            state("running"),
+            settle("completed"),
+            "### eof".into(),
+        ];
+        vec![first.join("\n")]
+    });
+    h.prompt("a");
+    let events = h.settled();
+    let sizes: Vec<u64> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Context(tokens) => Some(*tokens),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sizes, [81003, 81043]);
+
+    block_on(h.agent().compact("Keep the target.".into())).unwrap();
+    let events = h.settled();
+    assert!(events.contains(&Event::CompactionStarted));
+    assert!(events.contains(&Event::CompactionEnded {
+        compacted: true,
+        tokens: Some(9000),
+        error: None,
+    }));
+
+    block_on(h.agent().compact("Keep the target.".into())).unwrap();
+    let events = h.settled();
+    assert!(events.contains(&Event::CompactionEnded {
+        compacted: false,
+        tokens: None,
+        error: None,
+    }));
+    h.agent().blur();
+    h.finished(0);
+}

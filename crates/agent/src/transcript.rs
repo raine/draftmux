@@ -10,6 +10,8 @@ use crate::{Event, Message, Stop, ToolCall, ToolKind, ToolResult};
 
 /// Lines of tool output kept for the expanded row.
 const MAX_OUTPUT_LINES: usize = 400;
+/// The notice where earlier messages were replaced by a summary.
+const COMPACTED: &str = "Earlier messages were compacted";
 
 pub enum Item {
     /// The user's message, and the selections sent with it.
@@ -107,6 +109,15 @@ pub struct Transcript {
     /// The first item changed since [`Transcript::take_change`], for the
     /// list to remeasure from.
     changed_from: Option<usize>,
+    /// The conversation's size in tokens as the model last saw it; `None`
+    /// until a history or model request reports it, and after a compaction
+    /// that didn't say.
+    pub context: Option<u64>,
+    /// Earlier messages are being replaced with a summary, from the request
+    /// until compaction ends.
+    pub compacting: bool,
+    /// The user asked for the compaction under way.
+    compact_requested: bool,
 }
 
 impl Transcript {
@@ -179,6 +190,25 @@ impl Transcript {
         }
     }
 
+    /// The user asked to compact the conversation.
+    pub fn compact_requested(&mut self) {
+        self.compacting = true;
+        self.compact_requested = true;
+    }
+
+    /// Compaction failed with `error` before the agent reported its end.
+    /// Does nothing once it did, so the failure shows once.
+    pub fn compact_failed(&mut self, error: String) {
+        if self.compacting {
+            self.compacting = false;
+            self.compact_requested = false;
+            self.push(Item::Failure {
+                error: Some(format!("Couldn't compact the conversation: {error}")),
+                retry: None,
+            });
+        }
+    }
+
     /// The agent took the prompt without starting a run.
     pub fn handled(&mut self) {
         self.busy = false;
@@ -217,6 +247,8 @@ impl Transcript {
                 failed_prompt,
             } => {
                 self.end_run();
+                self.compacting = false;
+                self.compact_requested = false;
                 self.push(Item::Failure {
                     error: Some(error.clone()),
                     retry: failed_prompt.clone().map(Retry::Prompt),
@@ -302,6 +334,28 @@ impl Transcript {
                 // An aborted message is reported by the run settling.
                 if let Stop::Error(error) = stop {
                     self.pending_error = Some(error_message(error.as_deref()));
+                }
+            }
+            Event::Context(tokens) => self.context = Some(*tokens),
+            Event::CompactionStarted => self.compacting = true,
+            Event::CompactionEnded {
+                compacted,
+                tokens,
+                error,
+            } => {
+                if *compacted {
+                    self.compacting = false;
+                    self.compact_requested = false;
+                    self.context = *tokens;
+                    self.push(Item::Notice(COMPACTED.into()));
+                } else if let Some(error) = error {
+                    self.compact_failed(error.clone());
+                } else if std::mem::take(&mut self.compact_requested) {
+                    self.compacting = false;
+                    self.push(Item::Notice("There was nothing to compact".into()));
+                } else {
+                    // The agent checked on its own and had nothing to do.
+                    self.compacting = false;
                 }
             }
             Event::ToolStarted(call) => {
@@ -518,9 +572,7 @@ pub fn history(messages: &[Message]) -> Vec<Item> {
                     tool.finish(result, result.duration);
                 }
             }
-            Message::Compacted => {
-                transcript.push(Item::Notice("Earlier messages were compacted".into()));
-            }
+            Message::Compacted => transcript.push(Item::Notice(COMPACTED.into())),
         }
     }
     transcript.items
@@ -611,6 +663,52 @@ mod tests {
             text: text.into(),
             stop,
         }
+    }
+
+    #[test]
+    fn compaction_shows_a_notice_and_takes_the_new_size() {
+        let mut transcript = Transcript::default();
+        let now = Instant::now();
+        transcript.apply(&Event::Context(84_000), None, now);
+        assert_eq!(transcript.context, Some(84_000));
+        transcript.compact_requested();
+        transcript.apply(&Event::CompactionStarted, None, now);
+        assert!(transcript.compacting);
+        transcript.apply(
+            &Event::CompactionEnded {
+                compacted: true,
+                tokens: Some(9_000),
+                error: None,
+            },
+            None,
+            now,
+        );
+        assert!(!transcript.compacting);
+        assert_eq!(transcript.context, Some(9_000));
+        assert!(matches!(&transcript.items[..], [Item::Notice(text)] if text == COMPACTED));
+    }
+
+    #[test]
+    fn a_failed_compaction_shows_once() {
+        let mut transcript = Transcript::default();
+        let now = Instant::now();
+        transcript.compact_requested();
+        transcript.apply(
+            &Event::CompactionEnded {
+                compacted: false,
+                tokens: None,
+                error: Some("Nothing to compact".into()),
+            },
+            None,
+            now,
+        );
+        transcript.compact_failed("Nothing to compact".into());
+        assert!(!transcript.compacting);
+        assert!(matches!(
+            &transcript.items[..],
+            [Item::Failure { error: Some(error), retry: None }]
+                if error == "Couldn't compact the conversation: Nothing to compact"
+        ));
     }
 
     #[test]

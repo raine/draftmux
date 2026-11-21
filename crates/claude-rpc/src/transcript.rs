@@ -56,6 +56,33 @@ pub struct Message {
     pub model: Option<String>,
     #[serde(default)]
     pub content: Value,
+    /// What the model request that wrote an assistant message reported.
+    #[serde(default)]
+    usage: Option<Usage>,
+}
+
+/// An assistant message's token counts, as the API reports them.
+#[derive(Debug, Default, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+}
+
+impl Usage {
+    /// The request's input, then what it wrote: the conversation the next
+    /// request starts from.
+    pub fn context(&self) -> u64 {
+        self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+            + self.output_tokens
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +113,9 @@ pub struct Hunk {
 struct CompactMetadata {
     #[serde(default)]
     preserved_messages: Option<PreservedMessages>,
+    /// The conversation's size in tokens after compacting.
+    #[serde(default)]
+    post_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +138,18 @@ impl Line {
             .as_ref()
             .and_then(|m| m.content.as_array())
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// The conversation's size in tokens after this line: what its
+    /// assistant message's request reported, or what a compact boundary
+    /// left, as far as known. `None` for a line that doesn't tell.
+    pub fn context(&self) -> Option<Option<u64>> {
+        if self.is_compact_boundary() {
+            return Some(self.compact_metadata.as_ref().and_then(|m| m.post_tokens));
+        }
+        let usage = self.message.as_ref()?.usage.as_ref()?;
+        let tokens = usage.context();
+        (self.kind == "assistant" && tokens > 0).then_some(Some(tokens))
     }
 
     pub fn message_id(&self) -> Option<&str> {

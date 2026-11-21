@@ -39,8 +39,8 @@ use futures::{StreamExt, stream};
 use gpui::{
     Anchor, Animation, AnimationExt, AnyElement, App, Context, Entity, EventEmitter, FocusHandle,
     Focusable, FollowMode, FontWeight, HighlightStyle, Hsla, KeyBinding, ListAlignment, ListState,
-    SharedString, StyledText, Task, Transformation, Window, actions, anchored, deferred, div,
-    ease_out_quint, font, list, percentage, point, prelude::*, px, relative, svg,
+    MouseButton, SharedString, StyledText, Task, Transformation, Window, actions, anchored,
+    deferred, div, ease_out_quint, font, list, percentage, point, prelude::*, px, relative, svg,
 };
 use shell_env::ShellEnv;
 
@@ -59,7 +59,16 @@ use crate::scrollbar::{ScrollbarState, Source, scrollbar};
 use crate::selectable::{self, Scroller, TextSelection};
 use crate::theme::{self, MONO, Palette, Theme};
 
-actions!(chat, [Send, Stop]);
+actions!(chat, [Send, Stop, CompactSession]);
+
+/// What compacting the conversation keeps, beyond each agent's own summary.
+/// The draft itself is sent again after compaction, so the summary needn't
+/// hold it.
+const COMPACT_INSTRUCTIONS: &str = "This conversation is now about writing one message in \
+Draftmux. Keep what that message needs: where it goes and who reads it, what it is for, the \
+facts and decisions its content relies on, the user's stated preferences on tone and wording, \
+and wordings the user rejected. Leave out tool output, file contents and the draft's text, \
+which is sent again.";
 
 /// How long an idle agent process is kept.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -101,6 +110,7 @@ pub fn init(cx: &mut App) {
         // editor's newline; shift-enter still inserts one.
         KeyBinding::new("enter", Send, Some("Composer > Editor")),
         KeyBinding::new("escape", Stop, Some(KEY_CONTEXT)),
+        KeyBinding::new(editor::secondary!("alt-k"), CompactSession, None),
     ]);
 }
 
@@ -162,6 +172,8 @@ pub struct Chat {
     style_zoom: f32,
     /// The changes of each finished edit, by tool call id.
     edit_hunks: RefCell<HashMap<String, Rc<Vec<EditHunk>>>>,
+    /// The context chip's popover is open.
+    context_open: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -306,6 +318,7 @@ impl Chat {
             style: message_style(theme::get(cx)),
             style_zoom: theme::get(cx).zoom,
             edit_hunks: RefCell::default(),
+            context_open: false,
         }
     }
 
@@ -326,9 +339,47 @@ impl Chat {
         self.sessions.get(self.current.as_deref()?)
     }
 
+    /// A run or a compaction is under way: nothing else can be sent.
     fn busy(&self) -> bool {
         self.session()
-            .is_some_and(|session| session.transcript.busy)
+            .is_some_and(|session| session.transcript.busy || session.transcript.compacting)
+    }
+
+    /// Replaces the selected draft's earlier messages with a summary, unless
+    /// its agent is busy or isn't running.
+    pub fn compact(&mut self, cx: &mut Context<Self>) {
+        self.context_open = false;
+        if self.busy() {
+            cx.notify();
+            return;
+        }
+        let Some(id) = self.current.clone() else {
+            return;
+        };
+        let Some(session) = self.sessions.get_mut(&id) else {
+            return;
+        };
+        let Some(Ok(agent)) = &session.agent else {
+            return;
+        };
+        let compact = agent.compact(COMPACT_INSTRUCTIONS.to_owned());
+        session.transcript.compact_requested();
+        let request = id.clone();
+        cx.spawn(async move |this, cx| {
+            let id = request;
+            let result = compact.await;
+            this.update(cx, |this, cx| {
+                if let Err(err) = result
+                    && let Some(session) = this.sessions.get_mut(&id)
+                {
+                    session.transcript.compact_failed(err.to_string());
+                }
+                this.after_change(&id, cx);
+            })
+            .ok();
+        })
+        .detach();
+        self.after_change(&id, cx);
     }
 
     /// Drops `draft`'s conversation and agent, and starts its agent again
@@ -649,7 +700,11 @@ impl Chat {
             return;
         };
         session.history_ready = true;
-        let History { earlier, messages } = match history {
+        let History {
+            earlier,
+            messages,
+            context,
+        } = match history {
             Ok(history) => history,
             Err(err) => {
                 session.transcript.history_failed(&err.to_string());
@@ -674,6 +729,10 @@ impl Chat {
             );
         }
         session.transcript.prepend(items);
+        // A model request reported since is newer.
+        if session.transcript.context.is_none() {
+            session.transcript.context = context;
+        }
         // Prepending moves every item to a new index.
         session.bubbles.clear();
         session.entering.clear();
@@ -1436,12 +1495,12 @@ impl Chat {
                             })
                     }),
             )
+            .child(div().flex_1())
             .when_some(detail, |header, (label, path)| {
                 header.child(
                     div()
                         .id("agent-detail")
                         .min_w_0()
-                        .ml_auto()
                         .text_size(px(11.))
                         .line_height(px(16.))
                         .text_color(palette.muted)
@@ -1450,6 +1509,145 @@ impl Chat {
                         .child(label),
                 )
             })
+            .children(self.context_chip(palette, cx))
+    }
+
+    /// The conversation's size, which opens the popover that compacts it;
+    /// none until the agent can be asked.
+    fn context_chip(&self, palette: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.session()?;
+        let Some(Ok(_)) = &session.agent else {
+            return None;
+        };
+        let transcript = &session.transcript;
+        let label: SharedString = match transcript.context {
+            _ if transcript.compacting => "Compacting…".into(),
+            Some(tokens) => short_tokens(tokens).into(),
+            None => "Compact".into(),
+        };
+        let open = self.context_open;
+        let chip = div()
+            .id("context")
+            .relative()
+            .flex_none()
+            .flex()
+            .items_center()
+            .h(px(20.))
+            .px(px(6.))
+            .rounded(px(5.))
+            .text_size(px(11.))
+            .text_color(palette.muted)
+            .cursor_pointer()
+            .hover(|style| style.bg(palette.hover))
+            .when(open, |chip| chip.bg(palette.hover))
+            .active(|style| style.opacity(0.8))
+            .when(!open, |chip| {
+                chip.tooltip(crate::tooltip::text(
+                    "Conversation size. Click to compact it.",
+                ))
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.context_open = !this.context_open;
+                    cx.notify();
+                }),
+            )
+            .child(label)
+            .when(open, |chip| {
+                chip.child(
+                    div().absolute().top_full().right_0().mt_1().child(deferred(
+                        anchored()
+                            .anchor(Anchor::TopRight)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(self.context_popover(palette, cx)),
+                    )),
+                )
+            });
+        Some(chip.into_any_element())
+    }
+
+    fn context_popover(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let transcript = self.session().map(|session| &session.transcript);
+        let context = transcript.and_then(|transcript| transcript.context);
+        let compacting = transcript.is_some_and(|transcript| transcript.compacting);
+        let busy = self.busy();
+        let size: AnyElement = match context {
+            Some(tokens) => div()
+                .child(
+                    StyledText::new(format!("{} tokens in context", grouped(tokens)))
+                        .with_highlights([(
+                            0..grouped(tokens).len(),
+                            HighlightStyle {
+                                font_weight: Some(FontWeight::SEMIBOLD),
+                                color: Some(palette.text),
+                                ..HighlightStyle::default()
+                            },
+                        )]),
+                )
+                .into_any_element(),
+            None => div()
+                .child("The size shows after the agent's next reply.")
+                .into_any_element(),
+        };
+        let button_label = if compacting {
+            "Compacting…"
+        } else {
+            "Compact"
+        };
+        div()
+            .id("context-popover")
+            .occlude()
+            .w(px(260.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .p(px(12.))
+            .bg(palette.menu)
+            .rounded(px(8.))
+            .border_1()
+            .border_color(palette.hairline)
+            .shadow_lg()
+            .text_size(px(12.))
+            .line_height(px(17.))
+            .text_color(palette.muted)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.context_open = false;
+                cx.notify();
+            }))
+            .child(size)
+            .child(div().text_color(palette.faint).child(
+                "Compacting replaces the earlier messages with a summary that keeps the \
+                     target, the facts and your stated preferences.",
+            ))
+            .child(
+                div().flex().justify_end().child(
+                    div()
+                        .id("compact")
+                        .h(px(24.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .text_color(palette.on_accent)
+                        .bg(palette.accent)
+                        .child(button_label)
+                        .when(busy, |button| {
+                            button.opacity(0.5).when(!compacting, |button| {
+                                button.tooltip(crate::tooltip::text("Waiting for the reply"))
+                            })
+                        })
+                        .when(!busy, |button| {
+                            button
+                                .cursor_pointer()
+                                .hover(|style| style.opacity(0.9))
+                                .active(|style| style.opacity(0.8))
+                                .on_click(cx.listener(|this, _, _, cx| this.compact(cx)))
+                        }),
+                ),
+            )
     }
 
     /// The footer's count of attached selections, which lists their quotes
@@ -2052,6 +2250,7 @@ const WAVE_STAGGER: f32 = 0.045;
 /// spinner; after a tool finishes, show that pi is thinking again.
 fn needs_activity_row(starting: bool, transcript: &Transcript) -> bool {
     starting
+        || transcript.compacting
         || (transcript.busy
             && match transcript.items.last() {
                 Some(Item::Assistant { .. }) => false,
@@ -2064,6 +2263,8 @@ fn needs_activity_row(starting: bool, transcript: &Transcript) -> bool {
 fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
     let text: SharedString = if session.starting() {
         format!("Starting {}…", session.agent_name()).into()
+    } else if session.transcript.compacting {
+        "Compacting the conversation…".into()
     } else {
         "Thinking…".into()
     };
@@ -2171,6 +2372,28 @@ fn running_tools(transcript: &Transcript) -> impl Iterator<Item = usize> + '_ {
             Item::Tool(tool) if tool.running() => Some(index),
             _ => None,
         })
+}
+
+/// A token count as the context chip shows it, such as `84k`.
+fn short_tokens(tokens: u64) -> String {
+    match tokens {
+        0..1_000 => tokens.to_string(),
+        1_000..999_500 => format!("{}k", (tokens + 500) / 1_000),
+        _ => format!("{:.1}M", tokens as f64 / 1_000_000.),
+    }
+}
+
+/// A token count with thousands separated, such as `84,212`.
+fn grouped(tokens: u64) -> String {
+    let digits = tokens.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -2506,6 +2729,17 @@ fn profile_label(dir: &std::path::Path, home: Option<&std::path::Path>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_counts_are_short_in_the_chip_and_grouped_in_the_popover() {
+        assert_eq!(short_tokens(812), "812");
+        assert_eq!(short_tokens(84_212), "84k");
+        assert_eq!(short_tokens(999_499), "999k");
+        assert_eq!(short_tokens(1_260_000), "1.3M");
+        assert_eq!(grouped(84_212), "84,212");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(grouped(999), "999");
+    }
 
     #[test]
     fn header_profile_uses_only_the_drafts_directory() {

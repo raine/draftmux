@@ -64,6 +64,13 @@ pub trait Agent: Send + Sync {
     /// state the agent then reports, which may differ from the request.
     /// Fails with [`ErrorKind::Stopped`] like [`Agent::switch_model`].
     fn set_thinking(&self, level: Option<String>) -> BoxFuture<'static, Result<State, Error>>;
+
+    /// Replaces the conversation's earlier messages with a summary that
+    /// keeps what `instructions` asks for. Only while no run is under way.
+    /// Resolves once compaction ended, which also arrives as
+    /// [`Event::CompactionEnded`], or fails when the agent didn't take the
+    /// request.
+    fn compact(&self, instructions: String) -> BoxFuture<'static, Result<(), Error>>;
 }
 
 /// Everything an agent reports, across its process restarts.
@@ -177,6 +184,20 @@ pub enum Event {
         result: ToolResult,
         draft_write: bool,
     },
+    /// The conversation as the model sees it reached `tokens` tokens: the
+    /// latest model request's input and output.
+    Context(u64),
+    /// The agent started replacing earlier messages with a summary, on
+    /// request or on its own.
+    CompactionStarted,
+    /// Compaction ended. `compacted` says whether earlier messages were
+    /// replaced; `tokens` is the conversation's size after it, when known,
+    /// and `error` why it failed, when the agent said.
+    CompactionEnded {
+        compacted: bool,
+        tokens: Option<u64>,
+        error: Option<String>,
+    },
     /// The agent's process exited without being asked to. `failed_prompt`
     /// is the prompt whose run it interrupted, offered again by a retry;
     /// the next request starts a new process.
@@ -201,6 +222,10 @@ pub enum Stop {
 pub struct History {
     pub earlier: usize,
     pub messages: Vec<Message>,
+    /// The whole conversation's size in tokens as the model last saw it,
+    /// source part included; `None` when no model request reported it
+    /// since the last compaction.
+    pub context: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
