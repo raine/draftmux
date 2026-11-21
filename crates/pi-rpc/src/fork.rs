@@ -55,7 +55,8 @@ pub struct Forked {
 /// directly in `spec.session_dir`. pi records the override in the session, so
 /// later starts with `--session` keep it. pi has written the whole fork before
 /// it answers `get_state`, so a refused override, such as a model the profile
-/// lacks, is a warning rather than an error. pi has exited when this returns.
+/// lacks, is a warning rather than an error. pi has exited when this returns,
+/// and images in tool results have been replaced with a note.
 /// `command` is the base pi command, as a
 /// [`CommandFactory`](crate::CommandFactory) builds it. Errors are messages
 /// for the user.
@@ -94,6 +95,15 @@ pub fn fork(mut command: Command, spec: &ForkSpec) -> Result<Forked, String> {
     };
     let result = rpc.run(spec);
     rpc.close();
+    if let Ok(forked) = &result {
+        // The session works either way, so a failure leaves it as forked.
+        if let Err(err) = crate::images::strip_tool_result_images(&forked.session_file) {
+            eprintln!(
+                "draftmux: couldn't leave images out of {}: {err}",
+                forked.session_file.display()
+            );
+        }
+    }
     result
 }
 

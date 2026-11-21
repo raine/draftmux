@@ -15,12 +15,14 @@
 //! messages and history conventions inside this crate.
 //!
 //! A draft's session is created once at handoff by [`fork`], which forks the
-//! source pi session and blocks until pi has exited.
+//! source pi session, blocks until pi has exited and leaves images in tool
+//! results out of the copy.
 
 mod agent;
 mod connection;
 mod contract;
 mod fork;
+mod images;
 mod protocol;
 
 pub use agent::{Agent, AgentEvent, CommandFactory, Error, LaunchSpec};
