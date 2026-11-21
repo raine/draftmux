@@ -583,7 +583,8 @@ impl SelectionPopover {
     }
 
     /// Starts the draft's agent in the background, if it isn't already, so
-    /// the call the user picks next doesn't wait for it to load the session.
+    /// the next call doesn't wait for it to load the session. Runs when the
+    /// popover opens and whenever a call takes the started agent.
     fn prestart(&mut self, cx: &mut Context<Self>) {
         let (backend, cwd, config) = match self.backend(cx) {
             Ok(call) => call,
@@ -1507,6 +1508,9 @@ impl SelectionPopover {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        // The next call, such as another action from the same popover or a
+        // continuation, finds an agent ready instead of starting one.
+        self.prestart(cx);
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (send, updates) = async_channel::unbounded();

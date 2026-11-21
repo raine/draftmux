@@ -11,6 +11,8 @@
   original session for details. Ask the skill for it, or set Hand-off context to
   Summary in Settings, globally or per directory. `draftmux open --summary`
   reads the summary from stdin.
+- Fix: A second selection action, or a sentence continuation, no longer waits
+  for the agent to start when it follows another call.
 
 ## v0.5.0 (2026-11-20)
 
