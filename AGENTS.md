@@ -13,6 +13,11 @@ explicitly asked:
   tests). A bare name filter still builds every test target.
 - Skip tests for trivial edits with no logic change.
 - Run real pi smoke tests (`-- --ignored`) at most once per change.
+- After changing how a draft's chat or selection calls start their agent
+  (arguments, environment, session files), run the prompt cache checks once:
+  `cargo test -j 2 -p draftmux --bin draftmux cache_ -- --ignored --nocapture`,
+  for pi on both an Anthropic and an OpenAI model (see
+  `crates/draftmux/src/selection/cache_tests.rs`).
 - Don't rerun after commit, rebase or merge unless relevant code changed; read
   the saved log after a failure instead of rerunning.
 - Report what ran and what was deferred.

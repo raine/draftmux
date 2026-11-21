@@ -42,6 +42,8 @@ use serde::Deserialize;
 
 use crate::process;
 
+#[cfg(test)]
+mod cache_tests;
 mod stream;
 
 pub(crate) use stream::Agent;
@@ -367,6 +369,32 @@ pub fn run(
     temp_parent: &Path,
     warm: Option<Warm>,
     cancel: &AtomicBool,
+    preview: impl FnMut(Vec<String>),
+) -> Result<Vec<String>, String> {
+    let mut usage = None;
+    run_with_usage(
+        backend,
+        request,
+        config,
+        temp_parent,
+        warm,
+        cancel,
+        &mut usage,
+        preview,
+    )
+}
+
+/// [`run`], also leaving the tokens the reply took, as the agent reported
+/// them, in `usage`.
+#[allow(clippy::too_many_arguments)]
+fn run_with_usage(
+    backend: Backend,
+    request: &Request,
+    config: &SelectionConfig,
+    temp_parent: &Path,
+    warm: Option<Warm>,
+    cancel: &AtomicBool,
+    usage: &mut Option<stream::Usage>,
     mut preview: impl FnMut(Vec<String>),
 ) -> Result<Vec<String>, String> {
     let prompt = prompt(request, config.alternatives)?;
@@ -415,6 +443,7 @@ pub fn run(
             ))
             .unwrap_or_default(),
     );
+    *usage = stream.usage();
     let result = match output {
         Ok(()) => stream.finish(),
         Err(err) if cancel.load(Ordering::Relaxed) => Err(err),
