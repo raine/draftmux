@@ -52,6 +52,13 @@ pub struct Settings {
     /// Unset checks; `DRAFTMUX_NO_UPDATE_CHECK` turns checks off regardless.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_for_updates: Option<bool>,
+    /// Experimental: parked selection requests stay after their options
+    /// were seen, until discarded or applied.
+    #[serde(
+        rename = "experimentalErikPersistentBubbles",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub persistent_bubbles: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,6 +325,15 @@ mod tests {
         let json = std::fs::read_to_string(Settings::path(dir.path())).unwrap();
         assert!(json.contains(r#""drafting_model": "session""#), "{json}");
         assert!(json.contains(r#""path": "~/work""#), "{json}");
+    }
+
+    #[test]
+    fn persistent_bubbles_reads_its_experimental_key() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"experimentalErikPersistentBubbles": true}"#).unwrap();
+        assert!(settings.persistent_bubbles);
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!json.contains("experimental"), "{json}");
     }
 
     #[test]

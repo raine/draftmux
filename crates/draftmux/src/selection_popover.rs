@@ -925,7 +925,8 @@ impl SelectionPopover {
 
     /// Keeps `open` on its passage if it's a request whose call still runs,
     /// or whose options came in but weren't shown; anything else goes,
-    /// options and failures that were seen included.
+    /// options and failures that were seen included, unless kept with `⇥`
+    /// or the persistent bubbles setting is on.
     fn park(&mut self, mut open: Open, cx: &mut Context<Self>) {
         let Some(id) = open.tracked else { return };
         // Options held back for the panel's size are the request's now, and
@@ -943,7 +944,7 @@ impl SelectionPopover {
         }
         // Finished options that were shown were passed over, unless kept.
         let keep = matches!(open.mode, Mode::Running { .. })
-            || (unseen || open.kept)
+            || (unseen || open.kept || persistent_bubbles(cx))
                 && open
                     .mode
                     .options()
@@ -2468,10 +2469,14 @@ impl SelectionPopover {
                         });
                         highlight(index, item)
                     }))
-                    .child(footer(
-                        &[keys.as_str(), "↑↓ move", "⇥ keep", "esc close"],
-                        &palette,
-                    ))
+                    .child(if persistent_bubbles(cx) {
+                        footer(
+                            &[keys.as_str(), "↑↓ move", "esc later", DISCARD_HINT],
+                            &palette,
+                        )
+                    } else {
+                        footer(&[keys.as_str(), "↑↓ move", "⇥ keep", "esc close"], &palette)
+                    })
                     .into_any_element()
             }
             Mode::Error(message) => div()
@@ -2641,6 +2646,11 @@ fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
 }
 
 /// The key that discards the request shown, and what it does.
+/// Whether seen options stay parked until discarded, as `⇥` keeps them.
+fn persistent_bubbles(cx: &App) -> bool {
+    AppSettings::global(cx).read(cx).settings.persistent_bubbles
+}
+
 const DISCARD_HINT: &str = editor::by_platform!("⌘⌫ discard", "Ctrl+⌫ discard");
 
 /// Whether two ranges share text, or an empty one sits inside or on the
@@ -3888,6 +3898,25 @@ mod tests {
         popover.read_with(cx, |popover, _| {
             assert!(popover.open.is_none());
             assert_eq!(popover.parked.len(), 2);
+        });
+        // With persistent bubbles on, esc keeps seen options too.
+        cx.update(|_, cx| {
+            AppSettings::global(cx).update(cx, |settings, cx| {
+                settings.update(|settings| settings.persistent_bubbles = true, cx)
+            })
+        });
+        for _ in 0..2 {
+            cx.simulate_keystrokes("alt-up");
+            cx.run_until_parked();
+            assert!(popover.read_with(cx, |p, _| p.open.is_some()));
+            cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            assert_eq!(popover.read_with(cx, |p, _| p.parked.len()), 2);
+        }
+        cx.update(|_, cx| {
+            AppSettings::global(cx).update(cx, |settings, cx| {
+                settings.update(|settings| settings.persistent_bubbles = false, cx)
+            })
         });
         cx.simulate_keystrokes("alt-up");
         cx.run_until_parked();
