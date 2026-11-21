@@ -283,6 +283,8 @@ fn spawn_contract() {
     );
     assert!(env.get("DRAFTMUX_INSTRUCTIONS").is_none());
     assert!(env.get("DRAFTMUX_SUMMARY").is_none());
+    // The retention selection calls use, so each reads what the other cached.
+    assert_eq!(env["PI_CACHE_RETENTION"], "long");
 }
 
 #[test]

@@ -102,6 +102,22 @@ pub(crate) fn draft_process(command: &mut Command, draft: &DraftProcess) {
         Some(summary) => command.env("DRAFTMUX_SUMMARY", summary),
         None => command.env_remove("DRAFTMUX_SUMMARY"),
     };
+    long_cache_retention(command);
+}
+
+/// Sets `PI_CACHE_RETENTION=long`, an hour rather than five minutes, unless
+/// `command` already sets a retention. Every pi process on a draft, its chat
+/// and its selection calls, runs with it, so each reads what the others
+/// cached: a request with the long retention doesn't read what a short one
+/// cached on Anthropic, and pi's OpenAI providers send the cache key only
+/// with it. A draft's requests come in bursts with longer pauses between.
+pub fn long_cache_retention(command: &mut Command) {
+    if !command
+        .get_envs()
+        .any(|(key, _)| key == "PI_CACHE_RETENTION")
+    {
+        command.env("PI_CACHE_RETENTION", "long");
+    }
 }
 
 /// What the agent reports to the chat, in order, across process restarts.
@@ -820,4 +836,28 @@ fn on_response(live: &mut Live, response: Response) -> Option<State> {
         None => {}
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_cache_retention_keeps_a_chosen_one() {
+        let mut command = Command::new("pi");
+        long_cache_retention(&mut command);
+        assert!(
+            command
+                .get_envs()
+                .any(|env| env == ("PI_CACHE_RETENTION".as_ref(), Some("long".as_ref())))
+        );
+        let mut chosen = Command::new("pi");
+        chosen.env("PI_CACHE_RETENTION", "none");
+        long_cache_retention(&mut chosen);
+        assert!(
+            chosen
+                .get_envs()
+                .any(|env| env == ("PI_CACHE_RETENTION".as_ref(), Some("none".as_ref())))
+        );
+    }
 }

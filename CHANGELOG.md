@@ -16,6 +16,9 @@
   agent can read one again if the message needs it; images you attached stay.
 - Fix: Selection actions on pi drafts using OpenAI models read the prompt cache
   instead of sending the whole conversation uncached on every call.
+- Fix: The first selection action after a chat reply on a pi draft using an
+  Anthropic model reads the conversation from the prompt cache instead of
+  writing all of it again.
 - Fix: A second selection action, or a sentence continuation, no longer waits
   for the agent to start when it follows another call.
 

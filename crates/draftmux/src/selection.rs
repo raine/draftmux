@@ -7,7 +7,8 @@
 //! It runs with the draft's profile and cwd, the prompt on stdin and
 //! `DRAFTMUX_MODE=selection`, so the extension blocks every tool call and
 //! caches the conversation for the next call, and `PI_CACHE_RETENTION=long`
-//! so that cache lasts an hour.
+//! as for the draft's chat, so that cache lasts an hour and each reads what
+//! the other cached.
 //!
 //! Claude Code: each call continues a copy of the draft's conversation in the
 //! temporary directory as a new session that isn't saved, with no tools
@@ -507,12 +508,9 @@ fn command(
         .env_remove("DRAFTMUX_DRAFT_PATH")
         .env_remove("DRAFTMUX_INSTRUCTIONS")
         .env_remove("DRAFTMUX_SUMMARY");
-    // An hour rather than five minutes, unless the user chose a retention:
-    // calls come in bursts with longer pauses between them, and each one
-    // reads the conversation the last one cached.
-    if !pi.get_envs().any(|(key, _)| key == "PI_CACHE_RETENTION") {
-        pi.env("PI_CACHE_RETENTION", "long");
-    }
+    // The same retention as the draft's chat, so each reads what the other
+    // cached.
+    draftmux_pi_rpc::long_cache_retention(&mut pi);
     pi
 }
 

@@ -25,7 +25,7 @@ mod fork;
 mod images;
 mod protocol;
 
-pub use agent::{Agent, AgentEvent, CommandFactory, Error, LaunchSpec};
+pub use agent::{Agent, AgentEvent, CommandFactory, Error, LaunchSpec, long_cache_retention};
 pub use contract::PiAgent;
 pub use fork::{ForkSpec, Forked, ModelOverride, fork};
 pub use protocol::{AssistantDelta, Disposition, Event, Model, State, ThinkingLevel};
