@@ -4,8 +4,8 @@
 
 - New: Compact a draft's conversation so replies and selection actions come
   faster. The size chip at the top of the chat opens a Compact button, and
-  Draft › Compact Session (`⌥⌘K`) does the same. The summary keeps the target,
-  the facts and your stated preferences.
+  Draft › Compact Session (`⌥⌘K`) does the same. The summary keeps what the
+  message needs and how you want it written.
 - New: Hand off a summary instead of the whole session. The draft starts a fresh
   session from a summary the handing-off agent writes, which can still read the
   original session for details. Ask the skill for it, or set Hand-off context to

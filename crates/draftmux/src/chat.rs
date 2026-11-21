@@ -1631,8 +1631,8 @@ impl Chat {
             }))
             .child(size)
             .child(div().text_color(palette.faint).child(
-                "Compacting replaces the earlier messages with a summary that keeps the \
-                     target, the facts and your stated preferences.",
+                "Replaces the earlier conversation with a summary of what the message \
+                     needs and how you want it written.",
             ))
             .child(
                 div().flex().justify_end().child(

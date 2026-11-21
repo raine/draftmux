@@ -151,8 +151,8 @@ it small:
 
 - **Compact.** The size chip at the top of the chat opens a Compact button, and
   Draft › Compact Session (`⌥⌘K`) does the same. The agent replaces the earlier
-  conversation with a summary that keeps the target, the facts and your stated
-  preferences. pi keeps the latest ~20k tokens as they are, so it can't compact
+  conversation with a summary of what the message needs and how you want it
+  written. pi keeps the latest ~20k tokens as they are, so it can't compact
   a short conversation.
 - **Hand off a summary.** The handing-off agent writes a summary and the draft
   starts a fresh session from it, which can still read the original session for
