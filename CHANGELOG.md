@@ -1,16 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 (2026-11-22)
 
 - New: Compact a draft's conversation so replies and selection actions come
   faster. The size chip at the top of the chat opens a Compact button, and
-  Draft › Compact Session (`⌥⌘K`) does the same. The summary keeps what the
-  message needs and how you want it written.
+  Draft › Compact Session (`⌥⌘K`) does the same.
 - New: Hand off a summary instead of the whole session. The draft starts a fresh
   session from a summary the handing-off agent writes, which can still read the
   original session for details. Ask the skill for it, or set Hand-off context to
-  Summary in Settings, globally or per directory. `draftmux open --summary`
-  reads the summary from stdin.
+  Summary in Settings.
 - New: Drafts leave out images the source agent read, such as screenshots, so
   replies and selection actions don't upload them with every request. The
   agent can read one again if the message needs it; images you attached stay.
@@ -19,8 +17,9 @@
 - Fix: The first selection action after a chat reply on a pi draft using an
   Anthropic model reads the conversation from the prompt cache instead of
   writing all of it again.
-- Fix: A second selection action, or a sentence continuation, no longer waits
-  for the agent to start when it follows another call.
+- Fix: Running another selection action from the same popover, or continuing a
+  sentence after an earlier action, no longer takes a few seconds longer than
+  the first.
 
 ## v0.5.0 (2026-11-20)
 
