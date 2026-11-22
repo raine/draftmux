@@ -13,37 +13,26 @@ rewrite a selection with one click, or ask an agent forked from your session
 for changes in chat. When it's ready, tell your original agent it's done,
 and it uses the text exactly as you left it.
 
-https://github.com/user-attachments/assets/42e3d8bb-7c75-4441-a86f-d0ccbc9175ca
-
-Status: early release; expect rough edges.
+https://github.com/user-attachments/assets/c01af06e-e89b-432c-b077-e68d4e0b0148
 
 ## Features
 
-- **Hand-off from your session.** `/draftmux Slack update for the team` forks
-  the conversation into a new pi or Claude Code session, which writes the first
-  draft from what you've already discussed.
-- **Chat with the draft's agent.** Ask for changes in plain words. On pi it runs
-  with your profile, so your skills are available.
-- **Edit beside a preview.** Write Markdown and see it as GitHub, Slack, rich
-  text or plain text. Click a task list checkbox in the GitHub preview to tick
-  it off in the Markdown.
-- **Selection actions.** Select text to get alternatives, Shorten or Tighten, or
-  your own actions. Keep writing while they load, on several passages at once,
-  and come back to each when it's ready. With text selected, a chat message
-  changes only that part. Hold `⌘` while dragging to select more passages; a
-  chat message then edits each of them.
-- **Continue the sentence.** `⌘↩` asks the draft's agent to finish the sentence
-  at the cursor and shows it as faint text: `⇥` takes it, `⌥→` takes a word,
-  typing it keeps it going, and `Esc` drops it. `⌘⇧↩` offers several
-  continuations to pick from.
-- **Keep long sessions fast.** The size chip in the chat header shows how
-  large the draft's conversation is; compact it there or with `⌥⌘K`. To start
-  a draft from a summary instead of the whole session, ask the skill for a
-  summary hand-off, or set Hand-off context to Summary in Settings.
-- **Copy or hand back.** Copy formatted for the target with `⌘⇧C`, or tell your
-  agent "done, file the issue".
-- **Edit files.** `draftmux README.md` opens a file as a draft, with its own
-  agent session in the file's directory. `⌘S` saves it back to the file.
+- **Starts from your conversation.** The first draft is written by a fork of
+  your pi or Claude Code session, so it already knows what you've been working
+  on.
+- **An agent that edits with you.** Ask for changes in chat, to the whole draft
+  or only the passages you've selected. On pi, your skills come along.
+- **A preview of the destination.** See the draft as it will look on GitHub, in
+  Slack, as rich text or as plain text while you write.
+- **Alternatives for any passage.** Select text for rewordings, a shorter or
+  tighter version, or your own actions. They load in the background while you
+  keep writing, for as many passages as you like.
+- **Sentence completion.** The agent finishes the sentence you've started,
+  inline, or offers a few ways to go on.
+- **Back to your agent in one line.** Say "done, file the issue" and your agent
+  uses the text exactly as you left it. Or copy it formatted for the target.
+- **Works on files.** Open a README or any Markdown file as a draft, polish it
+  the same way and save it back.
 
 `⌘/` or the `?` at the bottom of the sidebar opens Help, which lists the
 keyboard shortcuts.
@@ -86,28 +75,23 @@ folder isn't writable.
 
 Runs on x86_64 and arm64 with glibc 2.35 or later, such as Ubuntu 22.04 or
 Debian 12 and newer. The script installs the app in `~/.local/lib/draftmux`,
-and Draftmux keeps itself up to date there. Shortcuts use Ctrl where macOS
-uses Cmd.
+and Draftmux keeps itself up to date there.
 
 ### Windows
 
 Runs on x64 Windows 10 version 1803 or later. The script installs the app in
-`%LOCALAPPDATA%\Programs\Draftmux`, adds the `draftmux` command to your PATH
-and creates a Start Menu shortcut. Draftmux tells you when a new version is
-out; run the script again to update. Shortcuts use Ctrl where macOS uses Cmd.
+`%LOCALAPPDATA%\Programs\Draftmux`, adds `draftmux` to your PATH and creates a
+Start Menu shortcut. Draftmux tells you when a new version is out; run the
+script again to update.
 
-The Windows build isn't code signed, so SmartScreen may warn about a
-`draftmux.exe` unpacked from a downloaded zip; the script's install doesn't
-get that warning. Claude Code drafts need Claude Code's native installer:
-Draftmux doesn't run the `claude.cmd` that npm installs. Draftmux reads API
-keys from the environment it starts in rather than from your PowerShell
-profile, and finds tools on your saved PATH.
+Run the script in your own PowerShell window, not an agent's shell: an install
+from a packaged app such as Claude's desktop app isn't visible outside it.
+Then restart your terminal and any apps you run agents in, so they find
+`draftmux`.
 
-Run the script in your own PowerShell window rather than in an agent's shell.
-Agents in packaged apps such as Claude's desktop app run in shells whose
-writes under `AppData` Windows keeps private to that app, so an install from
-there isn't visible outside it. Restart apps you run agents in, such as
-Claude's desktop app or your terminal, so their shells find `draftmux`.
+Claude Code drafts need Claude Code's native installer, not the npm package.
+API keys are read from the environment Draftmux starts in, not your PowerShell
+profile.
 
 ### Agents
 
@@ -143,25 +127,6 @@ or for one directory. For a single draft, ask the skill
 `--backend claude` to `draftmux open`. A draft stays on the agent it was
 created with.
 
-## Long sessions
-
-A draft carries its session's whole conversation, and replies, alternatives and
-selection actions all slow down as it grows, even when cached. Two ways to keep
-it small:
-
-- **Compact.** The size chip at the top of the chat opens a Compact button, and
-  Draft › Compact Session (`⌥⌘K`) does the same. The agent replaces the earlier
-  conversation with a summary of what the message needs and how you want it
-  written. pi keeps the latest ~20k tokens as they are, so it can't compact
-  a short conversation.
-- **Hand off a summary.** The handing-off agent writes a summary and the draft
-  starts a fresh session from it, which can still read the original session for
-  details the summary leaves out. Ask for it in the hand-off
-  (`/draftmux PR description, hand off a summary`), or set Hand-off context to
-  Summary in Settings, globally or for one directory; `draftmux skill` then
-  tells the agent to hand off summaries there. The agent passes the summary to
-  `draftmux open --summary` on stdin.
-
 ## How it works with pi
 
 - Each draft gets its own pi session, forked from your pi session or converted
@@ -179,11 +144,10 @@ it small:
 
 - The draft continues your conversation in its own Claude Code session. Your
   original session is untouched.
-- Claude Code may read files and run shell commands, but its Edit and Write
-  tools only reach the draft. Commands can't run in the background. It runs
-  without your Claude Code hooks, MCP servers or other settings, except the
-  `env` and `apiKeyHelper` in your user `settings.json`, so a gateway or API
-  key you log in with keeps working. It keeps the `CLAUDE.md` files and `.claude/rules`
+- Claude Code may read files but edit only the draft. It runs without your
+  Claude Code hooks, MCP servers or other settings, except the `env` and
+  `apiKeyHelper` in your user `settings.json`, so a gateway or API key you log
+  in with keeps working. It keeps the `CLAUDE.md` files and `.claude/rules`
   your session loaded, read fresh each time the draft's agent starts.
   `CLAUDE.local.md` isn't loaded.
 - New drafts use the session's model unless Settings sets a Claude Code
