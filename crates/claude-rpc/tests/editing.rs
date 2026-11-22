@@ -181,8 +181,8 @@ fn allowed_writes_are_reported_and_writes_elsewhere_refused() {
                 "h2",
                 denied(&format!(
                     "Draftmux: Write is limited to the draft file {}; \"{}\" is outside it. \
-                     Give the draft's absolute path, and use Read, Glob or Grep to inspect \
-                     other files.",
+                     Give the draft's absolute path, and use Read, Glob, Grep or Bash to \
+                     inspect other files.",
                     draft.display(),
                     outside.display()
                 )),
@@ -223,7 +223,7 @@ fn allowed_writes_are_reported_and_writes_elsewhere_refused() {
     // since a resumed session ignores a system prompt.
     let args: Vec<String> = serde_json::from_value(h.record(0)["args"].clone()).unwrap();
     let has = |pair: &[&str]| args.windows(pair.len()).any(|w| w == pair);
-    assert!(has(&["--tools", "Read,Glob,Grep,Edit,Write"]));
+    assert!(has(&["--tools", "Read,Glob,Grep,Bash,Edit,Write"]));
     assert!(has(&["--permission-prompt-tool", "stdio"]));
     assert!(has(&["--setting-sources", ""]));
     assert!(!args.iter().any(|a| a == "--append-system-prompt"));
@@ -465,6 +465,9 @@ fn a_write_permission_without_the_hook_is_refused_and_turns_editing_off() {
 
 #[test]
 fn hook_calls_that_cannot_be_checked_are_refused() {
+    const BACKGROUND: &str = "Draftmux: Bash can't run commands in the background in this \
+                              draft; run them in the foreground.";
+    let background = json!({"command": "sleep 9", "run_in_background": true});
     let h = Harness::new("Hello\n", |draft, _| {
         let no_id = line(
             json!({"type": "control_request", "request_id": "h1", "request": {
@@ -483,19 +486,30 @@ fn hook_calls_that_cannot_be_checked_are_refused() {
                     draft.display()
                 )),
             ),
-            hook("h3", "t3", "Bash", json!({"command": "true"})),
+            hook("h3", "t3", "Task", json!({"prompt": "go"})),
             answer(
                 "h3",
                 denied(
-                    "Draftmux: Bash isn't available in this draft. Use Read, Glob or Grep, \
-                     and Edit or Write on the draft file.",
+                    "Draftmux: Task isn't available in this draft. Use Read, Glob, Grep or \
+                     Bash, and Edit or Write on the draft file.",
                 ),
             ),
-            permission("p4", "t4", "Bash", json!({"command": "true"})),
+            permission("p4", "t4", "Task", json!({"prompt": "go"})),
             answer(
                 "p4",
                 json!({"behavior": "deny",
-                    "message": "Draftmux: Bash isn't available in this draft."}),
+                    "message": "Draftmux: Task isn't available in this draft."}),
+            ),
+            hook("h5", "t5", "Bash", background.clone()),
+            answer("h5", denied(BACKGROUND)),
+            permission("p6", "t6", "Bash", background.clone()),
+            answer("p6", json!({"behavior": "deny", "message": BACKGROUND})),
+            hook("h7", "t7", "Bash", json!({"command": "true"})),
+            proceed("h7"),
+            permission("p8", "t7", "Bash", json!({"command": "true"})),
+            answer(
+                "p8",
+                json!({"behavior": "allow", "updatedInput": {"command": "true"}}),
             ),
             "### eof".into(),
         ];

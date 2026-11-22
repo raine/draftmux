@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New: A Claude Code draft's agent can run shell commands to check facts, as
+  pi's already could. Its edits still only reach the draft, and commands can't
+  run in the background.
+
 ## v0.6.0 (2026-11-22)
 
 - New: Compact a draft's conversation so replies and selection actions come

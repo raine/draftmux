@@ -218,9 +218,9 @@ pub struct LaunchSpec {
     pub system_prompt: Option<String>,
 }
 
-/// The tools a draft's agent may get. Tools that run processes, such as
-/// Bash and Task, are left out: a background process escapes the process
-/// group, so stopping the agent couldn't end it.
+/// The tools a draft's agent may get. Task and background shells are left
+/// out: a process outliving the call escapes the process group, so stopping
+/// the agent couldn't end it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Read,
@@ -228,6 +228,7 @@ pub enum Tool {
     Write,
     Glob,
     Grep,
+    Bash,
 }
 
 impl Tool {
@@ -238,6 +239,7 @@ impl Tool {
             Tool::Write => "Write",
             Tool::Glob => "Glob",
             Tool::Grep => "Grep",
+            Tool::Bash => "Bash",
         }
     }
 }

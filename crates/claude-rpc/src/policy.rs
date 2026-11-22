@@ -1,10 +1,10 @@
 //! Which tool calls a draft's agent may make: reading is open, writing is
 //! limited to the draft file.
 //!
-//! The agent gets only Read, Glob, Grep, Edit and Write, none of which can
-//! create links or run processes, so this confines its writes to the draft.
-//! It isn't a sandbox against other processes changing the files between
-//! the check and the write.
+//! The agent gets Read, Glob, Grep, Bash, Edit and Write. Edit and Write are
+//! confined to the draft; Bash isn't, so this keeps the agent on the draft
+//! rather than sandboxing it. Bash may not run in the background, since a
+//! process outliving the call escapes the agent's process group.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -55,12 +55,18 @@ impl DraftPolicy {
     pub(crate) fn decide(&self, tool: &str, input: &Value) -> Decision {
         match tool {
             "Read" | "Glob" | "Grep" => Decision::Allow,
+            "Bash" if input["run_in_background"] == true => Decision::Deny(
+                "Draftmux: Bash can't run commands in the background in this draft; \
+                 run them in the foreground."
+                    .into(),
+            ),
+            "Bash" => Decision::Allow,
             "Edit" | "Write" => match input["file_path"].as_str() {
                 Some(path) if self.is_draft(path) => Decision::DraftWrite,
                 Some(path) => Decision::Deny(format!(
                     "Draftmux: {tool} is limited to the draft file {}; \"{path}\" is outside it. \
-                     Give the draft's absolute path, and use Read, Glob or Grep to inspect \
-                     other files.",
+                     Give the draft's absolute path, and use Read, Glob, Grep or Bash to \
+                     inspect other files.",
                     self.draft.display()
                 )),
                 None => Decision::Deny(format!(
@@ -69,8 +75,8 @@ impl DraftPolicy {
                 )),
             },
             _ => Decision::Deny(format!(
-                "Draftmux: {tool} isn't available in this draft. Use Read, Glob or Grep, \
-                 and Edit or Write on the draft file."
+                "Draftmux: {tool} isn't available in this draft. Use Read, Glob, Grep or \
+                 Bash, and Edit or Write on the draft file."
             )),
         }
     }
@@ -167,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn reading_is_open_and_other_tools_are_refused() {
+    fn reading_and_foreground_bash_are_open_and_other_tools_are_refused() {
         let f = fixture();
         for tool in ["Read", "Glob", "Grep"] {
             assert_eq!(
@@ -175,7 +181,16 @@ mod tests {
                 Decision::Allow
             );
         }
-        for tool in ["Bash", "MultiEdit", "NotebookEdit", "Task", "mcp__x__y"] {
+        assert_eq!(
+            f.policy.decide("Bash", &json!({"command": "ls"})),
+            Decision::Allow
+        );
+        let background = json!({"command": "sleep 9", "run_in_background": true});
+        let Decision::Deny(reason) = f.policy.decide("Bash", &background) else {
+            panic!("background Bash allowed");
+        };
+        assert!(reason.contains("background"), "{reason}");
+        for tool in ["MultiEdit", "NotebookEdit", "Task", "mcp__x__y"] {
             let Decision::Deny(reason) = f.policy.decide(tool, &json!({})) else {
                 panic!("{tool} allowed");
             };

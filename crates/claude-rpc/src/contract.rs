@@ -61,7 +61,14 @@ use crate::{
 };
 
 /// The tools of an agent that may edit.
-const EDITING_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep, Tool::Edit, Tool::Write];
+const EDITING_TOOLS: &[Tool] = &[
+    Tool::Read,
+    Tool::Glob,
+    Tool::Grep,
+    Tool::Bash,
+    Tool::Edit,
+    Tool::Write,
+];
 /// The tools left once editing was found unenforced.
 const READ_ONLY_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep];
 /// Seconds claude waits for the hook's answer before refusing the call.
@@ -421,7 +428,7 @@ You are helping the user polish a message in Draftmux. These instructions come f
 Draft file: {draft}
 
 - Make every change to the draft by editing that file with the Edit or Write tool; the user sees it in the Draftmux editor. Don't paste drafts or rewritten versions in chat; use chat for discussion.
-- Edit and Write only work on the draft file; give its absolute path. Read, Glob and Grep work as usual for checking facts.
+- Edit and Write only work on the draft file; give its absolute path. Read, Glob, Grep and Bash work as usual for checking facts; Bash can't run commands in the background.
 - Draftmux puts a {DRAFT_TAG} block holding the draft file's exact text before the user's message when it differs from what you last read, edited or wrote, for example after the user edits it, and a {CONTEXT_TAG} block with the target platform when it changes. The user doesn't see these blocks.
 - Read the draft once before your first Edit or Write after these instructions: the tools refuse a file you haven't read since they were sent, even when a {DRAFT_TAG} block shows its text.
 - Put fields in YAML frontmatter at the very top of the draft, between --- lines: title: for PRs and issues; subject:, to: and cc: for emails (only known recipients). Any other key is allowed. Use string values, quoting YAML punctuation as needed; use comma-separated strings rather than lists. Keep these fields separate from the message body. Draftmux displays them separately and copies only the body.
@@ -843,6 +850,14 @@ impl Observer {
             "Read" | "Glob" | "Grep" => {
                 request.allow();
             }
+            "Bash" => match self.policy.decide("Bash", &request.input) {
+                Decision::Deny(reason) => {
+                    request.deny(&reason);
+                }
+                _ => {
+                    request.allow();
+                }
+            },
             "Edit" | "Write" if approved => {
                 request.allow();
             }

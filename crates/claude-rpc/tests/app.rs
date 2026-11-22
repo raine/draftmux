@@ -302,8 +302,8 @@ fn editing_run(path: &Path, before: &str, after: &str, message: &str) -> Vec<Str
             "h1",
             denied(&format!(
                 "Draftmux: Write is limited to the draft file {}; \"{}\" is outside it. \
-                 Give the draft's absolute path, and use Read, Glob or Grep to inspect other \
-                 files.",
+                 Give the draft's absolute path, and use Read, Glob, Grep or Bash to inspect \
+                 other files.",
                 path.display(),
                 outside.display()
             )),

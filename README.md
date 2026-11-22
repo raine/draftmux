@@ -179,10 +179,11 @@ it small:
 
 - The draft continues your conversation in its own Claude Code session. Your
   original session is untouched.
-- Claude Code may read files but edit only the draft. It runs without your
-  Claude Code hooks, MCP servers or other settings, except the `env` and
-  `apiKeyHelper` in your user `settings.json`, so a gateway or API key you log
-  in with keeps working. It keeps the `CLAUDE.md` files and `.claude/rules`
+- Claude Code may read files and run shell commands, but its Edit and Write
+  tools only reach the draft. Commands can't run in the background. It runs
+  without your Claude Code hooks, MCP servers or other settings, except the
+  `env` and `apiKeyHelper` in your user `settings.json`, so a gateway or API
+  key you log in with keeps working. It keeps the `CLAUDE.md` files and `.claude/rules`
   your session loaded, read fresh each time the draft's agent starts.
   `CLAUDE.local.md` isn't loaded.
 - New drafts use the session's model unless Settings sets a Claude Code
