@@ -155,3 +155,6 @@ html[data-scenecast=preview] #world { will-change: transform; }
 #title .l1 { font: 700 84px/1.1 var(--ui); letter-spacing: -1.5px; color: #f4f5f8; max-width: 800px; }
 #title .l2 { font: 500 42px/1.35 var(--ui); color: #a9afbc; max-width: 700px; }
 #title .l2 b { color: #f4f5f8; font-weight: 600; }
+/* A continuation not yet taken, after the cursor, and the dots while it waits. */
+#dmx .editor-hl .ghost { color: var(--faint); }
+.sel-layer i.gdot { background: var(--faint); border-radius: 50%; }

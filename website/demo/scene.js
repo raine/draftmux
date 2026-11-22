@@ -58,19 +58,23 @@ const T = {
   read1: 9.0, write1: 9.7, d1: 10.7, reply1: [11.3, 12.7],
   click2: 17.4, type2: [17.6, 19.2], send2: 19.5, read2: 20.0, edit2: 20.6, d2: 21.8, reply2: [22.2, 23.8],
   // The Markdown: click the end of a step in the editor and type the version.
-  toggle: 24.8, mdClick: 25.6, typeMd: [26.2, 27.3], slack: 29.5, rich: 30.9, github: 32.4, targets: [28.3, 33.1],
-  drag3: [34.6, 35.4], pop3: 35.6, alt3: 36.4, opts3: 37.4, hover3: 37.8, apply3: 38.3,
+  toggle: 24.8, mdClick: 25.6, typeMd: [26.2, 27.3],
+  // Continue a sentence: click the end of the description, type its start,
+  // ⌘↩ waits on the agent, its rest shows as a ghost, and ⇥ takes it.
+  contClick: 28.0, typeCont: [28.4, 29.1], cont: 29.45, ghost: 30.4, accept: 31.6,
+  slack: 33.9, rich: 35.3, github: 36.8, targets: [32.7, 37.5],
+  drag3: [39.0, 39.8], pop3: 40.0, alt3: 40.8, opts3: 41.8, hover3: 42.2, apply3: 42.7,
   // Comment from the popover: select a step, Comment, type into its field, send.
-  drag4: [38.9, 39.4], pop4: 39.55, comment4: 40.45, type4: [40.8, 41.9], send4: 42.2, edit4: 42.8, d4: 43.8, reply4: [44.0, 45.2], ring4: [42.7, 46.4],
+  drag4: [43.3, 43.8], pop4: 43.95, comment4: 44.85, type4: [45.2, 46.3], send4: 46.6, edit4: 47.2, d4: 48.2, reply4: [48.4, 49.6], ring4: [47.1, 50.8],
   // Review: open Changes, compare since Alternatives, and Done keeps it all.
-  review: 47.9, range: 48.8, since: 49.8, done: 51.4,
-  swap: 53.5, type5: [54.4, 55.1], enter5: 55.3, show5: 55.7, show5Done: 56.2, gh5: 56.5, url5: 57.3, done5: 58.3,
+  review: 52.3, range: 53.2, since: 54.2, done: 55.8,
+  swap: 57.9, type5: [58.8, 59.5], enter5: 59.7, show5: 60.1, show5Done: 60.6, gh5: 60.9, url5: 61.7, done5: 62.7,
   // The first draft's tics light up one by one; the load-bearing joke rides
   // on the second.
   tics: 13.7, lb: [13.95, 15.15],
-  outro: 59.3, uses: [59.8, 64.3], card: 64.5,
+  outro: 63.7, uses: [64.2, 68.7], card: 68.9,
   // The end card slides aside and the credits roll up beside it.
-  squeeze: 66.6, roll: 67.4,
+  squeeze: 71.0, roll: 71.8,
 };
 // The video cut opens on the session already on screen, under the title card.
 if (VIDEO) T.recall = [-LEAD - 2, -LEAD - 1];
@@ -97,8 +101,9 @@ T.dark = T.roll + (1080 + CREDITS.length * CREDIT_H) / ROLL_SPEED - 1.2;
 const DURATION = T.dark + 2;
 const SEGMENTS = [
   ['session', 'Session', 0.0, 7.4], ['handoff', 'Hand-off', 7.4, 9.0],
-  ['draft', 'First draft', 9.0, 17.2], ['chat', 'Chat', 17.2, 24.0], ['markdown', 'Markdown', 24.0, 33.6],
-  ['alts', 'Alternatives', 33.6, 38.9], ['part', 'This part', 38.9, 46.8], ['review', 'Review', 46.8, 52.9], ['send', 'Send', 52.9, T.outro], ['uses', 'Use cases', T.outro, T.card], ['end', 'End', T.card, T.squeeze], ['credits', 'Credits', T.squeeze, DURATION],
+  ['draft', 'First draft', 9.0, 17.2], ['chat', 'Chat', 17.2, 24.0], ['markdown', 'Markdown', 24.0, 27.8],
+  ['continue', 'Continuation', 27.8, 32.2], ['targets', 'Preview', 32.2, 38.0],
+  ['alts', 'Alternatives', 38.0, 43.3], ['part', 'This part', 43.3, 51.2], ['review', 'Review', 51.2, 57.3], ['send', 'Send', 57.3, T.outro], ['uses', 'Use cases', T.outro, T.card], ['end', 'End', T.card, T.squeeze], ['credits', 'Credits', T.squeeze, DURATION],
 ].map(([id, label, start, end]) => ({ id, label, start, end }));
 
 // ---------- Draft states ----------
@@ -156,16 +161,34 @@ ${TESTED}
 // The edit typed into the Markdown: the version the session found.
 const POLICY = 'with the default policy', MD_ADD = ' in retrykit 0.7.2';
 const MD_AT = D2.indexOf(POLICY) + POLICY.length;
-const D2e = D2.slice(0, MD_AT) + MD_ADD + D2.slice(MD_AT);
+const D2v = D2.slice(0, MD_AT) + MD_ADD + D2.slice(MD_AT);
+// The sentence continued at the end of the description: typed, then the
+// agent's continuation, which names the parser the session found.
+const CONT_AT = D2.indexOf(S2) + S2.length, CONT_TYPED = ' The parser is', CONT_GHOST = ' `parse_retry_after` in `src/policy.rs`.';
+const D2e = D2v.slice(0, CONT_AT) + CONT_TYPED + CONT_GHOST + D2v.slice(CONT_AT);
 const D3a = D2e.replace(S2, S2_NEW);
 const D4 = D3a.replace(STEP, STEP_NEW);
 function draftAt(t) {
   if (t < T.d1) return '';
   if (t < T.d2) return D1;
   if (t < T.typeMd[0]) return D2;
-  if (t < T.apply3) return D2.slice(0, MD_AT) + typed(MD_ADD, t, ...T.typeMd) + D2.slice(MD_AT);
+  if (t < T.typeCont[0]) return D2.slice(0, MD_AT) + typed(MD_ADD, t, ...T.typeMd) + D2.slice(MD_AT);
+  if (t < T.accept) return D2v.slice(0, CONT_AT) + typed(CONT_TYPED, t, ...T.typeCont) + D2v.slice(CONT_AT);
+  if (t < T.apply3) return D2e;
   if (t < T.d4) return D3a;
   return D4;
+}
+// The continuation's ghost after the cursor: none while ⌘↩ waits on the
+// agent, then its words as they stream in, until ⇥ takes them all.
+function ghostAt(t) {
+  if (t < T.cont || t >= T.accept) return null;
+  return { at: CONT_AT + CONT_TYPED.length, text: t < T.ghost ? '' : streamed(CONT_GHOST, t, [T.ghost, T.ghost + .45]), since: T.cont };
+}
+// How far waiting dot i has risen, 0 at rest to 1 at the top: a wave across
+// the dots every 1.2 s, as the editor paints them (element.rs).
+function dotLift(t, i) {
+  const p = ((((t - .16 * i) % 1.2) + 1.2) % 1.2) / 1.2;
+  return p < .6 ? Math.sin(p / .6 * Math.PI) : 0;
 }
 const lineOf = (text, offset) => text.slice(0, offset).split('\n').length;
 
@@ -291,12 +314,13 @@ const CAPTIONS = [
   [17.4, 21.6, 'Ask for changes in the chat'],
   [21.8, 24.1, 'Pi uses your skills, like humanizer'],
   [24.3, 28.1, 'Edit the Markdown beside the preview', '⌥⌘E'],
-  [28.3, 33.5, 'Preview as GitHub, Slack, rich text or plain text'],
-  [33.7, 38.7, 'Select text for alternatives'],
-  [38.9, 43.7, 'Or select a part and say what to change'],
-  [43.8, 46.7, 'Only that part changes'],
-  [47.0, 52.8, 'Review every edit side by side', '⌘⇧E'],
-  [53.0, T.outro, 'Back in the session, file it as written', null],
+  [28.3, 32.1, 'Continue the sentence at the cursor', '⌘↵'],
+  [32.7, 37.9, 'Preview as GitHub, Slack, rich text or plain text'],
+  [38.1, 43.1, 'Select text for alternatives'],
+  [43.3, 48.1, 'Or select a part and say what to change'],
+  [48.2, 51.1, 'Only that part changes'],
+  [51.4, 57.2, 'Review every edit side by side', '⌘⇧E'],
+  [57.4, T.outro, 'Back in the session, file it as written', null],
 ];
 // The video cut's first caption waits for the title card to lift.
 if (VIDEO) CAPTIONS[0][0] = TITLE[1];
@@ -306,7 +330,8 @@ const MODS = {
   '⌥': '<path d="M3 5h5.5l7 14H21M14 5h7"/>',
 };
 const modIcons = (s) => s.replace(/[⌘⇧⌥]/g, (m) => `<svg class="mod" viewBox="0 0 24 24" aria-hidden="true">${MODS[m]}</svg>`);
-const KEYS = [[T.enter1 - .2, T.enter1 + .4, ['↵']], [T.toggle - .3, T.toggle + .3, ['⌥', '⌘', 'E']], [T.send2 - .2, T.send2 + .4, ['↵']],
+const KEYS = [[T.enter1 - .2, T.enter1 + .4, ['↵']], [T.toggle - .3, T.toggle + .3, ['⌥', '⌘', 'E']],
+  [T.cont - .2, T.cont + .4, ['⌘', '↵']], [T.accept - .2, T.accept + .4, ['⇥']], [T.send2 - .2, T.send2 + .4, ['↵']],
   [T.send4 - .2, T.send4 + .4, ['↵']], [T.review - .3, T.review + .3, ['⌘', '⇧', 'E']],
   [T.enter5 - .2, T.enter5 + .4, ['↵']]];
 
@@ -531,7 +556,13 @@ function draftmuxAt(ct) {
   sidebarAt(ct, text ? MD.draftTitle(text, { emoji: false }) : 'Issue on retrykit');
   // Editor.
   const hl = $('hl');
-  if (lastHl !== text) { hl.innerHTML = MD.highlightSource(text) + '\n '; lastHl = text; }
+  // The ghost is shaped into its line, unhighlighted, after the cursor.
+  const ghost = ghostAt(ct), hlKey = text + '\0' + (ghost ? ghost.text : '');
+  if (lastHl !== hlKey) {
+    hl.innerHTML = MD.highlightSource(text) + '\n ';
+    if (ghost?.text) textRange(hl, ghost.at, ghost.at).insertNode(el(`<span class="ghost">${esc(ghost.text)}</span>`));
+    lastHl = hlKey;
+  }
   $('ed').classList.toggle('read-only', !!runAt(ct));
   const cascade = clamp((ct - (ct >= T.d2 ? T.d2 : T.d1)) / .5);
   const mask = text && cascade < 1 ? `linear-gradient(#000 ${cascade * 100}%, transparent ${cascade * 100 + 12}%)` : '';
@@ -555,11 +586,23 @@ function draftmuxAt(ct) {
   const sel = selectionAt(ct, text), layer = $('sel');
   let rects = [];
   if (sel && sel[1] > sel[0]) rects = [...textRange(hl, sel[0], sel[1]).getClientRects()].map((r) => rel(r, $('edin')));
-  // The caret after a click in the Markdown, until the camera leaves it.
+  // The caret after a click in the Markdown, until the camera leaves it:
+  // first in the step the version is typed into, then at the end of the
+  // description, where the continuation goes.
   if (ct >= T.mdClick && ct < T.targets[0]) {
-    const at = MD_AT + typed(MD_ADD, ct, ...T.typeMd).length, typing = ct >= T.typeMd[0] && ct < T.typeMd[1] + .3;
+    const cont = ct >= T.contClick;
+    const at = cont ? CONT_AT + typed(CONT_TYPED, ct, ...T.typeCont).length + (ct >= T.accept ? CONT_GHOST.length : 0) : MD_AT + typed(MD_ADD, ct, ...T.typeMd).length;
+    const typing = cont ? (ct >= T.typeCont[0] && ct < T.typeCont[1] + .3) || (ct >= T.accept && ct < T.accept + .3) : ct >= T.typeMd[0] && ct < T.typeMd[1] + .3;
     const r = rel(textRange(hl, at - 1, at).getBoundingClientRect(), $('edin'));
-    if (typing || Math.floor((ct - T.mdClick) * 2.2) % 2 === 0) rects.push({ x: r.x + r.w, y: r.y, w: 2, h: r.h, caret: true });
+    if (typing || Math.floor((ct - (cont ? T.contClick : T.mdClick)) * 2.2) % 2 === 0) rects.push({ x: r.x + r.w, y: r.y, w: 2, h: r.h, caret: true });
+    // Three dots after the caret while the continuation waits on the agent.
+    if (ghost && !ghost.text) {
+      const em = 12.5, d = em * .32;
+      for (let i = 0; i < 3; i++) {
+        const lift = dotLift(ct - ghost.since, i);
+        rects.push({ x: r.x + r.w + em * .48 + (d + em * .24) * i, y: r.y + (r.h - d) / 2 - em * .16 * lift, w: d, h: d, dot: .3 + .7 * lift });
+      }
+    }
   }
   setHtml(layer, selHtml(rects));
   const ps = previewSelAt(ct);
@@ -583,6 +626,7 @@ function draftmuxAt(ct) {
 const selHtml = (rects) => rects.map((r) => {
   const x = Math.round(r.x), y = Math.round(r.y);
   if (r.caret) return `<i class="caret" style="left:${x}px;top:${y}px;width:2px;height:${Math.round(r.h)}px"></i>`;
+  if (r.dot) return `<i class="gdot" style="left:${r.x.toFixed(2)}px;top:${r.y.toFixed(2)}px;width:${r.w}px;height:${r.h}px;opacity:${r.dot.toFixed(3)}"></i>`;
   return `<i style="left:${x}px;top:${y}px;width:${Math.round(r.x + r.w) - x}px;height:${Math.round(r.y + r.h) - y}px"></i>`;
 }).join('');
 
@@ -882,13 +926,13 @@ const CAMERA = [
   // The whole window while the rewrite lands, title to workaround.
   [20.6, .8, 'dmx'],
   [24.0, .8, 'source', .02],
-  [27.9, .8, 'targets'],
-  [33.6, .8, 'source', .02],
-  [38.5, .6, 'steps'],
+  [32.3, .8, 'targets'],
+  [38.0, .8, 'source', .02],
+  [42.9, .6, 'steps'],
   // The comment is typed over the step; the camera takes in the chat while
   // it is typed, so the sent comment lands in view.
   [T.type4[0] + .3, .7, 'chat', .02],
-  [46.8, .9, 'review'],
+  [51.2, .9, 'review'],
   // One move back to the terminal, out through the whole desk, the way the
   // window came in: the terminal comes forward as the camera passes the desk.
   [T.swap - .55, 1.1, 'termTail', .02, 'desk'],
@@ -946,6 +990,10 @@ const CP = {
   // it, where the cursor waits while the edit is typed.
   mdStep: () => { const r = WR(textRange($('hl'), MD_AT - 1, MD_AT).getBoundingClientRect()); return { x: r.x + r.w + 2, y: r.y + r.h * .6 }; },
   belowStep: () => { const p = CP.mdStep(); return { x: p.x + 30, y: p.y + 70 }; },
+  // The end of the description, where the continuation goes, and out of the
+  // way below it while the sentence is typed and continued.
+  contEnd: () => { const r = WR(textRange($('hl'), CONT_AT - 1, CONT_AT).getBoundingClientRect()); return { x: r.x + r.w + 2, y: r.y + r.h * .6 }; },
+  belowCont: () => { const p = CP.contEnd(); return { x: p.x + 140, y: p.y + 16 }; },
   slackBtn: () => pt(W($('seg-slack'))),
   richBtn: () => pt(W($('seg-rich'))),
   githubBtn: () => pt(W($('seg-github'))),
@@ -989,14 +1037,15 @@ function measureAlternatives() {
 // [t, point]; the cursor eases between consecutive points within a group.
 const CURSOR = [
   [[16.7, 'center'], [T.click2 - .15, 'composer'], [T.click2 + .3, 'composer']],
-  [[23.8, 'center'], [T.toggle - .2, 'editorBtn'], [T.toggle + .3, 'editorBtn'], [T.mdClick - .05, 'mdStep'], [T.mdClick + .15, 'mdStep'], [T.typeMd[0] - .1, 'belowStep'], [T.typeMd[1] + .2, 'belowStep'], [T.slack - .15, 'slackBtn'], [T.slack + .3, 'slackBtn'], [T.rich - .15, 'richBtn'], [T.rich + .3, 'richBtn'],
+  [[23.8, 'center'], [T.toggle - .2, 'editorBtn'], [T.toggle + .3, 'editorBtn'], [T.mdClick - .05, 'mdStep'], [T.mdClick + .15, 'mdStep'], [T.typeMd[0] - .1, 'belowStep'], [T.typeMd[1] + .2, 'belowStep'],
+    [T.contClick - .05, 'contEnd'], [T.contClick + .15, 'contEnd'], [T.typeCont[0] - .1, 'belowCont'], [T.accept + .3, 'belowCont'], [T.slack - .15, 'slackBtn'], [T.slack + .3, 'slackBtn'], [T.rich - .15, 'richBtn'], [T.rich + .3, 'richBtn'],
     [T.github - .15, 'githubBtn'], [T.github + .3, 'githubBtn']],
-  [[33.9, 'aboveS2'], [T.drag3[0] - .05, 's2start'], [T.drag3[0], 's2start'], [T.drag3[1], 'selEnd'], [T.pop3 + .25, 'selEnd'], [T.alt3 - .1, 'altItem'], [T.alt3 + .4, 'altItem'], [T.hover3 - .35, 'altItem'], [T.hover3, 'alt3opt'], [T.apply3 + .1, 'alt3opt'],
+  [[38.3, 'aboveS2'], [T.drag3[0] - .05, 's2start'], [T.drag3[0], 's2start'], [T.drag3[1], 'selEnd'], [T.pop3 + .25, 'selEnd'], [T.alt3 - .1, 'altItem'], [T.alt3 + .4, 'altItem'], [T.hover3 - .35, 'altItem'], [T.hover3, 'alt3opt'], [T.apply3 + .1, 'alt3opt'],
     [T.drag4[0] - .1, 'stepStart'], [T.drag4[0], 'stepStart'], [T.drag4[1], 'selEnd'], [T.pop4 + .25, 'selEnd'], [T.comment4 - .12, 'altItem'], [T.comment4 + .3, 'altItem']],
-  [[47.3, 'center'], [T.review - .15, 'reviewBtn'], [T.review + .3, 'reviewBtn'], [T.range - .15, 'rangeBtn'], [T.range + .3, 'rangeBtn'],
+  [[51.7, 'center'], [T.review - .15, 'reviewBtn'], [T.review + .3, 'reviewBtn'], [T.range - .15, 'rangeBtn'], [T.range + .3, 'rangeBtn'],
     [T.since - .45, 'sinceRow'], [T.since + .3, 'sinceRow'], [T.done - .5, 'doneBtn'], [T.done + .3, 'doneBtn']],
 ];
-const CLICKS = [T.review, T.range, T.since, T.done, T.toggle, T.mdClick, T.slack, T.rich, T.github, T.click2, T.drag3[0], T.alt3, T.apply3, T.drag4[0], T.comment4];
+const CLICKS = [T.review, T.range, T.since, T.done, T.toggle, T.mdClick, T.contClick, T.slack, T.rich, T.github, T.click2, T.drag3[0], T.alt3, T.apply3, T.drag4[0], T.comment4];
 function cursorAt(t) {
   const c = $('cursor');
   const g = CURSOR.find((g) => t >= g[0][0] - .3 && t < g[g.length - 1][0] + .3);
@@ -1304,7 +1353,7 @@ function seek(sceneT) {
 // video.html#hero draws the title card's screenshot (img/hero.webp): the
 // Alternatives popover's options with the whole window filling the frame, no
 // overlays. history/2026-11-10-demo-video/hero-shot.cjs captures it at 4x.
-const HERO = VIDEO && location.hash === '#hero', HERO_T = 37.5;
+const HERO = VIDEO && location.hash === '#hero', HERO_T = 41.9;
 function heroCam() {
   const r = W(dmx), s = Math.min(1920 / r.w, 1080 / r.h);
   return { cx: r.x + r.w / 2, cy: r.y + r.h / 2, s };
