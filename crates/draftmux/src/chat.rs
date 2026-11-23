@@ -1872,6 +1872,10 @@ impl Chat {
             self.quotes_listed.set(false);
         }
         let chip = (!quotes.is_empty()).then(|| self.quotes_chip(&quotes, &palette, cx));
+        // The placeholder sits where the composer's first line would, at its
+        // size.
+        let zoom = theme::get(cx).zoom;
+        let style = theme::zoom_editor(composer_style(&palette), zoom);
         div().flex_none().px(px(12.)).pt(px(8.)).pb(px(12.)).child(
             div()
                 .key_context(KEY_CONTEXT)
@@ -1883,16 +1887,17 @@ impl Chat {
                 .bg(palette.control)
                 .child(
                     div()
-                        .h(px(58.))
+                        .h(px(58.) * zoom)
                         .relative()
                         .child(self.composer.clone())
                         .when(empty, |input| {
                             input.child(
                                 div()
                                     .absolute()
-                                    .top(px(9.))
-                                    .left(px(11.))
-                                    .text_size(px(13.))
+                                    .top(style.padding_top)
+                                    .left(style.padding_x)
+                                    .text_size(style.font_size)
+                                    .line_height(style.line_height)
                                     .text_color(palette.faint)
                                     .child(placeholder),
                             )
