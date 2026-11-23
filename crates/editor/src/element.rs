@@ -284,6 +284,29 @@ impl Element for EditorElement {
             );
             return (layout, ());
         }
+        if let Some((min, max)) = self.editor.read(cx).style.grow_rows {
+            let editor = self.editor.clone();
+            let mut style = Style::default();
+            style.size.width = relative(1.).into();
+            let layout =
+                window.request_measured_layout(style, move |known, available, window, cx| {
+                    let width = known.width.or(match available.width {
+                        AvailableSpace::Definite(width) => Some(width),
+                        _ => None,
+                    });
+                    let editor = editor.read(cx);
+                    let style = &editor.style;
+                    let width = width.unwrap_or_default();
+                    let rows = wrapped_rows(editor, width - style.padding_x * 2., window);
+                    size(
+                        width,
+                        style.line_height * rows.clamp(min, max) as f32
+                            + style.padding_top
+                            + style.padding_bottom,
+                    )
+                });
+            return (layout, ());
+        }
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = relative(1.).into();
@@ -693,14 +716,31 @@ fn fit_size(editor: &Editor, max_width: Option<Pixels>, window: &mut Window) -> 
         Some(max) => (longest.ceil() + pad_x).min(max),
         None => longest.ceil() + pad_x,
     };
-    let rows: usize = shape(Some((width - pad_x).max(px(1.))), window)
-        .iter()
-        .map(|line| line.wrap_boundaries().len() + 1)
-        .sum();
+    let rows = wrapped_rows(editor, width - pad_x, window);
     size(
         width,
         style.line_height * rows.max(1) as f32 + style.padding_top + style.padding_bottom,
     )
+}
+
+/// How many rows `editor`'s text takes wrapped to `wrap_width`.
+fn wrapped_rows(editor: &Editor, wrap_width: Pixels, window: &mut Window) -> usize {
+    let style = &editor.style;
+    let text = SharedString::from(editor.buffer.text().to_string());
+    let runs = text_runs(&text, &editor.highlights, None, editor.read_only, style);
+    window
+        .text_system()
+        .shape_text(
+            text,
+            style.font_size,
+            &runs,
+            Some(wrap_width.max(px(1.))),
+            None,
+        )
+        .unwrap_or_default()
+        .iter()
+        .map(|line| line.wrap_boundaries().len() + 1)
+        .sum()
 }
 
 /// Text runs covering all of `text`, styled by the markdown highlights, with

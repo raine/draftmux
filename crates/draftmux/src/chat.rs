@@ -1907,7 +1907,6 @@ impl Chat {
                 .bg(palette.control)
                 .child(
                     div()
-                        .h(px(58.) * zoom)
                         .relative()
                         .child(self.composer.clone())
                         .when(empty, |input| {
@@ -2152,9 +2151,10 @@ fn composer_style(palette: &Palette) -> EditorStyle {
         line_height: px(13. * 1.45),
         padding_x: px(11.),
         padding_top: px(9.),
-        padding_bottom: px(4.),
+        padding_bottom: px(11.),
         text: palette.text,
         heading: palette.text,
+        grow_rows: Some((2, 8)),
         ..palette.editor_style()
     }
 }

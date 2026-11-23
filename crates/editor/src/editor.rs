@@ -293,6 +293,9 @@ pub struct EditorStyle {
     /// filling its parent and scrolling. Scroll events then pass through to
     /// what contains it.
     pub fit_content: bool,
+    /// Fill the parent's width and grow with the text, from the first number
+    /// of rows to the second, scrolling past that.
+    pub grow_rows: Option<(usize, usize)>,
 }
 
 impl Default for EditorStyle {
@@ -320,6 +323,7 @@ impl Default for EditorStyle {
             ghost_waiting: rgba(0x3c3c4373).into(),
             tracked: rgba(0x0a6cf512).into(),
             fit_content: false,
+            grow_rows: None,
         }
     }
 }
