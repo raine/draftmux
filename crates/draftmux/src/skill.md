@@ -59,10 +59,8 @@ draftmux open "$@" --target github --note 'PR description for the retry change'
   `--backend pi` when `open` reports that Claude Code can't be used and the
   user still wants the draft.
 - `--note`: a short phrase naming the message, such as `'reply to Maya about
-  the flaky CI job'`. Draftmux's agent continues this conversation and reads
-  everything in it, so don't restate its facts, findings or decisions, and
-  don't outline the message. Add only what the conversation doesn't say yet,
-  such as a request the user made outside it. Single-quote it; write `'` as
+  the flaky CI job'`. Draftmux's agent already has this conversation's
+  context, so don't restate or outline it. Single-quote it; write `'` as
   `'\''`.
 
 {{handoff}}
