@@ -1091,10 +1091,11 @@ impl Chat {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = *theme::palette(cx);
+        let zoom = theme::get(cx).zoom;
         if let Some(session) = self.session()
             && index == session.transcript.items.len()
         {
-            return activity_row(session, &palette);
+            return activity_row(session, &palette, zoom);
         }
         let bubble = match self.session().and_then(|s| s.transcript.items.get(index)) {
             Some(Item::User { text, .. }) => {
@@ -1121,20 +1122,25 @@ impl Chat {
                     div()
                         .max_w(relative(0.86))
                         .min_w_0()
-                        .px(px(11.))
-                        .py(px(7.))
-                        .rounded_tl(px(12.))
-                        .rounded_tr(px(12.))
-                        .rounded_bl(px(12.))
-                        .rounded_br(px(3.))
+                        .px(px(11. * zoom))
+                        .py(px(7. * zoom))
+                        .rounded_tl(px(12. * zoom))
+                        .rounded_tr(px(12. * zoom))
+                        .rounded_bl(px(12. * zoom))
+                        .rounded_br(px(3. * zoom))
                         .bg(palette.accent)
                         .text_color(palette.on_accent)
-                        .text_size(px(13.))
-                        .line_height(px(19.5))
+                        .text_size(px(13. * zoom))
+                        .line_height(px(19.5 * zoom))
                         .when(!quotes.is_empty(), |bubble_div| {
-                            bubble_div.child(div().mb(px(3.)).children(quotes.iter().map(
+                            bubble_div.child(div().mb(px(3. * zoom)).children(quotes.iter().map(
                                 |quote| {
-                                    quote_label(quote, palette.on_accent_muted, palette.on_accent)
+                                    quote_label(
+                                        quote,
+                                        palette.on_accent_muted,
+                                        palette.on_accent,
+                                        zoom,
+                                    )
                                 },
                             )))
                         })
@@ -1147,7 +1153,7 @@ impl Chat {
                 )
                 .into_any_element(),
             Item::Assistant { doc, .. } => div()
-                .px(px(2.))
+                .px(px(2. * zoom))
                 .child(markup_view::render(
                     doc,
                     &self.style,
@@ -1171,17 +1177,17 @@ impl Chat {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px(px(2.))
-                    .text_size(px(12.))
+                    .px(px(2. * zoom))
+                    .text_size(px(12. * zoom))
                     .child(div().flex_1().min_w_0().text_color(color).child(message))
                     .when(retry, |row| {
                         row.child(
                             div()
                                 .id(("retry", index))
                                 .flex_none()
-                                .px(px(9.))
-                                .py(px(2.))
-                                .rounded(px(999.))
+                                .px(px(9. * zoom))
+                                .py(px(2. * zoom))
+                                .rounded(px(999. * zoom))
                                 .border_1()
                                 .border_color(palette.line_strong)
                                 .bg(palette.control)
@@ -1195,13 +1201,13 @@ impl Chat {
                     .into_any_element()
             }
             Item::Notice(text) => div()
-                .text_size(px(12.))
+                .text_size(px(12. * zoom))
                 .text_color(palette.faint)
                 .text_center()
                 .child(text.clone())
                 .into_any_element(),
             Item::Summary { text, expanded } => {
-                summary_row(text, *expanded, index, &palette, window, cx)
+                summary_row(text, *expanded, index, &palette, zoom, window, cx)
             }
         };
         let entrance = session
@@ -1211,9 +1217,13 @@ impl Chat {
             .filter(|progress| *progress < 1.);
         div()
             .px(px(14.))
-            .pt(if stacked { px(0.) } else { px(10.) })
+            .pt(if stacked {
+                px(0. * zoom)
+            } else {
+                px(10. * zoom)
+            })
             .when(index + 1 == items.len() && !session.activity_row, |item| {
-                item.pb(px(10.))
+                item.pb(px(10. * zoom))
             })
             .child(body)
             // Offset, not resized, so the list's measured height holds.
@@ -1239,6 +1249,7 @@ impl Chat {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let zoom = theme::get(cx).zoom;
         let finish = settling(session.finished.get(&index));
         let turn = settling(session.turned.get(&index));
         if finish.is_some() || turn.is_some() {
@@ -1270,11 +1281,11 @@ impl Chat {
         };
         let running = tool.running();
         let icon = if running {
-            spinner(palette).into_any_element()
+            spinner(palette).size(px(11. * zoom)).into_any_element()
         } else {
             svg()
                 .path(tool_icon(&tool.kind))
-                .size(px(14.))
+                .size(px(14. * zoom))
                 .text_color(if tool.is_error() {
                     palette.tool_error
                 } else {
@@ -1293,18 +1304,18 @@ impl Chat {
             .group("tool-row")
             .flex()
             .items_center()
-            .gap(px(7.))
-            .py(px(3.))
-            .pl(px(2.))
-            .pr(px(6.))
-            .mx(px(-2.))
-            .rounded(px(6.))
+            .gap(px(7. * zoom))
+            .py(px(3. * zoom))
+            .pl(px(2. * zoom))
+            .pr(px(6. * zoom))
+            .mx(px(-2. * zoom))
+            .rounded(px(6. * zoom))
             .hover(|style| style.bg(palette.hover))
             .active(|style| style.opacity(0.8))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(index, cx)))
             .child(
                 div()
-                    .size(px(16.))
+                    .size(px(16. * zoom))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -1318,12 +1329,12 @@ impl Chat {
                     .min_w_0()
                     .flex()
                     .items_baseline()
-                    .gap(px(7.))
-                    .line_height(px(18.))
+                    .gap(px(7. * zoom))
+                    .line_height(px(18. * zoom))
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(12.5))
+                            .text_size(px(12.5 * zoom))
                             .text_color(if running { palette.text } else { palette.muted })
                             .child(tool.verb()),
                     )
@@ -1333,7 +1344,7 @@ impl Chat {
                             .min_w_0()
                             .truncate()
                             .font_family(MONO)
-                            .text_size(px(12.))
+                            .text_size(px(12. * zoom))
                             .text_color(palette.text)
                             .tooltip(crate::tooltip::text(full))
                             .child(target),
@@ -1344,32 +1355,41 @@ impl Chat {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .pl(px(8.))
+                    .gap(px(6. * zoom))
+                    .pl(px(8. * zoom))
                     .when_some(finish, |meta, delta| meta.opacity(delta))
                     .when_some(stats, |meta, (added, removed)| {
-                        meta.child(stat(format!("+{added}"), palette.added, palette.added_bg))
-                            .when_some(removed, |meta, removed| {
-                                meta.child(stat(
-                                    format!("−{removed}"),
-                                    palette.removed,
-                                    palette.removed_bg,
-                                ))
-                            })
+                        meta.child(stat(
+                            format!("+{added}"),
+                            palette.added,
+                            palette.added_bg,
+                            zoom,
+                        ))
+                        .when_some(removed, |meta, removed| {
+                            meta.child(stat(
+                                format!("−{removed}"),
+                                palette.removed,
+                                palette.removed_bg,
+                                zoom,
+                            ))
+                        })
                     })
                     .when_some(change_count, |meta, count| {
-                        meta.child(div().text_size(px(11.)).text_color(palette.faint).child(
-                            match count {
-                                0 => "whitespace".to_owned(),
-                                1 => "1 change".to_owned(),
-                                n => format!("{n} changes"),
-                            },
-                        ))
+                        meta.child(
+                            div()
+                                .text_size(px(11. * zoom))
+                                .text_color(palette.faint)
+                                .child(match count {
+                                    0 => "whitespace".to_owned(),
+                                    1 => "1 change".to_owned(),
+                                    n => format!("{n} changes"),
+                                }),
+                        )
                     })
                     .when_some(tool.duration(), |meta, duration| {
                         meta.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(11. * zoom))
                                 .text_color(palette.faint)
                                 .child(format_duration(duration)),
                         )
@@ -1377,7 +1397,7 @@ impl Chat {
                     .child({
                         let chevron = svg()
                             .path(CHEVRON_ICON)
-                            .size(px(10.))
+                            .size(px(10. * zoom))
                             .text_color(palette.faint);
                         // Collapsing turns it back while the row is hovered.
                         let turned = match turn.filter(|_| !crate::platform::reduce_motion()) {
@@ -1418,8 +1438,8 @@ impl Chat {
                 tool.expanded,
                 false,
                 || match hunks {
-                    Some(hunks) => changes_body(&hunks, &found, draft, index, palette),
-                    None => tool_body(tool, index, palette).into_any_element(),
+                    Some(hunks) => changes_body(&hunks, &found, draft, index, palette, zoom),
+                    None => tool_body(tool, index, palette, zoom).into_any_element(),
                 },
                 window,
                 cx,
@@ -1809,7 +1829,7 @@ impl Chat {
                 .border_color(palette.hairline)
                 .bg(palette.hover)
                 .child(
-                    quote_label(quote, palette.faint, palette.text)
+                    quote_label(quote, palette.faint, palette.text, 1.)
                         .flex_1()
                         .justify_between(),
                 )
@@ -2186,18 +2206,18 @@ fn close_button(
 
 /// The quote icon, the start of the selected text and its lines, on one
 /// line: `faint` for the icon and lines, `text` for the excerpt.
-fn quote_label(quote: &Quote, faint: Hsla, text: Hsla) -> gpui::Div {
+fn quote_label(quote: &Quote, faint: Hsla, text: Hsla, zoom: f32) -> gpui::Div {
     div()
         .min_w_0()
         .flex()
         .items_center()
-        .gap(px(5.))
-        .text_size(px(11.5))
-        .line_height(px(16.))
+        .gap(px(5. * zoom))
+        .text_size(px(11.5 * zoom))
+        .line_height(px(16. * zoom))
         .child(
             svg()
                 .path(QUOTE_ICON)
-                .size(px(12.))
+                .size(px(12. * zoom))
                 .flex_none()
                 .text_color(faint),
         )
@@ -2277,7 +2297,7 @@ fn needs_activity_row(starting: bool, transcript: &Transcript) -> bool {
 }
 
 /// The waiting slot before a visible reply replaces it.
-fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
+fn activity_row(session: &Session, palette: &Palette, zoom: f32) -> AnyElement {
     let text: SharedString = if session.starting() {
         format!("Starting {}…", session.agent_name()).into()
     } else if session.transcript.compacting {
@@ -2287,11 +2307,11 @@ fn activity_row(session: &Session, palette: &Palette) -> AnyElement {
     };
     // Inset like the messages: the item padding plus their own 2px.
     let row = div()
-        .pt(px(10.))
-        .pb(px(10.))
+        .pt(px(10. * zoom))
+        .pb(px(10. * zoom))
         .px(px(16.))
-        .text_size(px(13.))
-        .line_height(px(19.5))
+        .text_size(px(13. * zoom))
+        .line_height(px(19.5 * zoom))
         // Highlight blending preserves the base alpha. Resolve the muted
         // colour onto the chat background so the wave can reach full contrast.
         .text_color(palette.chat.blend(palette.muted));
@@ -2360,13 +2380,13 @@ pub(crate) fn spinner(palette: &Palette) -> gpui::Div {
         )
 }
 
-fn stat(text: String, color: Hsla, background: Hsla) -> impl IntoElement {
+fn stat(text: String, color: Hsla, background: Hsla, zoom: f32) -> impl IntoElement {
     div()
-        .px(px(4.))
-        .rounded(px(4.))
+        .px(px(4. * zoom))
+        .rounded(px(4. * zoom))
         .font_family(MONO)
-        .text_size(px(11.))
-        .line_height(px(16.))
+        .text_size(px(11. * zoom))
+        .line_height(px(16. * zoom))
         .text_color(color)
         .bg(background)
         .child(text)
@@ -2428,12 +2448,13 @@ fn summary_row(
     expanded: bool,
     index: usize,
     palette: &Palette,
+    zoom: f32,
     window: &mut Window,
     cx: &mut Context<Chat>,
 ) -> AnyElement {
     let chevron = svg()
         .path(CHEVRON_ICON)
-        .size(px(10.))
+        .size(px(10. * zoom))
         .text_color(palette.faint);
     let label = div()
         .id(("summary", index))
@@ -2441,7 +2462,7 @@ fn summary_row(
         .items_center()
         .justify_center()
         .gap_1()
-        .text_size(px(12.))
+        .text_size(px(12. * zoom))
         .text_color(palette.faint)
         .cursor_pointer()
         .hover(|style| style.text_color(palette.muted))
@@ -2466,13 +2487,13 @@ fn summary_row(
             move || {
                 div()
                     .mt_2()
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(px(6.))
+                    .px(px(10. * zoom))
+                    .py(px(8. * zoom))
+                    .rounded(px(6. * zoom))
                     .border_1()
                     .border_color(line)
-                    .text_size(px(12.))
-                    .line_height(px(18.))
+                    .text_size(px(12. * zoom))
+                    .line_height(px(18. * zoom))
                     .text_color(muted)
                     .whitespace_normal()
                     .child(text)
@@ -2485,7 +2506,7 @@ fn summary_row(
 }
 
 /// The expanded row: output keeps its whitespace and scrolls sideways.
-fn tool_body(tool: &Tool, index: usize, palette: &Palette) -> impl IntoElement {
+fn tool_body(tool: &Tool, index: usize, palette: &Palette, zoom: f32) -> impl IntoElement {
     let lines: Vec<AnyElement> = tool
         .body()
         .into_iter()
@@ -2493,25 +2514,27 @@ fn tool_body(tool: &Tool, index: usize, palette: &Palette) -> impl IntoElement {
         .map(|(i, line)| {
             let command = matches!(tool.kind, ToolKind::Bash { .. }) && i == 0;
             div()
-                .px(px(10.))
+                .px(px(10. * zoom))
                 .whitespace_nowrap()
-                .when(command, |line| line.text_color(palette.faint).mb(px(4.)))
+                .when(command, |line| {
+                    line.text_color(palette.faint).mb(px(4. * zoom))
+                })
                 .child(blank_as_space(line))
                 .into_any_element()
         })
         .collect();
     div()
         .id(("tool-body", index))
-        .ml(px(24.))
-        .my(px(4.))
-        .py(px(8.))
-        .max_h(px(200.))
+        .ml(px(24. * zoom))
+        .my(px(4. * zoom))
+        .py(px(8. * zoom))
+        .max_h(px(200. * zoom))
         .overflow_scroll()
-        .rounded(px(7.))
+        .rounded(px(7. * zoom))
         .bg(palette.tool_body)
         .font_family(MONO)
-        .text_size(px(11.5))
-        .line_height(px(17.))
+        .text_size(px(11.5 * zoom))
+        .line_height(px(17. * zoom))
         .text_color(palette.tool_text)
         .child(div().flex().flex_col().min_w_full().children(lines))
 }
@@ -2524,6 +2547,7 @@ fn changes_body(
     draft: Entity<Editor>,
     index: usize,
     palette: &Palette,
+    zoom: f32,
 ) -> AnyElement {
     let mut rows: Vec<AnyElement> = Vec::new();
     for (h, hunk) in hunks.iter().enumerate() {
@@ -2533,18 +2557,18 @@ fn changes_body(
             let row = div()
                 .id(("tool-change", rows.len()))
                 .flex()
-                .gap(px(8.))
-                .py(px(6.))
-                .pl(px(10.))
-                .pr(px(12.))
+                .gap(px(8. * zoom))
+                .py(px(6. * zoom))
+                .pl(px(10. * zoom))
+                .pr(px(12. * zoom))
                 .when(number > 1, |row| {
                     row.border_t_1().border_color(palette.hairline)
                 })
                 .child(
                     div()
-                        .w(px(14.))
+                        .w(px(14. * zoom))
                         .flex_none()
-                        .text_size(px(11.))
+                        .text_size(px(11. * zoom))
                         .text_color(palette.faint)
                         .child(number.to_string()),
                 )
@@ -2572,8 +2596,8 @@ fn changes_body(
     if rows.is_empty() {
         rows.push(
             div()
-                .px(px(10.))
-                .py(px(6.))
+                .px(px(10. * zoom))
+                .py(px(6. * zoom))
                 .text_color(palette.faint)
                 .child("Only whitespace changed")
                 .into_any_element(),
@@ -2581,15 +2605,15 @@ fn changes_body(
     }
     div()
         .id(("tool-body", index))
-        .ml(px(24.))
-        .my(px(4.))
-        .py(px(2.))
-        .max_h(px(200.))
+        .ml(px(24. * zoom))
+        .my(px(4. * zoom))
+        .py(px(2. * zoom))
+        .max_h(px(200. * zoom))
         .overflow_y_scroll()
-        .rounded(px(7.))
+        .rounded(px(7. * zoom))
         .bg(palette.tool_body)
-        .text_size(px(12.5))
-        .line_height(px(19.))
+        .text_size(px(12.5 * zoom))
+        .line_height(px(19. * zoom))
         .text_color(palette.muted)
         .children(rows)
         .into_any_element()
