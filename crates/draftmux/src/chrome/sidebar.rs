@@ -16,7 +16,7 @@ use gpui::{
 
 use super::{Chrome, shadow, sidebar_column};
 use crate::assets::{
-    ARCHIVE_ICON, CHEVRON_ICON, HELP_ICON, RESET_ICON, TOAST_DONE_ICON, TOAST_ERROR_ICON,
+    ARCHIVE_ICON, CHEVRON_ICON, HELP_ICON, PLUS_ICON, RESET_ICON, TOAST_DONE_ICON, TOAST_ERROR_ICON,
 };
 use crate::drafts::{Row, relative_time, tilde};
 use crate::menu::{MenuItem, menu_panel};
@@ -216,11 +216,14 @@ impl Chrome {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(px(16.))
+                    .justify_between()
+                    .pl(px(16.))
+                    .pr(px(10.))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.faint)
-                    .child("Drafts"),
+                    .child("Drafts")
+                    .child(new_draft_button(&palette, cx)),
             )
             .child(
                 div()
@@ -996,6 +999,32 @@ fn sample_badge(palette: &theme::Palette) -> impl IntoElement {
 }
 
 /// A faint button in the sidebar's bottom corner that opens Help.
+fn new_draft_button(palette: &theme::Palette, cx: &mut Context<Chrome>) -> impl IntoElement {
+    div()
+        .id("new-draft")
+        .group("new-draft")
+        .size(px(20.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .hover(|style| style.bg(palette.hover))
+        .active(|style| style.opacity(0.8))
+        .tooltip(crate::tooltip::text(editor::by_platform!(
+            "New draft (⌘N)",
+            "New draft (Ctrl+N)"
+        )))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|this, _, window, cx| this.new_draft(window, cx)))
+        .child(
+            svg()
+                .path(PLUS_ICON)
+                .size(px(14.))
+                .text_color(palette.faint)
+                .group_hover("new-draft", |style| style.text_color(palette.muted)),
+        )
+}
+
 fn help_button(palette: &theme::Palette) -> gpui::Div {
     div().flex_none().px(px(8.)).pt(px(4.)).pb(px(8.)).child(
         div()

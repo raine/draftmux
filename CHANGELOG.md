@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- New: Start a draft from scratch in the app with New draft (`⌘N`, or the `+`
+  beside Drafts in the sidebar). It opens empty with an agent of its own, ready
+  for a Slack update or an email; copy it out when it's done. A new draft left
+  empty is deleted rather than kept.
 - New: A Claude Code draft's agent can run shell commands to check facts, as
   pi's already could. Its edits still only reach the draft, and commands can't
   run in the background.

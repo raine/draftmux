@@ -1,6 +1,7 @@
 mod about_window;
 mod app_settings;
 mod assets;
+mod blank;
 mod block_cache;
 mod bounce;
 #[cfg(feature = "capture")]

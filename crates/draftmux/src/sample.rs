@@ -15,7 +15,7 @@ pub const TITLE: &str = "Welcome to Draftmux";
 pub const TEXT: &str = "\
 ## Welcome to Draftmux
 
-This is a sample draft. Real drafts arrive from your coding agent: run `/draftmux` in Claude Code or `/skill:draftmux` in pi and it opens here with the conversation attached.
+This is a sample draft. Real drafts arrive from your coding agent: run `/draftmux` in Claude Code or `/skill:draftmux` in pi and it opens here with the conversation attached. To write something from scratch, click + beside Drafts for a blank draft.
 
 ### Try it on this draft
 

@@ -62,6 +62,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Draft",
         &[
             (
+                editor::by_platform!("⌘N", "Ctrl+N"),
+                "Start a new draft from scratch",
+            ),
+            (
                 editor::by_platform!("⌘⇧C", "Ctrl+Shift+C"),
                 "Copy formatted for the target",
             ),

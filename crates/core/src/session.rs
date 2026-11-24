@@ -101,6 +101,8 @@ pub struct Session {
     requested: HashSet<String>,
     /// Accepted requests whose pending flag still needs to be saved.
     accepted: HashSet<String>,
+    /// The drafts whose agent accepted a prompt since the app started.
+    prompted: HashSet<String>,
 }
 
 /// The pending edit isn't saved by the autosave timer because the file
@@ -133,6 +135,7 @@ impl Session {
             running: HashSet::new(),
             requested: HashSet::new(),
             accepted: HashSet::new(),
+            prompted: HashSet::new(),
         }
     }
 
@@ -333,6 +336,44 @@ impl Session {
     /// first and stays selected if that fails.
     pub fn archive(&mut self, id: &str) -> Result<Option<String>> {
         self.drafts.archive(id)
+    }
+
+    /// Whether active draft `id` is a blank draft left empty
+    /// ([`crate::drafts::left_empty`]), with its agent idle and never
+    /// prompted. The selected draft is judged by the editor's text.
+    pub fn discardable(&self, id: &str) -> bool {
+        if self.running.contains(id) || self.prompted.contains(id) {
+            return false;
+        }
+        let drafts = &self.drafts;
+        let Some(draft) = drafts.rows().iter().find(|row| row.draft.id == id) else {
+            return false;
+        };
+        let text = if drafts.current_id() == Some(id) {
+            self.text.clone()
+        } else {
+            match drafts.store().read_text(id) {
+                Ok(text) => text,
+                Err(_) => return false,
+            }
+        };
+        crate::drafts::left_empty(drafts.store(), &draft.draft, &text)
+    }
+
+    /// Deletes `id` if it is [`discardable`](Self::discardable), and
+    /// returns whether it did. The app stops the draft's agent first. A
+    /// selected draft is deleted without saving and the selection cleared,
+    /// as when the app quits.
+    pub fn discard(&mut self, id: &str) -> Result<bool> {
+        if !self.discardable(id) {
+            return Ok(false);
+        }
+        let current = self.drafts.current_id() == Some(id);
+        self.drafts.delete(id)?;
+        if current {
+            self.deselect();
+        }
+        Ok(true)
     }
 
     /// Picks up a change to the selected draft's file made outside the
@@ -588,6 +629,7 @@ impl Session {
     /// A prompt the agent rejects or never answers leaves it pending: the
     /// chat offers Retry, and the next start requests it again.
     pub fn prompt_accepted(&mut self, id: &str) {
+        self.prompted.insert(id.to_owned());
         if self.requested.contains(id) {
             self.accepted.insert(id.to_owned());
             self.first_draft_requested(id);

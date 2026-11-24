@@ -18,8 +18,8 @@ pub struct Meta {
     pub syntax: Option<Syntax>,
     pub status: Status,
     pub title: String,
-    /// The session the draft was handed off from; none for the sample draft
-    /// and a file opened with `draftmux <FILE>`.
+    /// The session the draft was handed off from; none for the sample draft,
+    /// a blank draft and a file opened with `draftmux <FILE>`.
     /// Independent of [`Meta::backend`]: a Claude Code transcript converted
     /// into a pi session is a Claude source on the Pi backend.
     pub source: Option<Source>,
@@ -45,6 +45,9 @@ pub struct Meta {
     /// The file the draft was opened from (`draftmux open --draft-file`),
     /// which saving writes the draft back to.
     pub file: Option<LinkedFile>,
+    /// Whether the draft was started blank in the app. A blank draft left
+    /// empty is deleted rather than kept.
+    pub blank: bool,
     pub created_at: DateTime<Utc>,
     /// Last activity; the drafts list is sorted by this, newest first.
     pub updated_at: DateTime<Utc>,
@@ -52,9 +55,27 @@ pub struct Meta {
 
 impl Meta {
     /// The sample draft is the only draft with neither a source session nor
-    /// a linked file.
+    /// a linked file that wasn't started blank.
     pub fn is_sample(&self) -> bool {
-        self.source.is_none() && self.file.is_none()
+        self.source.is_none() && self.file.is_none() && !self.blank
+    }
+
+    /// Whether the draft's agent was ever sent a prompt, as far as its
+    /// session shows: a pi session file with a message, or a Claude Code
+    /// session with a transcript. A pi session file that can't be read
+    /// counts as started.
+    pub fn chat_started(&self) -> bool {
+        match &self.backend {
+            Backend::Pi(pi) => pi.session_file.as_ref().is_some_and(|file| {
+                std::fs::read_to_string(file).map_or(true, |text| {
+                    text.lines().any(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .is_ok_and(|entry| entry["type"] == "message")
+                    })
+                })
+            }),
+            Backend::Claude(claude) => claude.transcript.is_some(),
+        }
     }
 
     /// Whether the text is in Slack's mrkdwn rather than Markdown.
@@ -243,6 +264,8 @@ struct MetaFile {
     settings: DraftSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file: Option<LinkedFile>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    blank: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -284,6 +307,7 @@ impl TryFrom<MetaFile> for Meta {
             first_draft_pending: file.first_draft_pending,
             settings: file.settings,
             file: file.file,
+            blank: file.blank,
             created_at: file.created_at,
             updated_at: file.updated_at,
         };
@@ -313,6 +337,7 @@ impl From<Meta> for MetaFile {
             first_draft_pending: meta.first_draft_pending,
             settings: meta.settings,
             file: meta.file,
+            blank: meta.blank,
             created_at: meta.created_at,
             updated_at: meta.updated_at,
         }
@@ -539,6 +564,60 @@ mod tests {
         assert!(json.get("source").is_none());
         let back: Meta = serde_json::from_value(json).unwrap();
         assert!(back.is_sample());
+    }
+
+    #[test]
+    fn blank_round_trips_and_defaults_to_false() {
+        let mut meta: Meta = serde_json::from_str(FIXTURE).unwrap();
+        assert!(!meta.blank);
+        assert!(serde_json::to_value(&meta).unwrap().get("blank").is_none());
+
+        meta.source = None;
+        meta.blank = true;
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["blank"], true);
+        let back: Meta = serde_json::from_value(json).unwrap();
+        assert!(back.blank);
+        // A blank draft has no source either, but isn't the sample.
+        assert!(!back.is_sample());
+    }
+
+    #[test]
+    fn chat_started_reads_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("s.jsonl");
+        let mut meta: Meta = serde_json::from_str(FIXTURE).unwrap();
+        meta.backend = Backend::Pi(PiSession {
+            agent_dir: "/a".into(),
+            session_file: Some(file.clone()),
+        });
+        // Unreadable counts as started.
+        assert!(meta.chat_started());
+        std::fs::write(&file, "{\"type\":\"session\",\"version\":3}\n").unwrap();
+        assert!(!meta.chat_started());
+        std::fs::write(
+            &file,
+            "{\"type\":\"session\"}\n{\"type\":\"message\",\"message\":{}}\n",
+        )
+        .unwrap();
+        assert!(meta.chat_started());
+        meta.backend = Backend::pi("/a");
+        assert!(!meta.chat_started());
+
+        let mut claude = ClaudeSession {
+            session_id: Uuid::nil(),
+            transcript: None,
+            config_dir: None,
+            fork: None,
+            model: None,
+            effort: None,
+            selection_model: None,
+        };
+        meta.backend = Backend::Claude(claude.clone());
+        assert!(!meta.chat_started());
+        claude.transcript = Some("/t/00000000-0000-0000-0000-000000000000.jsonl".into());
+        meta.backend = Backend::Claude(claude);
+        assert!(meta.chat_started());
     }
 
     #[test]

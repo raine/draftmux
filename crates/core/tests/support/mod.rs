@@ -211,23 +211,33 @@ impl Script {
         )
     }
 
-    fn create(&mut self, text: &str, source: Option<Source>) -> String {
+    /// Creates a draft started blank in the app, as New Draft does, and
+    /// lists it. Returns its id.
+    pub fn blank(&mut self) -> String {
         let id = self
             .store
-            .create(NewDraft {
-                target: Target::Github,
-                title: String::new(),
-                source,
-                cwd: "/home/u/code/app".into(),
-                backend: draftmux_storage::Backend::pi("/tmp/.pi/agent"),
-                note: None,
-                summary: None,
-                settings: Default::default(),
-                text: text.to_owned(),
-                file: None,
-            })
+            .create_blank(new_draft("", None), |draft| Ok(draft.meta.backend.clone()))
             .unwrap()
             .id;
+        self.session.drafts_mut().refresh();
+        id
+    }
+
+    /// Selects draft `id` as the app does, then deletes the draft left if
+    /// it is a blank draft left empty. Returns whether it was deleted.
+    pub fn leave_for(&mut self, id: &str) -> bool {
+        let left = self.selected();
+        self.select(id);
+        left.is_some_and(|left| self.session.discard(&left).unwrap())
+    }
+
+    /// Whether draft `id` is still in the store.
+    pub fn exists(&self, id: &str) -> bool {
+        self.root.path().join(id).exists()
+    }
+
+    fn create(&mut self, text: &str, source: Option<Source>) -> String {
+        let id = self.store.create(new_draft(text, source)).unwrap().id;
         self.session.drafts_mut().refresh();
         id
     }
@@ -408,5 +418,20 @@ impl Script {
 
     fn history_path(&self, id: &str) -> PathBuf {
         self.root.path().join(id).join("history.json")
+    }
+}
+
+fn new_draft(text: &str, source: Option<Source>) -> NewDraft {
+    NewDraft {
+        target: Target::Github,
+        title: String::new(),
+        source,
+        cwd: "/home/u/code/app".into(),
+        backend: draftmux_storage::Backend::pi("/tmp/.pi/agent"),
+        note: None,
+        summary: None,
+        settings: Default::default(),
+        text: text.to_owned(),
+        file: None,
     }
 }

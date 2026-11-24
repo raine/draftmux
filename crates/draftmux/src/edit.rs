@@ -45,12 +45,12 @@ pub fn main(file: &Path) -> Result<u8> {
 }
 
 /// What a new draft's agent depends on outside the settings.
-struct Env<'a> {
-    home: &'a Path,
+pub struct Env<'a> {
+    pub home: &'a Path,
     /// Fails unless the app can run Claude Code.
-    claude: &'a dyn Fn() -> Result<(), String>,
+    pub claude: &'a dyn Fn() -> Result<(), String>,
     /// The caller's `CLAUDE_CONFIG_DIR`.
-    claude_config_dir: Option<&'a Path>,
+    pub claude_config_dir: Option<&'a Path>,
 }
 
 /// The active draft linked to `file`, else a new one. `settings` are
@@ -89,11 +89,7 @@ fn create(store: &Store, settings: &Settings, path: PathBuf, env: &Env) -> Resul
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let kind = if resolved.backend.value == DraftBackend::SameAsSource && (env.claude)().is_ok() {
-        AgentKind::Claude
-    } else {
-        AgentKind::Pi
-    };
+    let kind = agent_kind(&resolved, env);
     let new = NewDraft {
         target,
         title,
@@ -124,6 +120,16 @@ fn create(store: &Store, settings: &Settings, path: PathBuf, env: &Env) -> Resul
 pub enum AgentKind {
     Pi,
     Claude,
+}
+
+/// The agent a new draft without a source session runs on: pi when the
+/// settings choose pi, else Claude Code when the app can run it, else pi.
+pub fn agent_kind(resolved: &Resolved, env: &Env) -> AgentKind {
+    if resolved.backend.value == DraftBackend::SameAsSource && (env.claude)().is_ok() {
+        AgentKind::Claude
+    } else {
+        AgentKind::Pi
+    }
 }
 
 /// The draft settings to keep with a new session on `kind`.

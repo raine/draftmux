@@ -33,6 +33,8 @@ https://github.com/user-attachments/assets/c01af06e-e89b-432c-b077-e68d4e0b0148
   uses the text exactly as you left it. Or copy it formatted for the target.
 - **Works on files.** Open a README or any Markdown file as a draft, polish it
   the same way and save it back.
+- **Or start from scratch.** `⌘N` opens a blank draft with an agent of its own
+  for a Slack update or an email that doesn't come from a coding session.
 
 `⌘/` or the `?` at the bottom of the sidebar opens Help, which lists the
 keyboard shortcuts.

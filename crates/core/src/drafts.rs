@@ -391,10 +391,57 @@ impl Drafts {
         Ok(())
     }
 
+    /// Deletes `id` for good, dropping it from the selection without saving
+    /// it if it is selected.
+    pub(crate) fn delete(&mut self, id: &str) -> Result<()> {
+        self.store.delete(id)?;
+        if self.current_id() == Some(id) {
+            self.current = None;
+        }
+        self.refresh();
+        Ok(())
+    }
+
+    /// Deletes the active blank drafts left empty ([`left_empty`]), such as
+    /// by a crash. A failure is reported and the draft is tried again next
+    /// time.
+    pub fn sweep_blank(&mut self) {
+        let empty: Vec<String> = self
+            .rows
+            .iter()
+            .filter(|row| {
+                self.current_id() != Some(row.draft.id.as_str())
+                    && self
+                        .store
+                        .read_text(&row.draft.id)
+                        .is_ok_and(|text| left_empty(&self.store, &row.draft, &text))
+            })
+            .map(|row| row.draft.id.clone())
+            .collect();
+        for id in empty {
+            if let Err(err) = self.store.delete(&id) {
+                eprintln!("draftmux: deleting the empty draft {id}: {err:#}");
+            }
+        }
+        self.refresh();
+    }
+
     /// The store the drafts are read from and saved to.
     pub fn store(&self) -> &Store {
         &self.store
     }
+}
+
+/// Whether `draft`, holding `text`, is a blank draft that was left empty:
+/// no text, no edits by its agent, and no prompt sent to it. Only such a
+/// draft is deleted rather than kept.
+pub fn left_empty(store: &Store, draft: &Draft, text: &str) -> bool {
+    draft.meta.blank
+        && text.trim().is_empty()
+        && store
+            .history(&draft.id)
+            .is_ok_and(|history| history.edits.is_empty())
+        && !draft.meta.chat_started()
 }
 
 /// The stored title, frontmatter title or subject, then the first body line

@@ -399,6 +399,14 @@ impl Chat {
         });
     }
 
+    /// Drops draft `id`'s conversation and stops its agent, as the draft is
+    /// deleted. The shown draft is left alone.
+    pub fn forget(&mut self, id: &str) {
+        if self.current.as_deref() != Some(id) {
+            self.sessions.remove(id);
+        }
+    }
+
     /// Asks the owner to move the selected draft to the other agent,
     /// confirming first when that leaves a conversation behind.
     fn switch_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2730,7 +2738,7 @@ fn pi_agent(
 
 /// The `claude` on the login shell's PATH, once its version is supported.
 /// Blocks while it runs claude.
-fn claude_program(env: &ShellEnv) -> Result<PathBuf, String> {
+pub(crate) fn claude_program(env: &ShellEnv) -> Result<PathBuf, String> {
     let program = env.claude().map_err(|err| err.to_string())?.to_path_buf();
     check_claude(&program, env.vars())?;
     Ok(program)

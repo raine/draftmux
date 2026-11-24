@@ -28,9 +28,9 @@ use draftmux_core::session::{Effect, Outcome, Session};
 use draftmux_storage::{FileSave, Store, Target};
 use editor::{Editor, EditorEvent, Redo, Undo};
 use gpui::{
-    Anchor, Animation, AnimationExt, AnyElement, App, BoxShadow, Context, CursorStyle,
+    Anchor, Animation, AnimationExt, AnyElement, App, BoxShadow, Context, CursorStyle, Div,
     DragMoveEvent, Empty, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyBinding,
-    MouseButton, Pixels, Point, PromptLevel, ScrollHandle, SharedString, StyleRefinement,
+    MouseButton, Pixels, Point, PromptLevel, ScrollHandle, SharedString, Stateful, StyleRefinement,
     Subscription, Task, Transformation, Window, WindowControlArea, actions, anchored, deferred,
     div, ease_out_quint, percentage, point, prelude::*, px, svg,
 };
@@ -62,7 +62,8 @@ actions!(
         ZoomIn,
         ZoomOut,
         ResetZoom,
-        SaveToFile
+        SaveToFile,
+        NewDraft
     ]
 );
 
@@ -104,6 +105,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(editor::secondary!("-"), ZoomOut, None),
         KeyBinding::new(editor::secondary!("0"), ResetZoom, None),
         KeyBinding::new(editor::secondary!("s"), SaveToFile, None),
+        KeyBinding::new(editor::secondary!("n"), NewDraft, None),
     ]);
 }
 
@@ -194,6 +196,8 @@ pub struct Chrome {
     scrollbars: [ScrollbarState; 3],
     /// Wakes up when the pending edit is due to be saved.
     autosave: Task<()>,
+    /// Creates a blank draft once its agent is chosen.
+    new_draft: Task<()>,
     _clock: Task<()>,
     _watch_draft: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -380,6 +384,7 @@ impl Render for Chrome {
             .on_action(cx.listener(|this, _: &Redo, _, cx| {
                 this.editor.update(cx, |editor, cx| editor.redo(cx));
             }))
+            .on_action(cx.listener(|this, _: &NewDraft, window, cx| this.new_draft(window, cx)))
             .on_action(cx.listener(|this, _: &crate::Quit, _, cx| {
                 if this.flush_before_exit(cx) {
                     cx.quit();
@@ -534,8 +539,10 @@ impl Chrome {
                 }
                 cx.notify();
             }),
-            cx.on_app_quit(|this, _| {
-                this.session.flush().ok();
+            cx.on_app_quit(|this, cx| {
+                if this.session.flush().is_ok() {
+                    this.discard_current(cx);
+                }
                 async {}
             }),
             cx.observe(&Updater::global(cx), |_, _, cx| cx.notify()),
@@ -653,6 +660,7 @@ impl Chrome {
             preview_scroll,
             scrollbars: Default::default(),
             autosave: Task::ready(()),
+            new_draft: Task::ready(()),
             _clock: clock,
             _watch_draft: watch_draft,
             _subscriptions: subscriptions,
@@ -682,6 +690,7 @@ impl Chrome {
                 }
             },
         ));
+        chrome.session.drafts_mut().sweep_blank();
         if let Some(home) = std::env::home_dir() {
             let settings = AppSettings::global(cx).read(cx).settings.clone();
             if let Err(err) =
@@ -717,6 +726,101 @@ impl Chrome {
         }
     }
 
+    /// Starts a blank draft in the home directory and focuses its editor.
+    /// The selected draft is reused when it is a blank draft left empty.
+    pub(super) fn new_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.session.drafts().current_id()
+            && self.session.discardable(id)
+        {
+            self.new_draft = Task::ready(());
+            self.focus_new_draft(window, cx);
+            return;
+        }
+        let ready = shell_env::ShellEnv::ready(cx);
+        self.new_draft = cx.spawn_in(window, async move |this, cx| {
+            let env = ready.await;
+            // Runs claude, so off the UI thread.
+            let claude = cx
+                .background_executor()
+                .spawn(async move { crate::chat::claude_program(&env).map(drop) })
+                .await;
+            this.update_in(cx, |this, window, cx| this.create_blank(claude, window, cx))
+                .ok();
+        });
+    }
+
+    /// Creates a blank draft, on Claude Code only if `claude` succeeded, and
+    /// selects it.
+    fn create_blank(
+        &mut self,
+        claude: Result<(), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(home) = std::env::home_dir() else {
+            self.show_error("Couldn't create a draft: no home directory", cx);
+            return;
+        };
+        let settings = AppSettings::global(cx).read(cx).settings.clone();
+        let claude_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from);
+        let env = edit::Env {
+            home: &home,
+            claude: &|| claude.clone(),
+            claude_config_dir: claude_config_dir.as_deref(),
+        };
+        let id = match drafts::create_blank(self.session.drafts_mut(), &settings, &env) {
+            Ok(id) => id,
+            Err(err) => {
+                self.show_error(format!("Couldn't create a draft: {err:#}"), cx);
+                return;
+            }
+        };
+        if self.select(&id, window, cx).is_err() {
+            self.discard(&id, cx);
+            return;
+        }
+        self.focus_new_draft(window, cx);
+    }
+
+    fn focus_new_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.show_editor {
+            self.collapsed_for_width = false;
+            self.show_editor = true;
+        }
+        window.focus(&self.editor.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Deletes `id` if it is a blank draft left empty, stopping its agent
+    /// first. A failure is reported and the next launch tries again.
+    fn discard(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.session.discardable(id) {
+            return;
+        }
+        self.chat.update(cx, |chat, _| chat.forget(id));
+        if let Err(err) = self.session.discard(id) {
+            eprintln!("draftmux: deleting the empty draft {id}: {err:#}");
+        }
+    }
+
+    /// Deletes the selected draft, as the app quits or its window closes,
+    /// if it is a blank draft left empty.
+    fn discard_current(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.session.drafts().current_id().map(str::to_owned) else {
+            return;
+        };
+        if !self.session.discardable(&id) {
+            return;
+        }
+        self.chat.update(cx, |chat, cx| {
+            chat.set_draft(None, cx);
+            chat.forget(&id);
+        });
+        if let Err(err) = self.session.discard(&id) {
+            eprintln!("draftmux: deleting the empty draft {id}: {err:#}");
+        }
+    }
+
     fn empty_state(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         pane(palette.pane, palette)
             .size_full()
@@ -737,22 +841,19 @@ impl Chrome {
             ))
             .child(
                 div()
-                    .id("open-sample")
                     .mt_3()
-                    .h(px(24.))
-                    .px(px(10.))
                     .flex()
-                    .items_center()
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(palette.line_strong)
-                    .bg(palette.control)
-                    .hover(|style| style.bg(palette.control_hover))
-                    .active(|style| style.opacity(0.8))
-                    .text_size(px(12.5))
-                    .text_color(palette.text)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_sample(window, cx)))
-                    .child("Open sample draft"),
+                    .gap_2()
+                    .child(
+                        empty_state_button("new-draft", "New draft", palette).on_click(
+                            cx.listener(|this, _, window, cx| this.new_draft(window, cx)),
+                        ),
+                    )
+                    .child(
+                        empty_state_button("open-sample", "Open sample draft", palette).on_click(
+                            cx.listener(|this, _, window, cx| this.open_sample(window, cx)),
+                        ),
+                    ),
             )
     }
 
@@ -786,6 +887,7 @@ impl Chrome {
         if self.session.drafts().current_id() == Some(id) {
             return Ok(());
         }
+        let left = self.session.drafts().current_id().map(str::to_owned);
         let outcome = match self.session.select(id) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -819,6 +921,9 @@ impl Chrome {
             window.focus(&self.chat.focus_handle(cx), cx);
         } else if self.show_editor {
             window.focus(&self.editor.focus_handle(cx), cx);
+        }
+        if let Some(left) = left {
+            self.discard(&left, cx);
         }
         cx.notify();
         Ok(())
@@ -1496,7 +1601,10 @@ impl Chrome {
     /// error and returns false so the unsaved text stays in the editor.
     pub fn flush_before_exit(&mut self, cx: &mut Context<Self>) -> bool {
         match self.session.flush() {
-            Ok(()) => true,
+            Ok(()) => {
+                self.discard_current(cx);
+                true
+            }
             Err(err) => {
                 self.show_error(format!("Couldn't close: {err:#}"), cx);
                 false
@@ -1623,8 +1731,9 @@ impl Chrome {
         };
         let subtitle = match (self.session.save_error(), current) {
             (Some(error), _) => Some((SharedString::from(error.to_owned()), palette.danger)),
-            // The sample's directory is just where it was created.
-            (None, Some(draft)) if draft.meta.is_sample() => None,
+            // The sample's and a blank draft's directory is just where it
+            // was created.
+            (None, Some(draft)) if draft.meta.is_sample() || draft.meta.blank => None,
             // A draft opened from a file shows the file, and whether it
             // holds the editor's text.
             (None, Some(draft)) => {
@@ -2227,6 +2336,25 @@ fn pane(bg: Hsla, palette: &Palette) -> gpui::Div {
         .min_w_0()
         .bg(bg)
         .border_color(palette.hairline)
+}
+
+/// A button in the empty drafts list.
+fn empty_state_button(id: &'static str, label: &'static str, palette: &Palette) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(24.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(palette.line_strong)
+        .bg(palette.control)
+        .hover(|style| style.bg(palette.control_hover))
+        .active(|style| style.opacity(0.8))
+        .text_size(px(12.5))
+        .text_color(palette.text)
+        .child(label)
 }
 
 #[cfg(test)]

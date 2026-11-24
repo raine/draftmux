@@ -1,5 +1,5 @@
 //! The drafts list and the selected draft, from [`draftmux_core::drafts`],
-//! plus the sample draft, which needs the app's settings.
+//! plus the sample and blank drafts, which need the app's settings.
 
 use std::path::Path;
 
@@ -8,7 +8,15 @@ use draftmux_settings::Settings;
 
 pub use draftmux_core::drafts::*;
 
-use crate::sample;
+use crate::edit::Env;
+use crate::{blank, sample};
+
+/// Creates a blank draft and returns its id.
+pub fn create_blank(drafts: &mut Drafts, settings: &Settings, env: &Env) -> Result<String> {
+    let draft = blank::create(drafts.store(), settings, env)?;
+    drafts.refresh();
+    Ok(draft.id)
+}
 
 /// Creates a sample draft and returns its id.
 pub fn create_sample(drafts: &mut Drafts, settings: &Settings, home: &Path) -> Result<String> {

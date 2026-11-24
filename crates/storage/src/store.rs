@@ -129,6 +129,25 @@ impl Store {
         new: NewDraft,
         session: impl FnOnce(&Draft) -> Result<Backend>,
     ) -> Result<Draft> {
+        self.create_draft(new, false, session)
+    }
+
+    /// Like [`Store::create_with_session`], for a draft started blank in
+    /// the app ([`Meta::blank`]).
+    pub fn create_blank(
+        &self,
+        new: NewDraft,
+        session: impl FnOnce(&Draft) -> Result<Backend>,
+    ) -> Result<Draft> {
+        self.create_draft(new, true, session)
+    }
+
+    fn create_draft(
+        &self,
+        new: NewDraft,
+        blank: bool,
+        session: impl FnOnce(&Draft) -> Result<Backend>,
+    ) -> Result<Draft> {
         let id = uuid::Uuid::now_v7().to_string();
         let dir = self.root.join(&id);
         let session_dir = dir.join(SESSION_DIR);
@@ -152,6 +171,7 @@ impl Store {
                 first_draft_pending,
                 settings: new.settings,
                 file: new.file,
+                blank,
                 created_at: now,
                 updated_at: now,
             },
@@ -252,6 +272,13 @@ impl Store {
 
     pub fn unarchive(&self, id: &str) -> Result<Meta> {
         self.update_meta(id, |meta| meta.status = Status::Active)
+    }
+
+    /// Removes the draft's directory, its text, history and session with
+    /// it. Unlike archiving, this can't be undone.
+    pub fn delete(&self, id: &str) -> Result<()> {
+        let dir = self.draft_dir(id)?;
+        std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))
     }
 
     /// Writes `text` to the draft's linked file and records it as saved.
@@ -1103,6 +1130,29 @@ mod tests {
         std::fs::write(root.path().join(TEXT_ZOOM), "0").unwrap();
         assert_eq!(store.text_zoom(), None);
         assert!(store.scan().unwrap().drafts.is_empty());
+    }
+
+    #[test]
+    fn blank_drafts_are_marked_and_delete_removes_the_whole_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::new(root.path());
+        let blank = store
+            .create_blank(new_draft(""), |draft| {
+                std::fs::write(draft.session_dir().join("s.jsonl"), "{}\n")?;
+                Ok(draft.meta.backend.clone())
+            })
+            .unwrap();
+        let kept = store.create(new_draft("Kept")).unwrap();
+        assert!(blank.meta.blank && !kept.meta.blank);
+        assert!(store.load(&blank.id).unwrap().meta.blank);
+
+        store.delete(&blank.id).unwrap();
+        assert!(!blank.dir.exists());
+        let scan = store.scan().unwrap();
+        assert_eq!(scan.drafts.len(), 1);
+        assert_eq!(scan.drafts[0].id, kept.id);
+        assert!(store.delete(&blank.id).is_err());
+        assert!(store.delete("../x").is_err());
     }
 
     #[test]

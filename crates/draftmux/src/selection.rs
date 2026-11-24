@@ -809,6 +809,7 @@ mod tests {
             first_draft_pending: false,
             settings: DraftSettings::default(),
             file: None,
+            blank: false,
             created_at: Default::default(),
             updated_at: Default::default(),
         }
