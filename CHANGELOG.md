@@ -1,14 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 (2026-11-26)
 
 - New: Start a draft from scratch in the app with New draft (`⌘N`, or the `+`
-  beside Drafts in the sidebar). It opens empty with an agent of its own, ready
-  for a Slack update or an email; copy it out when it's done. A new draft left
-  empty is deleted rather than kept.
+  beside Drafts in the sidebar).
 - New: A Claude Code draft's agent can run shell commands to check facts, as
   pi's already could. Its edits still only reach the draft, and commands can't
   run in the background.
+- New: The composer grows with your prompt, up to eight lines, before it starts
+  scrolling.
+- Fix: Tool calls, notices and other rows in the chat now scale with the text
+  zoom like the messages around them, and so does the composer's placeholder.
+- Fix: The hand-off skill keeps the note it gives the draft's agent to a short
+  phrase rather than restating the conversation's plan and findings.
 
 ## v0.6.0 (2026-11-22)
 
