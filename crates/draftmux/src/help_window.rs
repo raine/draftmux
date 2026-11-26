@@ -65,6 +65,11 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 editor::by_platform!("⌘N", "Ctrl+N"),
                 "Start a new draft from scratch",
             ),
+            (editor::by_platform!("⌘F", "Ctrl+F"), "Find in the Markdown"),
+            (
+                editor::by_platform!("⌘G  ⌘⇧G", "Ctrl+G  Ctrl+Shift+G"),
+                "Next or previous match",
+            ),
             (
                 editor::by_platform!("⌘⇧C", "Ctrl+Shift+C"),
                 "Copy formatted for the target",
@@ -124,7 +129,7 @@ pub fn open(cx: &mut App) {
         return;
     }
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(440.), px(636.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(440.), px(678.)), cx)),
         titlebar: Some(TitlebarOptions {
             title: Some("Draftmux Help".into()),
             ..Default::default()

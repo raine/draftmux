@@ -313,6 +313,7 @@ impl Chrome {
         if self.session.log().edits().is_empty() || self.session.drafts().current().is_none() {
             return;
         }
+        self.close_find(window, cx);
         self.show_preview = true;
         self.review = Some(Review::default());
         self.session.review_mut().select(None);

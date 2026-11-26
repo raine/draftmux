@@ -6,6 +6,7 @@
 //! sidebar column paints a translucent tint, opaque with Reduce Transparency,
 //! and the content panes are opaque.
 
+mod find;
 mod preview;
 mod preview_work;
 mod review;
@@ -13,6 +14,7 @@ mod sidebar;
 mod skeleton;
 mod update_offer;
 
+pub use find::{Find, FindNext, FindPrevious};
 use preview::Preview;
 
 use std::cell::RefCell;
@@ -94,6 +96,7 @@ const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
     sidebar::init(cx);
+    find::init(cx);
     review::init(cx);
     update_offer::init(cx);
     cx.bind_keys([
@@ -169,6 +172,7 @@ pub struct Chrome {
     update_card: Option<update_offer::UpdateCard>,
     /// Review of those changes, while it is open.
     review: Option<review::Review>,
+    find: find::FindBar,
     /// Holds the focus during review, so its single-key shortcuts don't
     /// reach a text field.
     review_focus: FocusHandle,
@@ -286,7 +290,10 @@ impl Render for Chrome {
                                     ),
                                     cx,
                                 ))
-                                .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar)),
+                                .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar))
+                                .when(self.find.is_open(), |pane| {
+                                    pane.child(self.find_bar(&palette, cx))
+                                }),
                         ),
                     )
                 })
@@ -385,6 +392,18 @@ impl Render for Chrome {
                 this.editor.update(cx, |editor, cx| editor.redo(cx));
             }))
             .on_action(cx.listener(|this, _: &NewDraft, window, cx| this.new_draft(window, cx)))
+            .on_action(cx.listener(|this, _: &find::Find, window, cx| this.open_find(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &find::FindNext, window, cx| {
+                    this.find_step(true, window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &find::FindPrevious, window, cx| {
+                this.find_step(false, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &find::CloseFind, window, cx| this.close_find(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &crate::Quit, _, cx| {
                 if this.flush_before_exit(cx) {
                     cx.quit();
@@ -506,7 +525,10 @@ impl Chrome {
                 }
             }),
             cx.subscribe(&editor, |this, editor, event, cx| match event {
-                EditorEvent::Edited => this.edited(editor.read(cx).text().to_owned(), cx),
+                EditorEvent::Edited => {
+                    this.edited(editor.read(cx).text().to_owned(), cx);
+                    this.search(false, cx);
+                }
                 // Selecting something else in the editor replaces the
                 // preview's selection.
                 EditorEvent::SelectionChanged(range) => {
@@ -644,6 +666,7 @@ impl Chrome {
             toast: None,
             update_card: None,
             review: None,
+            find: find::FindBar::new(cx),
             review_focus: cx.focus_handle(),
             copied: None,
             github_menu: false,
@@ -1010,6 +1033,7 @@ impl Chrome {
             if self.show_editor && self.show_preview {
                 self.show_editor = false;
                 self.collapsed_for_width = true;
+                self.close_find(window, cx);
                 if self.editor.focus_handle(cx).contains_focused(window, cx) {
                     self.focus_sidebar(window, cx);
                 }
@@ -1027,6 +1051,7 @@ impl Chrome {
             window.focus(&self.editor.focus_handle(cx), cx);
         } else {
             self.show_preview = true;
+            self.close_find(window, cx);
             // Keys would otherwise go on editing text that isn't on screen.
             if self.editor.focus_handle(cx).contains_focused(window, cx) {
                 self.focus_sidebar(window, cx);
@@ -1052,6 +1077,7 @@ impl Chrome {
     fn deselect(&mut self, cx: &mut Context<Self>) {
         self.preview_work.invalidate();
         self.autosave = Task::ready(());
+        self.end_find(cx);
         self.set_preview(None, cx);
         let outcome = self.session.deselect();
         self.apply(outcome, None, cx);

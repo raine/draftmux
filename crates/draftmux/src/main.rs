@@ -198,6 +198,10 @@ fn run_app() -> Result<()> {
             Menu::new("Edit").items([
                 MenuItem::action("Undo", editor::Undo),
                 MenuItem::action("Redo", editor::Redo),
+                MenuItem::separator(),
+                MenuItem::action("Find…", chrome::Find),
+                MenuItem::action("Find Next", chrome::FindNext),
+                MenuItem::action("Find Previous", chrome::FindPrevious),
             ]),
             Menu::new("Draft").items([
                 MenuItem::action("Copy", copy::Copy),

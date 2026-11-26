@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New: Find text in a draft's Markdown with `⌘F`. Matches are highlighted as you
+  type; `↩` and `⇧↩` (or `⌘G` and `⌘⇧G`) step through them, and `esc` closes
+  the bar with the match selected.
+
 ## v0.7.0 (2026-11-26)
 
 - New: Start a draft from scratch in the app with New draft (`⌘N`, or the `+`

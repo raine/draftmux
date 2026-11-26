@@ -238,6 +238,10 @@ pub struct Palette {
     pub change_mark: Hsla,
     /// The dots in the editor while a continuation is on its way.
     pub ghost_waiting: Hsla,
+    /// The editor's tint on text that matches the find bar's.
+    pub found: Hsla,
+    /// The tint on the match the find bar is at.
+    pub found_current: Hsla,
 }
 
 impl Palette {
@@ -315,6 +319,8 @@ impl Palette {
             change_flash: hex(0xffcc0066),
             change_mark: hex(0x0a6cf524),
             ghost_waiting: hex(0x3c3c4373),
+            found: hex(0xffd60a59),
+            found_current: hex(0xff9500a6),
         }
     }
 
@@ -382,6 +388,8 @@ impl Palette {
             change_flash: hex(0xffd60a40),
             change_mark: hex(0x0a84ff3d),
             ghost_waiting: hex(0xebebf599),
+            found: hex(0xffd60a40),
+            found_current: hex(0xff9f0a99),
         }
     }
 
@@ -402,6 +410,8 @@ impl Palette {
             marked: self.change_mark,
             ghost_waiting: self.ghost_waiting,
             tracked: self.change_mark.opacity(0.5),
+            found: self.found,
+            found_current: self.found_current,
             ..EditorStyle::default()
         }
     }

@@ -289,6 +289,10 @@ pub struct EditorStyle {
     /// The tint of the ranges [`Editor::track`] keeps, which are underlined
     /// in the caret's color; an empty one is a bar in that color.
     pub tracked: Hsla,
+    /// The tint of the ranges [`Editor::set_found`] points out.
+    pub found: Hsla,
+    /// The tint of the one of them it singles out.
+    pub found_current: Hsla,
     /// Size the editor to its text, up to the available width, instead of
     /// filling its parent and scrolling. Scroll events then pass through to
     /// what contains it.
@@ -322,6 +326,8 @@ impl Default for EditorStyle {
             marked: rgba(0x0a6cf524).into(),
             ghost_waiting: rgba(0x3c3c4373).into(),
             tracked: rgba(0x0a6cf512).into(),
+            found: rgba(0xffd60a59).into(),
+            found_current: rgba(0xff9500a6).into(),
             fit_content: false,
             grow_rows: None,
         }
@@ -374,6 +380,7 @@ pub struct Editor {
     context_menu: Option<Point<Pixels>>,
     menu_renderer: Option<ContextMenuRenderer>,
     pub(crate) flash: Option<Flash>,
+    pub(crate) found: Option<Found>,
     /// Text pointed out until it is cleared or the text changes.
     pub(crate) marked: Option<Range<usize>>,
     /// Set when the mark changed, so the next layout scrolls it into view.
@@ -394,6 +401,16 @@ pub(crate) struct Flash {
     pub(crate) started: Instant,
     /// The buffer revision the ranges are for; any later edit ends the
     /// flash.
+    pub(crate) revision: u64,
+}
+
+/// Search matches pointed out by a tint; see [`Editor::set_found`].
+pub(crate) struct Found {
+    /// In document order, not overlapping.
+    pub(crate) ranges: Vec<Range<usize>>,
+    /// The index of the one tinted more strongly.
+    pub(crate) current: Option<usize>,
+    /// The buffer revision the ranges are for; they show only on it.
     pub(crate) revision: u64,
 }
 
@@ -449,6 +466,7 @@ impl Editor {
             blinking: false,
             blink_epoch: 0,
             flash: None,
+            found: None,
             marked: None,
             reveal_marked: false,
             reveal: None,
@@ -636,6 +654,24 @@ impl Editor {
         self.flash = (!ranges.is_empty()).then(|| Flash {
             ranges,
             started: Instant::now(),
+            revision: self.buffer.revision(),
+        });
+        cx.notify();
+    }
+
+    /// Tints `ranges` of the current text, which are in document order and
+    /// don't overlap, and the one at index `current` more strongly, to point
+    /// out search matches. They stay until replaced, and show only while the
+    /// text is unchanged: set them again after an edit.
+    pub fn set_found(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        current: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.found = (!ranges.is_empty()).then(|| Found {
+            ranges,
+            current,
             revision: self.buffer.revision(),
         });
         cx.notify();

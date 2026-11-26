@@ -425,7 +425,35 @@ impl Element for EditorElement {
             .and_then(|flash| {
                 flash_alpha(flash.started).map(|alpha| (flash.ranges.clone(), alpha))
             });
+        let found = editor
+            .found
+            .as_ref()
+            .filter(|found| found.revision == layout.revision)
+            .map(|found| {
+                // Only the matches on screen, of what may be thousands.
+                let top = layout.hit(bounds.origin).0;
+                let bottom = layout.hit(bounds.bottom_right()).0;
+                let first = found.ranges.partition_point(|range| range.end < top);
+                let visible: Vec<_> = found.ranges[first..]
+                    .iter()
+                    .take_while(|range| range.start <= bottom)
+                    .cloned()
+                    .collect();
+                (visible, found.current.and_then(|ix| ix.checked_sub(first)))
+            });
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if let Some((ranges, current)) = found {
+                for (ix, range) in ranges.into_iter().enumerate() {
+                    let color = if current == Some(ix) {
+                        style.found_current
+                    } else {
+                        style.found
+                    };
+                    for rect in layout.range_rects(range, false) {
+                        window.paint_quad(fill(rect, color).corner_radii(px(2.)));
+                    }
+                }
+            }
             if let Some((ranges, alpha)) = flash {
                 let color = style.flash.opacity(alpha);
                 for range in ranges {
