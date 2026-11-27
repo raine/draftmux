@@ -1,9 +1,13 @@
-//! Find in the draft: a bar over the editor that tints the text matching
-//! what is typed into it and steps through the matches.
+//! Find in the draft: a bar that tints the text matching what is typed
+//! into it and steps through the matches.
 //!
-//! The editor's selection stays where it is while the bar steps, so the
-//! selection popover doesn't follow the matches; closing the bar from its
-//! field selects the match it was at.
+//! It searches the markdown in the editor, over which it shows. While the
+//! editor is hidden it shows over the preview and searches the text
+//! rendered there instead.
+//!
+//! The selection stays where it is while the bar steps, so the selection
+//! popover doesn't follow the matches; closing the bar from its field
+//! selects the match it was at.
 
 use std::ops::Range;
 
@@ -15,6 +19,7 @@ use gpui::{
 
 use super::{Chrome, shadow};
 use crate::assets::{CHEVRON_ICON, CLOSE_ICON};
+use crate::selectable::{Key, Pos};
 use crate::theme::{self, Palette};
 
 actions!(find, [Find, FindNext, FindPrevious, CloseFind]);
@@ -36,17 +41,30 @@ pub(super) fn init(cx: &mut gpui::App) {
     ]);
 }
 
+/// The text the bar searches, and the pane it shows over.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Target {
+    /// The markdown in the editor.
+    Editor,
+    /// The text rendered in the preview.
+    Preview,
+}
+
 pub(super) struct FindBar {
     open: bool,
+    target: Target,
     /// What to find; kept while the bar is closed.
     field: Entity<Editor>,
-    /// Where the editor's text matches the field's, while the bar is open.
+    /// Where the searched text matches the field's, while the bar is open.
+    /// The preview's text is its paragraphs, a line break between them.
     matches: Vec<Range<usize>>,
     /// The match the bar is at.
     current: Option<usize>,
-    /// Where the search goes on from: the editor's caret when the bar
-    /// opened, then the start of each match it has been at.
+    /// Where the search goes on from: the caret or the selection's start
+    /// when the bar opened, then the start of each match it has been at.
     anchor: usize,
+    /// The preview's paragraphs in the text `matches` are in.
+    paragraphs: Paragraphs,
     _subscription: Subscription,
 }
 
@@ -61,36 +79,59 @@ impl FindBar {
         });
         Self {
             open: false,
+            target: Target::Editor,
             field,
             matches: Vec::new(),
             current: None,
             anchor: 0,
+            paragraphs: Paragraphs::default(),
             _subscription: subscription,
         }
     }
 
-    pub(super) fn is_open(&self) -> bool {
-        self.open
+    /// Whether the bar is open over `target`'s pane.
+    pub(super) fn shows_over(&self, target: Target) -> bool {
+        self.open && self.target == target
     }
 }
 
 impl Chrome {
     /// Opens the find bar, or goes back to its field, with the field's text
-    /// selected to type over. A selection within one line of the editor
-    /// becomes what to find.
+    /// selected to type over. A selection within one line of the searched
+    /// pane becomes what to find.
     pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.session.drafts().current().is_none() || self.review.is_some() {
             return;
         }
-        if !self.show_editor {
-            self.toggle_editor(window, cx);
+        let target = if self.show_editor {
+            Target::Editor
+        } else {
+            Target::Preview
+        };
+        if self.find.target != target {
+            self.end_find(cx);
+            self.find.target = target;
         }
-        let editor = self.editor.read(cx);
-        let selected = editor.selected_range();
-        self.find.anchor = selected.start;
-        let seed = Some(&editor.text()[selected])
-            .filter(|text| !text.is_empty() && !text.contains('\n'))
-            .map(str::to_owned);
+        let seed = match target {
+            Target::Editor => {
+                let editor = self.editor.read(cx);
+                let selected = editor.selected_range();
+                self.find.anchor = selected.start;
+                editor.text()[selected].to_owned()
+            }
+            Target::Preview => {
+                let selection = self.preview_selection.read(cx);
+                // Without a selection, the search goes on from where it
+                // was, or starts at the top.
+                if let Some((start, _)) = selection.range() {
+                    self.find.anchor = Paragraphs::new(selection.paragraphs()).0.offset(start);
+                } else if !self.find.open {
+                    self.find.anchor = 0;
+                }
+                selection.selected_text()
+            }
+        };
+        let seed = Some(seed).filter(|text| !text.is_empty() && !text.contains('\n'));
         self.find.open = true;
         self.find.field.update(cx, |field, cx| {
             if let Some(seed) = seed.filter(|seed| seed != field.text()) {
@@ -103,7 +144,7 @@ impl Chrome {
     }
 
     /// Closes the find bar. From its field, the keyboard goes back to the
-    /// editor with the match the bar was at selected.
+    /// searched pane with the match the bar was at selected.
     pub(super) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.find.open {
             return;
@@ -112,19 +153,33 @@ impl Chrome {
             .find
             .current
             .and_then(|ix| self.find.matches.get(ix).cloned());
+        let rendered = current
+            .clone()
+            .map(|range| self.find.paragraphs.range(range));
         self.end_find(cx);
-        let editor_focus = self.editor.focus_handle(cx);
-        if self.find.field.focus_handle(cx).is_focused(window) {
-            if let Some(range) = current {
-                self.editor
-                    .update(cx, |editor, cx| editor.select_range(range, cx));
+        if !self.find.field.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        match self.find.target {
+            Target::Editor => {
+                if let Some(range) = current {
+                    self.editor
+                        .update(cx, |editor, cx| editor.select_range(range, cx));
+                }
+                window.focus(&self.editor.focus_handle(cx), cx);
             }
-            window.focus(&editor_focus, cx);
+            Target::Preview => {
+                if let Some((start, end)) = rendered {
+                    self.preview_selection
+                        .update(cx, |selection, cx| selection.select(start, end, cx));
+                }
+                window.focus(&self.preview_selection.focus_handle(cx), cx);
+            }
         }
     }
 
     /// Closes the find bar where it is no longer shown, leaving the
-    /// editor's selection and the focus alone.
+    /// selection and the focus alone.
     pub(super) fn end_find(&mut self, cx: &mut Context<Self>) {
         if !self.find.open {
             return;
@@ -132,19 +187,34 @@ impl Chrome {
         self.find.open = false;
         self.find.matches.clear();
         self.find.current = None;
-        self.editor
-            .update(cx, |editor, cx| editor.set_found(Vec::new(), None, cx));
-        cx.notify();
+        self.find.paragraphs = Paragraphs::default();
+        self.show_found(false, cx);
     }
 
-    /// Finds the field's text in the editor's again and goes to the first
-    /// match from where the search was; `reveal` scrolls to it. Called when
-    /// either text changes.
-    pub(super) fn search(&mut self, reveal: bool, cx: &mut Context<Self>) {
+    /// Searches again after `target`'s text changed.
+    pub(super) fn refind(&mut self, target: Target, cx: &mut Context<Self>) {
+        if self.find.target == target {
+            self.search(false, cx);
+        }
+    }
+
+    /// Finds the field's text in the searched text again and goes to the
+    /// first match from where the search was; `reveal` scrolls to it.
+    /// Called when either text changes.
+    fn search(&mut self, reveal: bool, cx: &mut Context<Self>) {
         if !self.find.open {
             return;
         }
-        let matches = matches(self.editor.read(cx).text(), self.find.field.read(cx).text());
+        let query = self.find.field.read(cx).text();
+        let matches = match self.find.target {
+            Target::Editor => matches(self.editor.read(cx).text(), query),
+            Target::Preview => {
+                let (paragraphs, text) =
+                    Paragraphs::new(self.preview_selection.read(cx).paragraphs());
+                self.find.paragraphs = paragraphs;
+                matches(&text, query)
+            }
+        };
         let from = matches.partition_point(|range| range.start < self.find.anchor);
         // Past the last match, the search wraps around to the first.
         self.find.current = (!matches.is_empty()).then_some(from % matches.len().max(1));
@@ -173,20 +243,33 @@ impl Chrome {
         self.show_found(true, cx);
     }
 
-    /// Tints the matches in the editor.
+    /// Tints the matches in the searched pane.
     fn show_found(&mut self, reveal: bool, cx: &mut Context<Self>) {
         let (matches, current) = (self.find.matches.clone(), self.find.current);
-        let at = current.map(|ix| matches[ix].clone());
-        self.editor.update(cx, |editor, cx| {
-            editor.set_found(matches, current, cx);
-            if let Some(range) = at.filter(|_| reveal) {
-                editor.reveal(range, cx);
+        match self.find.target {
+            Target::Editor => {
+                let at = current.map(|ix| matches[ix].clone());
+                self.editor.update(cx, |editor, cx| {
+                    editor.set_found(matches, current, cx);
+                    if let Some(range) = at.filter(|_| reveal) {
+                        editor.reveal(range, cx);
+                    }
+                });
             }
-        });
+            Target::Preview => {
+                let found = matches
+                    .into_iter()
+                    .map(|range| self.find.paragraphs.range(range))
+                    .collect();
+                self.preview_selection.update(cx, |selection, cx| {
+                    selection.set_found(found, current, reveal, cx)
+                });
+            }
+        }
         cx.notify();
     }
 
-    /// The find bar, in the top right corner of the editor's pane.
+    /// The find bar, in the top right corner of the searched pane.
     pub(super) fn find_bar(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let field = self.find.field.clone();
         let empty = field.read(cx).text().is_empty();
@@ -351,6 +434,50 @@ fn field_style(palette: &Palette) -> EditorStyle {
     }
 }
 
+/// Where each of the preview's paragraphs starts in the text they make
+/// with a line break between them, in reading order.
+#[derive(Default)]
+struct Paragraphs(Vec<(usize, Key)>);
+
+impl Paragraphs {
+    /// Joins `paragraphs`, which are in reading order, into one text.
+    fn new<'a>(paragraphs: impl IntoIterator<Item = (Key, &'a str)>) -> (Self, String) {
+        let (mut starts, mut text) = (Vec::new(), String::new());
+        for (key, paragraph) in paragraphs {
+            if !starts.is_empty() {
+                text.push('\n');
+            }
+            starts.push((text.len(), key));
+            text.push_str(paragraph);
+        }
+        (Self(starts), text)
+    }
+
+    /// The place in its paragraph of byte `offset` of the joined text.
+    fn pos(&self, offset: usize) -> Pos {
+        let ix = self.0.partition_point(|(start, _)| *start <= offset);
+        let (start, key) = ix.checked_sub(1).map_or((0, (0, 0)), |ix| self.0[ix]);
+        Pos {
+            key,
+            offset: offset - start,
+        }
+    }
+
+    /// The paragraph places `range` of the joined text starts and ends at.
+    fn range(&self, range: Range<usize>) -> (Pos, Pos) {
+        (self.pos(range.start), self.pos(range.end))
+    }
+
+    /// The byte of the joined text at `pos`; past its end when `pos` is in
+    /// none of the paragraphs.
+    fn offset(&self, pos: Pos) -> usize {
+        self.0
+            .iter()
+            .find(|(_, key)| *key == pos.key)
+            .map_or(usize::MAX, |(start, _)| start + pos.offset)
+    }
+}
+
 /// Where `text` contains `query`, ignoring case, in order and without
 /// overlaps; nowhere for an empty query.
 fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
@@ -383,7 +510,21 @@ fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
 
 #[cfg(test)]
 mod tests {
-    use super::matches;
+    use super::{Paragraphs, matches};
+    use crate::selectable::Pos;
+
+    #[test]
+    fn joined_paragraphs_map_to_their_places_and_back() {
+        let (paragraphs, text) = Paragraphs::new([((0, 1), "One"), ((0, 2), ""), ((2, 1), "two")]);
+        assert_eq!(text, "One\n\ntwo");
+        let pos = |key, offset| Pos { key, offset };
+        assert_eq!(paragraphs.range(0..3), (pos((0, 1), 0), pos((0, 1), 3)));
+        assert_eq!(paragraphs.range(5..8), (pos((2, 1), 0), pos((2, 1), 3)));
+        // A range over a line break ends in the paragraph after it.
+        assert_eq!(paragraphs.range(2..6), (pos((0, 1), 2), pos((2, 1), 1)));
+        assert_eq!(paragraphs.offset(pos((2, 1), 2)), 7);
+        assert_eq!(paragraphs.offset(pos((9, 9), 0)), usize::MAX);
+    }
 
     #[test]
     fn finds_every_occurrence_ignoring_case() {

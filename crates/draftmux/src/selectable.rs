@@ -17,7 +17,10 @@
 //! a press with the secondary modifier (⌘ on macOS), which
 //! [`SelectionStarted`] reports. It can also tint and underline tagged ranges
 //! ([`TextSelection::set_tracked`]) and report where it placed each; a
-//! click on one, which selects nothing, reports [`TrackedClicked`].
+//! click on one, which selects nothing, reports [`TrackedClicked`]. And it
+//! can tint what a search found ([`TextSelection::set_found`]) and report
+//! where the match the search is at was placed, to scroll to it;
+//! [`TextsChanged`] tells when there is other text to search.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -111,6 +114,9 @@ pub struct SelectionChanged;
 /// A click that selected nothing landed on the tracked range with this tag.
 pub struct TrackedClicked(pub u64);
 
+/// The paragraphs published with [`TextSelection::set_texts`] changed.
+pub struct TextsChanged;
+
 /// A press started a new selection. `adding` is set when the secondary
 /// modifier was held, to keep the earlier selection besides the new one.
 pub struct SelectionStarted {
@@ -142,6 +148,7 @@ pub struct TextSelection {
     /// Ranges tinted in a colour that fades, from a start time, as the
     /// editor's [`flash`](editor::Editor::flash) does.
     flash: Option<Flash>,
+    found: Found,
     /// While the button is down: what the drag extends by and the unit it
     /// started on, which stays selected whichever way it goes.
     dragging: Option<(Unit, Pos, Pos)>,
@@ -154,6 +161,21 @@ pub struct TextSelection {
     sticky: bool,
     /// Where a plain single press landed, until the button is released.
     pressed: Option<Pos>,
+}
+
+/// What a search found in the surface's text.
+#[derive(Default)]
+struct Found {
+    /// In reading order, without overlaps.
+    ranges: Vec<(Pos, Pos)>,
+    /// The one of `ranges` the search is at.
+    current: Option<usize>,
+    /// The tint of `ranges`, and of the current one.
+    colors: (Hsla, Hsla),
+    /// How many times the current range was asked to be scrolled to.
+    reveal: u64,
+    /// Where the current frame placed the start of the current range.
+    rect: Option<Bounds<Pixels>>,
 }
 
 struct Painted {
@@ -172,6 +194,7 @@ enum Unit {
 impl EventEmitter<SelectionChanged> for TextSelection {}
 impl EventEmitter<SelectionStarted> for TextSelection {}
 impl EventEmitter<TrackedClicked> for TextSelection {}
+impl EventEmitter<TextsChanged> for TextSelection {}
 
 impl gpui::Focusable for TextSelection {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -193,6 +216,7 @@ impl TextSelection {
             tracked_colors: (Hsla::default(), Hsla::default()),
             tracked_rects: Vec::new(),
             flash: None,
+            found: Found::default(),
             dragging: None,
             scroller: None,
             pointer: Point::default(),
@@ -220,6 +244,8 @@ impl TextSelection {
         self.texts.clear();
         self.flash = None;
         self.tracked.clear();
+        self.found.ranges.clear();
+        self.found.current = None;
         self.set_marks(Vec::new(), cx);
         self.clear(cx);
     }
@@ -311,6 +337,78 @@ impl TextSelection {
         Some((parts, color.opacity(color.a * alpha)))
     }
 
+    /// Tints `ranges`, which are in reading order and don't overlap, as
+    /// what a search found, and the one at `current` as the match the
+    /// search is at; `reveal` asks the surface to scroll to that one.
+    pub fn set_found(
+        &mut self,
+        ranges: Vec<(Pos, Pos)>,
+        current: Option<usize>,
+        reveal: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let reveal = reveal && current.is_some();
+        if !reveal && self.found.ranges == ranges && self.found.current == current {
+            return;
+        }
+        self.found.ranges = ranges;
+        self.found.current = current;
+        self.found.reveal += u64::from(reveal);
+        cx.notify();
+    }
+
+    /// The tint of what a search found, and of the match it is at.
+    pub fn set_found_colors(&mut self, found: Hsla, current: Hsla) {
+        self.found.colors = (found, current);
+    }
+
+    /// The found parts of paragraph `key`, whose text is `len` bytes long,
+    /// each with its tint.
+    pub fn found_in(&self, key: Key, len: usize) -> Vec<(Range<usize>, Hsla)> {
+        let ranges = &self.found.ranges;
+        let first = ranges.partition_point(|(_, end)| end.key < key);
+        ranges[first..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, (start, _))| start.key <= key)
+            .filter_map(|(ix, &(start, end))| {
+                let color = if self.found.current == Some(first + ix) {
+                    self.found.colors.1
+                } else {
+                    self.found.colors.0
+                };
+                Some((part_in(start, end, key, len)?, color))
+            })
+            .collect()
+    }
+
+    /// Where the match the search is at starts, if in paragraph `key`.
+    pub(crate) fn current_found_in(&self, key: Key) -> Option<usize> {
+        let (start, _) = self.found.ranges.get(self.found.current?)?;
+        (start.key == key).then_some(start.offset)
+    }
+
+    pub(crate) fn placed_found(&mut self, rect: Bounds<Pixels>) {
+        self.found.rect = Some(rect);
+    }
+
+    /// The request to scroll to the match the search is at: a serial that
+    /// differs for each request, where the match starts, and where this
+    /// frame's prepaint placed that, if it laid it out.
+    pub fn found_reveal(&self) -> Option<(u64, Pos, Option<Bounds<Pixels>>)> {
+        let (start, _) = self.found.ranges.get(self.found.current?)?;
+        (self.found.reveal > 0).then_some((self.found.reveal, *start, self.found.rect))
+    }
+
+    /// Selects from `start` to `end`.
+    pub fn select(&mut self, start: Pos, end: Pos, cx: &mut Context<Self>) {
+        self.dragging = None;
+        self.anchor = Some(start);
+        self.head = Some(end);
+        cx.emit(SelectionChanged);
+        cx.notify();
+    }
+
     /// Ends a drag; a plain click that selected nothing on a tracked range
     /// reports it.
     fn mouse_up(&mut self, cx: &mut Context<Self>) {
@@ -339,8 +437,11 @@ impl TextSelection {
     }
 
     /// Publishes every paragraph in a virtualized body before hit testing.
-    pub fn set_texts(&mut self, texts: BTreeMap<Key, SharedString>) {
-        self.texts = texts;
+    pub fn set_texts(&mut self, texts: BTreeMap<Key, SharedString>, cx: &mut Context<Self>) {
+        if self.texts != texts {
+            self.texts = texts;
+            cx.emit(TextsChanged);
+        }
     }
 
     /// Called by a selectable paragraph as it prepaints.
@@ -638,6 +739,7 @@ pub fn area(state: &Entity<TextSelection>, cx: &App) -> Div {
                             this.painted.clear();
                             this.rects.clear();
                             this.tracked_rects.clear();
+                            this.found.rect = None;
                         })
                     }
                 },

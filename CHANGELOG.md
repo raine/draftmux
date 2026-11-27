@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- New: Find text in a draft's Markdown with `⌘F`. Matches are highlighted as you
-  type; `↩` and `⇧↩` (or `⌘G` and `⌘⇧G`) step through them, and `esc` closes
-  the bar with the match selected.
+- New: Find text in a draft with `⌘F`. Matches are highlighted as you type; `↩`
+  and `⇧↩` (or `⌘G` and `⌘⇧G`) step through them, and `esc` closes the bar with
+  the match selected. Find searches the Markdown in the editor, or the preview's
+  text while the editor is hidden.
 
 ## v0.7.0 (2026-11-26)
 

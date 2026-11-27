@@ -342,6 +342,24 @@ impl Element for InlineText {
                     }
                 }
             }
+            // The start of the match a search is at, for scrolling to it.
+            let current = select.state.read(cx).current_found_in(select.key);
+            if let Some(start) = current.filter(|start| *start < len) {
+                let rect = positioned(laid, bounds).find_map(|(line, top, left)| {
+                    line.frags.iter().find_map(|frag| {
+                        let piece = &laid.shaped.pieces[frag.piece];
+                        let range = piece.start + frag.range.start..piece.start + frag.range.end;
+                        range.contains(&start).then(|| {
+                            let x = left + frag.x + piece.line.x_for_index(start - piece.start)
+                                - piece.line.x_for_index(frag.range.start);
+                            Bounds::new(point(x, top), size(px(0.), laid.shaped.line_height))
+                        })
+                    })
+                });
+                if let Some(rect) = rect {
+                    select.state.update(cx, |state, _| state.placed_found(rect));
+                }
+            }
             if !placed.is_empty() {
                 select.state.update(cx, |state, _| {
                     for (tag, rect) in &placed {
@@ -425,12 +443,16 @@ impl Element for InlineText {
                 ));
             }
         }
-        // A flash, the marks, then the selection, whose rectangles are
-        // reported.
+        // What a search found, a flash, the marks, then the selection,
+        // whose rectangles are reported.
         let selected = self.select.as_ref().map_or(Vec::new(), |select| {
             let len = self.segments.iter().map(|s| s.text.len()).sum();
             let state = select.state.read(cx);
-            let mut ranges = Vec::new();
+            let mut ranges: Vec<_> = state
+                .found_in(select.key, len)
+                .into_iter()
+                .map(|(range, color)| (range, color, false))
+                .collect();
             if let Some((flashed, color)) = state.flash_in(select.key, len) {
                 window.request_animation_frame();
                 ranges.extend(flashed.into_iter().map(|range| (range, color, false)));

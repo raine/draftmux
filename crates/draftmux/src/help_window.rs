@@ -65,7 +65,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 editor::by_platform!("⌘N", "Ctrl+N"),
                 "Start a new draft from scratch",
             ),
-            (editor::by_platform!("⌘F", "Ctrl+F"), "Find in the Markdown"),
+            (editor::by_platform!("⌘F", "Ctrl+F"), "Find in the draft"),
             (
                 editor::by_platform!("⌘G  ⌘⇧G", "Ctrl+G  Ctrl+Shift+G"),
                 "Next or previous match",

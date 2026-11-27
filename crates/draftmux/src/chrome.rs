@@ -49,7 +49,9 @@ use crate::format::{Format, Formatter, Wrap};
 use crate::markup_view;
 use crate::menu::{MenuItem, menu_panel};
 use crate::scrollbar::{ScrollbarState, Source, scrollbar};
-use crate::selectable::{Pos, Scroller, SelectionChanged, SelectionStarted, TextSelection};
+use crate::selectable::{
+    Pos, Scroller, SelectionChanged, SelectionStarted, TextSelection, TextsChanged,
+};
 use crate::selection_popover::{SelectionPopover, SelectionPopoverEvent};
 use crate::source_map::SourceMap;
 use crate::theme::{self, Palette};
@@ -291,7 +293,7 @@ impl Render for Chrome {
                                     cx,
                                 ))
                                 .child(scrollbar(Source::Editor(self.editor.clone()), editor_bar))
-                                .when(self.find.is_open(), |pane| {
+                                .when(self.find.shows_over(find::Target::Editor), |pane| {
                                     pane.child(self.find_bar(&palette, cx))
                                 }),
                         ),
@@ -321,6 +323,9 @@ impl Render for Chrome {
                                 ))
                                 .when(editor_open > 0. && both_open, |pane| {
                                     pane.child(split_resize_handle(&palette, cx))
+                                })
+                                .when(self.find.shows_over(find::Target::Preview), |pane| {
+                                    pane.child(self.find_bar(&palette, cx))
                                 }),
                         ),
                     )
@@ -495,6 +500,9 @@ impl Chrome {
             cx.subscribe(&preview_selection, |this, _, _: &SelectionChanged, cx| {
                 this.preview_selected(cx)
             }),
+            cx.subscribe(&preview_selection, |this, _, _: &TextsChanged, cx| {
+                this.refind(find::Target::Preview, cx)
+            }),
             // A press in the preview with the secondary modifier keeps the
             // editor's selection besides the new one; a plain press drops
             // the kept ones, as in the editor.
@@ -527,7 +535,7 @@ impl Chrome {
             cx.subscribe(&editor, |this, editor, event, cx| match event {
                 EditorEvent::Edited => {
                     this.edited(editor.read(cx).text().to_owned(), cx);
-                    this.search(false, cx);
+                    this.refind(find::Target::Editor, cx);
                 }
                 // Selecting something else in the editor replaces the
                 // preview's selection.
@@ -1048,6 +1056,8 @@ impl Chrome {
         self.collapsed_for_width = false;
         self.show_editor = !self.show_editor;
         if self.show_editor {
+            // Find searches the editor while it is shown.
+            self.end_find(cx);
             window.focus(&self.editor.focus_handle(cx), cx);
         } else {
             self.show_preview = true;
@@ -1068,6 +1078,9 @@ impl Chrome {
         // Review happens in the preview.
         if self.show_preview {
             self.close_review(window, cx);
+            if self.find.shows_over(find::Target::Preview) {
+                self.close_find(window, cx);
+            }
         }
         self.show_preview = !self.show_preview;
         cx.notify();

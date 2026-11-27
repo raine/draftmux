@@ -51,6 +51,9 @@ pub(super) type Hit = Option<(usize, Point<Pixels>)>;
 /// Called with the change under the pointer.
 pub(super) type HunkHover = Rc<dyn Fn(Hit, &mut Window, &mut App)>;
 
+/// A reveal request's serial, and how many frames it has taken.
+type Reveal = Option<(u64, u8)>;
+
 /// What the redline's marks reported in the last frame, and the scrolling
 /// that follows from it.
 #[derive(Default)]
@@ -60,7 +63,9 @@ pub(super) struct MarkState {
     /// Where each change's first mark was laid out.
     placed: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     /// The last reveal request handled, and how many frames it has taken.
-    revealed: Option<(u64, u8)>,
+    revealed: Reveal,
+    /// The same for the requests to show the match a search is at.
+    found_revealed: Reveal,
     /// The scroll offset this preview last drew at.
     offset: Point<Pixels>,
     pointer_inside: Rc<Cell<bool>>,
@@ -86,10 +91,10 @@ pub(super) struct PreviewRedline {
     pub on_hover: HunkHover,
 }
 
-/// Frames a reveal may take: one to bring the change's block on screen,
-/// then one to place the change itself.
+/// Frames a reveal may take: one to bring the block of what it shows on
+/// screen, then one to place that itself.
 const REVEAL_FRAMES: u8 = 3;
-/// Space kept between a revealed change and the viewport's edge.
+/// Space kept between what a reveal shows and the viewport's edge.
 const REVEAL_MARGIN: Pixels = px(48.);
 
 pub(super) struct FieldCopied(pub String);
@@ -128,7 +133,7 @@ impl Render for Preview {
                 entity.update(cx, |this, cx| {
                     let texts = this.cache.texts();
                     this.active_selection()
-                        .update(cx, |selection, _| selection.set_texts(texts));
+                        .update(cx, |selection, cx| selection.set_texts(texts, cx));
                 });
                 body
             },
@@ -168,11 +173,22 @@ impl Preview {
         }
     }
 
-    /// After each layout: scrolls a change asked for into view, and the
-    /// partner along with any other scrolling.
+    /// After each layout: scrolls a change or a found match asked for into
+    /// view, and the partner along with any other scrolling.
     fn scrolled(&mut self, viewport: Bounds<Pixels>, cx: &mut Context<Self>) {
         if let Some((hunk, serial)) = self.redline.as_ref().and_then(|redline| redline.reveal) {
-            self.reveal(hunk, serial, viewport, cx);
+            let placed = self.marks.placed.borrow().get(&hunk).copied();
+            let block = self
+                .cache
+                .top_of(|block| block.marks.iter().any(|mark| mark.mark.hunk == hunk));
+            let last = self.marks.revealed;
+            self.marks.revealed = self.reveal(last, serial, placed, block, viewport, cx);
+        } else if self.redline.is_none()
+            && let Some((serial, start, placed)) = self.selection.read(cx).found_reveal()
+        {
+            let block = self.cache.top_at(start.key.0);
+            let last = self.marks.found_revealed;
+            self.marks.found_revealed = self.reveal(last, serial, placed, block, viewport, cx);
         }
         let offset = self.scroll.offset();
         if offset == self.marks.offset {
@@ -197,42 +213,41 @@ impl Preview {
         });
     }
 
-    /// Scrolls change `hunk` into view: to its block first if the block is
-    /// off screen and unlaid, then to the change itself.
+    /// Scrolls what request `serial` asks for into view: to its block's
+    /// top, `block`, while the block is off screen and unlaid, then to
+    /// where it was `placed` itself. `last` is the request handled before;
+    /// returns the one handled now.
     fn reveal(
         &mut self,
-        hunk: usize,
+        last: Reveal,
         serial: u64,
+        placed: Option<Bounds<Pixels>>,
+        block: Option<Pixels>,
         viewport: Bounds<Pixels>,
         cx: &mut Context<Self>,
-    ) {
-        let frames = match self.marks.revealed {
+    ) -> Reveal {
+        let frames = match last {
             Some((done, frames)) if done == serial => frames,
             _ => 0,
         };
         if frames >= REVEAL_FRAMES {
-            return;
+            return last;
         }
         let (top, bottom) = (
             viewport.top() + REVEAL_MARGIN,
             viewport.bottom() - REVEAL_MARGIN,
         );
-        let placed = self.marks.placed.borrow().get(&hunk).copied();
         let shift = match placed {
             Some(mark) if mark.top() < top => top - mark.top(),
             Some(mark) if mark.bottom() > bottom => (bottom - mark.bottom()).max(top - mark.top()),
             Some(_) => px(0.),
-            None => match self
-                .cache
-                .top_of(|block| block.marks.iter().any(|mark| mark.mark.hunk == hunk))
-            {
+            None => match block {
                 Some(block) => top - block,
                 // Not in this version at all.
                 None => px(0.),
             },
         };
         let done = placed.is_some() || shift == px(0.);
-        self.marks.revealed = Some((serial, if done { REVEAL_FRAMES } else { frames + 1 }));
         if shift != px(0.) {
             let offset = self.scroll.offset();
             let y = (offset.y + shift).clamp(-self.scroll.max_offset().y, px(0.));
@@ -242,6 +257,7 @@ impl Preview {
             self.marks.offset = offset;
             cx.notify();
         }
+        Some((serial, if done { REVEAL_FRAMES } else { frames + 1 }))
     }
 
     /// The fields shown above the body: the review side's while reviewing.
@@ -458,6 +474,11 @@ impl Preview {
     ) -> AnyElement {
         let _timing = editor::timing::span("preview-elements");
         let frame = editor::timing::span("preview-frame");
+        let palette = theme::palette(cx);
+        let (found, found_current) = (palette.found, palette.found_current);
+        self.selection.update(cx, |selection, _| {
+            selection.set_found_colors(found, found_current)
+        });
         let theme = theme::get(cx);
         let appearance = self
             .target

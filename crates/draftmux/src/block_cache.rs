@@ -110,6 +110,12 @@ impl BlockCache {
             .and_then(|block| block.top.get())
     }
 
+    /// Where block `index`'s top was in the window when last laid out, on
+    /// screen or not.
+    pub fn top_at(&self, index: usize) -> Option<Pixels> {
+        self.blocks.get(index).and_then(|block| block.top.get())
+    }
+
     /// Reindexes cached paragraphs after block insertion or deletion.
     pub fn texts(&self) -> BTreeMap<crate::selectable::Key, gpui::SharedString> {
         let mut texts = BTreeMap::new();
