@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 (2026-11-27)
 
 - New: Find text in a draft with `⌘F`. Matches are highlighted as you type; `↩`
   and `⇧↩` (or `⌘G` and `⌘⇧G`) step through them, and `esc` closes the bar with
