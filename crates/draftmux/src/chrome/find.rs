@@ -509,6 +509,8 @@ fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
 }
 
 #[cfg(test)]
+// A list holding one match is a one-element array of ranges.
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::{Paragraphs, matches};
     use crate::selectable::Pos;
